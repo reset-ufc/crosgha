@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Fails fast on fmt, clippy, and test regressions before a push.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "pre-push: cargo fmt --check"
+cargo fmt --check
+
+echo "pre-push: cargo clippy --all-targets -- -D warnings"
+cargo clippy --all-targets -- -D warnings
+
+echo "pre-push: cargo test"
+cargo test
+
+
+echo "pre-push: all checks passed"
