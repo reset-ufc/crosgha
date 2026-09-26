@@ -1,6 +1,10 @@
 # Roadmap
 
-Plans only. Nothing here is implemented yet.
+The GitHub Action and SARIF integration below are planned. `action.yml` now
+records the Action inputs and outputs, and its entry point validates runner and mode inputs
+before failing explicitly; it does not install or run the binary yet. The CLI
+pipeline is organized in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); it scans
+workflows and implements the `persist-credentials` finding and verified fix.
 
 ## Distribution
 
@@ -12,9 +16,9 @@ Plans only. Nothing here is implemented yet.
 
 Goal: run crosgha on a repository's `.github/workflows/` inside CI and report the findings in the Security tab.
 
-1. **Action type: composite.** `action.yml` at the repo root, with no Docker and no JavaScript runtime.
-   - It downloads the release asset for the requested version.
-   - It verifies the asset against the release's `.sha256` before running.
+1. **Action type: composite.** The root `action.yml` declares a composite Action, with no Docker or JavaScript runtime.
+   - Planned: download the release asset for the requested version.
+   - Planned: verify the asset against the release's `.sha256` before running.
    - A composite action avoids the Node runtime deprecations that JavaScript actions go through.
 2. **Inputs:**
    - `version`: defaults to the version the action ref was released with, never "latest".
@@ -72,3 +76,8 @@ Every fix crosgha makes touches `.github/workflows/`, and the default token cann
 ## Tool
 
 Detection and deterministic fixing of the curated smell taxonomy. The taxonomy and rule concepts are in the research workspace (`CLAUDE.workspace.md` → `../smell-matrix.md`).
+Rules enter the shared detection and fix path only when their semantics,
+primary-source citation, and before/after fixture are ready. JSON/SARIF
+renderers and verified release installation are the next prerequisites for the
+report-only Action mode. PR and auto-merge modes follow the verified report
+and fix paths.

@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   test:
-    name: fmt, clippy, test, build
+    name: fmt, clippy, test, dogfood, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -38,6 +38,9 @@ jobs:
 
       - name: Test
         run: cargo test
+
+      - name: Scan workflows with crosgha
+        run: cargo run -- .github/workflows
 
       - name: Build release
         run: cargo build --release

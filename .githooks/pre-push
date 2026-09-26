@@ -14,5 +14,7 @@ cargo clippy --all-targets -- -D warnings
 echo "pre-push: cargo test"
 cargo test
 
+echo "pre-push: crosgha dogfood"
+cargo run -- .github/workflows
 
 echo "pre-push: all checks passed"

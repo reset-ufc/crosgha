@@ -1,0 +1,64 @@
+name: crosgha
+description: Detect GitHub Actions workflow smells and propose verified fixes.
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  version:
+    description: Release version; defaults to the version bundled with this Action revision.
+    required: false
+    default: ''
+  path:
+    description: Workflow file or directory to scan.
+    required: false
+    default: .github/workflows
+  format:
+    description: Report format (sarif, json, or text).
+    required: false
+    default: sarif
+  fail-on:
+    description: Severity threshold for a failing result.
+    required: false
+    default: any
+  fix:
+    description: Fix mode (none or pull-request).
+    required: false
+    default: none
+  token:
+    description: GitHub App token or fine-grained PAT for pull-request mode.
+    required: false
+    default: ''
+  dangerously-auto-merge:
+    description: Opt in to GitHub auto-merge after required checks and reviews pass.
+    required: false
+    default: 'false'
+  upload-sarif:
+    description: Upload SARIF to the Security tab when the caller grants permission.
+    required: false
+    default: 'false'
+
+outputs:
+  sarif-file:
+    description: Path to the generated SARIF file.
+    value: ${{ steps.crosgha.outputs['sarif-file'] }}
+  findings:
+    description: Number of reported findings.
+    value: ${{ steps.crosgha.outputs.findings }}
+
+runs:
+  using: composite
+  steps:
+    - id: crosgha
+      name: Validate crosgha Action inputs
+      shell: bash
+      env:
+        CROSGHA_VERSION: ${{ inputs.version }}
+        CROSGHA_PATH: ${{ inputs.path }}
+        CROSGHA_FORMAT: ${{ inputs.format }}
+        CROSGHA_FAIL_ON: ${{ inputs['fail-on'] }}
+        CROSGHA_FIX: ${{ inputs.fix }}
+        CROSGHA_TOKEN: ${{ inputs.token }}
+        CROSGHA_AUTO_MERGE: ${{ inputs['dangerously-auto-merge'] }}
+        CROSGHA_UPLOAD_SARIF: ${{ inputs['upload-sarif'] }}
+      run: bash "$GITHUB_ACTION_PATH/action/entrypoint.sh"
