@@ -1,0 +1,23 @@
+[package]
+name = "our-tool"
+version = "0.1.0"
+edition = "2024"
+description = "Placeholder skeleton for a future GitHub Actions workflow smell detector/fixer"
+# TODO: replace with the real GitHub URL once the repo is created (see RELEASING.md).
+repository = "https://github.com/OWNER/our-tool"
+publish = false
+
+[[bin]]
+name = "our-tool"
+path = "src/main.rs"
+
+[dependencies]
+
+# publish = false hides the binary from dist by default; opt back in.
+[package.metadata.dist]
+dist = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
