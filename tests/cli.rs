@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_our-tool"))
+    Command::new(env!("CARGO_BIN_EXE_crosgha"))
 }
 
 #[test]
@@ -15,7 +15,7 @@ fn prints_version() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(
         stdout.trim(),
-        format!("our-tool {}", env!("CARGO_PKG_VERSION"))
+        format!("crosgha {}", env!("CARGO_PKG_VERSION"))
     );
 }
 

@@ -1,9 +1,9 @@
-# our-tool
+# crosgha
 
 Rust CLI that will detect smells in GitHub Actions workflows and fix them deterministically, preserving comments and
 formatting. Current state: `clap` CLI recursively scans workflows and uses `yamlpath` to parse YAML and locate
 top-level `on` and `jobs`. `yamlpatch` is included for the fix layer; smell rules and fixes are not implemented yet.
-`our-tool` is a placeholder name; renaming touches only `Cargo.toml` and `README.md`.
+`crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
 
 This repo is published on its own. When it is checked out inside the research workspace, `CLAUDE.workspace.md` is a
 local-only symlink to the workspace guide, which covers the tool map, curated smell taxonomy, and reproduction harness.
@@ -36,7 +36,7 @@ It is listed in `.git/info/exclude` and never committed.
    - `github-actions-models`, `yamlpath`, `yamlpatch`, `github-actions-expressions` at `=1.30.1`
    - generic crates such as clap and serde
 
-   Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: our own workflows are checked by our-tool itself (dogfood) once it has rules.
+   Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: our own workflows are checked by crosgha itself (dogfood) once it has rules.
 2. **Fix validation is ours.** A fix is accepted only when all three hold:
    - the patched file re-parses
    - the targeted smell is gone and no new smell appeared
@@ -52,7 +52,7 @@ It is listed in `.git/info/exclude` and never committed.
    - `concurrency` in CI
    - `persist-credentials: false`
 
-   Once rules exist, `.githooks/pre-push` and CI run our-tool on `.github/workflows`. Accepted exceptions need a written reason in `RELEASING.md`.
+   Once rules exist, `.githooks/pre-push` and CI run crosgha on `.github/workflows`. Accepted exceptions need a written reason in `RELEASING.md`.
 5. **Toolchain.** Rust is pinned in `rust-toolchain.toml` (1.97) and matches the workspace `mise.toml`. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
 6. **Tests.** Every rule ships with before/after YAML fixtures and a test asserting the exact fixed output. `tests/cli.rs` runs the real binary end to end.
 

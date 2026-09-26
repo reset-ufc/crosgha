@@ -1,6 +1,6 @@
-# our-tool
+# crosgha
 
-Placeholder name for a tool that will detect and auto-fix smells in GitHub Actions workflows.
+aCtions Repair Of miSconfigured GitHub Actions: a tool that will detect and auto-fix smells in GitHub Actions workflows.
 The current Rust scaffold recursively scans workflow files with `clap`, parses them with
 `yamlpath`, and verifies the top-level `on` and `jobs` structure. No smell rules or fixes are
 implemented yet; `yamlpatch` is included for the upcoming fix layer.
@@ -16,9 +16,9 @@ cargo build --release
 ## Run
 
 ```sh
-./target/release/our-tool          # scans .github/workflows
-./target/release/our-tool --version
-./target/release/our-tool path/to/workflow.yml
+./target/release/crosgha          # scans .github/workflows
+./target/release/crosgha --version
+./target/release/crosgha path/to/workflow.yml
 ```
 
 `PATH` may be one workflow file or a directory. Directories are scanned recursively.
