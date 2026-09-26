@@ -1,8 +1,9 @@
 # our-tool
 
-Placeholder name for a future tool that detects and auto-fixes smells in GitHub Actions
-workflows. This repository currently ships only the project skeleton and release toolchain;
-no smell-detection logic exists yet.
+Placeholder name for a tool that will detect and auto-fix smells in GitHub Actions workflows.
+The current Rust scaffold recursively scans workflow files with `clap`, parses them with
+`yamlpath`, and verifies the top-level `on` and `jobs` structure. No smell rules or fixes are
+implemented yet; `yamlpatch` is included for the upcoming fix layer.
 
 License: TBD by the author.
 
@@ -15,9 +16,12 @@ cargo build --release
 ## Run
 
 ```sh
-./target/release/our-tool          # hello from our-tool
+./target/release/our-tool          # scans .github/workflows
 ./target/release/our-tool --version
+./target/release/our-tool path/to/workflow.yml
 ```
+
+`PATH` may be one workflow file or a directory. Directories are scanned recursively.
 
 ## Test
 
