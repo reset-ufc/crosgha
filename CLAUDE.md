@@ -53,7 +53,7 @@ It is listed in `.git/info/exclude` and never committed.
    - `persist-credentials: false`
 
    Once rules exist, `.githooks/pre-push` and CI run crosgha on `.github/workflows`. Accepted exceptions need a written reason in `RELEASING.md`.
-5. **Toolchain.** Rust is pinned in `rust-toolchain.toml` (1.97) and matches the workspace `mise.toml`. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
+5. **Toolchain.** Rust is pinned only in `mise.toml` (1.97), matching the workspace. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
 6. **Tests.** Every rule ships with before/after YAML fixtures and a test asserting the exact fixed output. `tests/cli.rs` runs the real binary end to end.
 
 ## Layout
@@ -66,6 +66,7 @@ tests/fixtures/              workflow inputs for CLI checks
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)
 release-please-config.json  release PR + changelog config (manifest: .release-please-manifest.json)
 dist-workspace.toml         cargo-dist target: x86_64-unknown-linux-gnu only
+mise.toml                   Rust version (the only pin; used locally and in CI)
 ROADMAP.md                  plans: GitHub Action packaging (composite, SHA-verified binary, SARIF)
 ```
 
