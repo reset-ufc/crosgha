@@ -1,7 +1,8 @@
 # our-tool
 
 Rust CLI that will detect smells in GitHub Actions workflows and fix them deterministically, preserving comments and
-formatting. Current state: a hello-world binary plus the full release toolchain. There is no detection logic yet.
+formatting. Current state: `clap` CLI recursively scans workflows and uses `yamlpath` to parse YAML and locate
+top-level `on` and `jobs`. `yamlpatch` is included for the fix layer; smell rules and fixes are not implemented yet.
 `our-tool` is a placeholder name; renaming touches only `Cargo.toml` and `README.md`.
 
 This repo is published on its own. When it is checked out inside the research workspace, `CLAUDE.workspace.md` is a
@@ -18,6 +19,18 @@ It is listed in `.git/info/exclude` and never committed.
 | Release plan preview (offline) | `.tools/bin/dist plan` |
 
 ## Rules
+
+## Tests
+
+1. Never write unit tests after writing the code.
+2. End-to-end (E2E) tests are the main way to test; use them to check that complex
+   features work. Each E2E test produces an artifact that can be checked and reproduced.
+3. For complex features, use realistic E2E scenarios of medium or high complexity, not
+   only the simplest successful case.
+4. Testing a system in isolation: first list every way it could fail, then write the code.
+5. No tautological tests (confirming what the code already says) and no tests that only
+   detect whether code changed.
+6. Bug fixes get a regression test only when existing behavior tests leave a real gap.
 
 1. **Independence.** Allowed dependencies are infrastructure crates only, pinned exactly:
    - `github-actions-models`, `yamlpath`, `yamlpatch`, `github-actions-expressions` at `=1.30.1`
@@ -40,14 +53,15 @@ It is listed in `.git/info/exclude` and never committed.
    - `persist-credentials: false`
 
    Once rules exist, `.githooks/pre-push` and CI run our-tool on `.github/workflows`. Accepted exceptions need a written reason in `RELEASING.md`.
-5. **Toolchain.** Rust is pinned in `rust-toolchain.toml` (1.95) and matches the workspace `mise.toml`. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
+5. **Toolchain.** Rust is pinned in `rust-toolchain.toml` (1.97) and matches the workspace `mise.toml`. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
 6. **Tests.** Every rule ships with before/after YAML fixtures and a test asserting the exact fixed output. `tests/cli.rs` runs the real binary end to end.
 
 ## Layout
 
 ```
-src/main.rs                 entry point (hello world for now)
-tests/cli.rs                end-to-end test of the built binary
+src/main.rs                 CLI entry point and initial workflow scan
+tests/cli.rs                end-to-end tests of the built binary
+tests/fixtures/              workflow inputs for CLI checks
 .githooks/                  commit-msg (Conventional Commits), pre-push (full check)
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)
 release-please-config.json  release PR + changelog config (manifest: .release-please-manifest.json)
