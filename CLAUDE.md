@@ -43,7 +43,7 @@ It is listed in `.git/info/exclude` and never committed.
    - only the intended YAML nodes changed
 3. **SemVer from 0.1.0 through Conventional Commits.**
    - The `commit-msg` hook enforces `type(scope)!: subject`.
-   - Never bump `version` or edit `CHANGELOG.md` by hand; release-please does both. Before 1.0, breaking changes bump the minor version (`bump-minor-pre-major`). Flow in `RELEASING.md`.
+   - Never bump `version` or edit `CHANGELOG.md` by hand; release-please does both. Before 1.0, breaking changes bump the minor version (`bump-minor-pre-major`).
    - Breaking changes use `!` or a `BREAKING CHANGE:` footer.
 4. **Dogfood.** Our workflows must stay free of the smells we detect:
    - actions pinned to a 40-char SHA with a `# vX.Y.Z` comment
@@ -52,7 +52,7 @@ It is listed in `.git/info/exclude` and never committed.
    - `concurrency` in CI
    - `persist-credentials: false`
 
-   Once rules exist, `.githooks/pre-push` and CI run crosgha on `.github/workflows`. Accepted exceptions need a written reason in `RELEASING.md`.
+   Once rules exist, `.githooks/pre-push` and CI run crosgha on `.github/workflows`. Accepted exceptions need a written reason in a comment next to the exception.
 5. **Toolchain.** Rust is pinned only in `mise.toml` (1.97), matching the workspace. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
 6. **Tests.** Every rule ships with before/after YAML fixtures and a test asserting the exact fixed output. `tests/cli.rs` runs the real binary end to end.
 
@@ -72,9 +72,6 @@ ROADMAP.md                  plans: GitHub Action packaging (composite, SHA-verif
 
 ## Going live (not done yet)
 1. Create the GitHub repo as **private** (a study comes out of it; the author creates it, not agents) and push `master`.
-2. Replace the `repository` placeholder in `Cargo.toml`.
-3. Enable "Allow GitHub Actions to create and approve pull requests".
+2. Enable "Allow GitHub Actions to create and approve pull requests".
 
 No PAT or secret is needed: `release-please.yml` dispatches `release.yml` with the default `GITHUB_TOKEN`.
-
-Details in `RELEASING.md`.

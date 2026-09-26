@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.0"
 description = "GitHub Actions workflow smell tool"
-# TODO: replace with the real GitHub URL once the repo is created (see RELEASING.md).
 repository = "https://github.com/meiazero/crosgha"
 publish = false
 

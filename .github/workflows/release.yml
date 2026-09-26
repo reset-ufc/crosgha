@@ -59,7 +59,7 @@ jobs:
     runs-on: "ubuntu-22.04"
     timeout-minutes: 10
     permissions:
-      contents: write # 'dist host --steps=create' looks up the release-please draft (see RELEASING.md)
+      contents: write # 'dist host --steps=create' looks up the release-please draft
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
       tag: ${{ (inputs.tag != 'dry-run' && inputs.tag) || '' }}

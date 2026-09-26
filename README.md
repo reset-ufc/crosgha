@@ -31,7 +31,7 @@ cargo test
 
 ## Release
 
-Versioning and releases are automated. See [RELEASING.md](RELEASING.md).
+Versioning and releases are automated by release-please (from Conventional Commits) and cargo-dist.
 
 ## Development setup
 

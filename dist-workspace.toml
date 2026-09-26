@@ -12,9 +12,9 @@ installers = []
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["x86_64-unknown-linux-gnu"]
 # release-please (not cargo-dist) owns tagging and the GitHub Release: it
-# creates a draft release, then dispatches this release CI. See RELEASING.md.
+# creates a draft release, then dispatches this release CI.
 dispatch-releases = true
 create-release = false
 # release.yml is hand-hardened after `dist generate` (SHA-pinned actions,
-# minimal per-job permissions, timeouts, concurrency) — see RELEASING.md.
+# minimal per-job permissions, timeouts, concurrency).
 allow-dirty = ["ci"]

@@ -1,7 +1,8 @@
 # release-please owns tagging and the (draft) GitHub Release; it then
 # dispatches release.yml (cargo-dist, dispatch-releases=true, create-release=
-# false) to build the 3 target binaries and undraft that same release. See
-# RELEASING.md for why this two-workflow, workflow_dispatch design was chosen.
+# false) to build the release binary and undraft that same release. A tag
+# pushed with the default GITHUB_TOKEN does not trigger other workflows, but
+# workflow_dispatch does, so no PAT is needed.
 name: release-please
 
 permissions: {}
