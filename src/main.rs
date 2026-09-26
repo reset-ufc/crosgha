@@ -8,7 +8,10 @@ use clap::Parser;
 use yamlpath::{Document, FeatureKind, Route};
 
 #[derive(Debug, Parser)]
-#[command(about = "Parse GitHub Actions workflows; smell rules are not implemented yet.")]
+#[command(
+    version,
+    about = "Parse GitHub Actions workflows; smell rules are not implemented yet."
+)]
 struct Args {
     /// Workflow file or directory to scan.
     #[arg(value_name = "PATH", default_value = ".github/workflows")]
