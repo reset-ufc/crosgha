@@ -69,8 +69,7 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             findings.push(Finding {
                 rule: &RULE,
                 message: "checkout retains credentials for later steps",
-                job: job_name.to_owned(),
-                step: index,
+                location: format!("job `{job_name}`, step {}", index + 1),
                 line: uses_feature.location.point_span.0.0 + 1,
                 fix: Some(fix),
             });

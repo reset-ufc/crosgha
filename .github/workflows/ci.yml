@@ -40,7 +40,7 @@ jobs:
         run: cargo test
 
       - name: Scan workflows with crosgha
-        run: cargo run -- .github/workflows
+        run: cargo run -- --require-immutable-references --require-job-timeout --require-explicit-token-permissions --require-explicit-workflow-secrets .github/workflows
 
       - name: Build release
         run: cargo build --release

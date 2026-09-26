@@ -1,0 +1,26 @@
+# Synthetic references for syntax-only checks; do not run this workflow.
+name: Reference pinning
+on: [push]
+permissions: { contents: read }
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    container:
+      image: ghcr.io/example/build:stable
+    services:
+      database:
+        image: postgres:16
+    steps:
+      - uses: example/setup@v2
+      - uses: example/build@abc1234
+      - uses: docker://alpine:3.20
+      - uses: example/pinned@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - uses: ./.github/actions/local
+      - uses: docker://alpine@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  reuse:
+    uses: example/shared/.github/workflows/build.yml@main
+  local-reuse:
+    uses: ./.github/workflows/build.yml
+  pinned-reuse:
+    uses: example/shared/.github/workflows/build.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

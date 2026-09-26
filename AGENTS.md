@@ -2,8 +2,9 @@
 
 Rust CLI that detects smells in GitHub Actions workflows and fixes them deterministically, preserving comments and
 formatting. The CLI recursively scans workflows, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
-The first rule detects and fixes checkout steps that retain credentials. JSON/SARIF output and release-backed Action
-execution are still pending.
+The first rule detects and fixes checkout steps that retain credentials. Four opt-in rules detect mutable references,
+missing job timeouts, implicit token permissions, and inherited reusable-workflow secrets without guessing fixes.
+JSON/SARIF output and release-backed Action execution are still pending.
 `crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
 
 This repo is published on its own. When it is checked out inside the research workspace, `CLAUDE.workspace.md` is a
@@ -53,7 +54,7 @@ It is listed in `.git/info/exclude` and never committed.
    - `concurrency` in CI
    - `persist-credentials: false`
 
-   `.githooks/pre-push` and CI run crosgha on `.github/workflows`. Accepted exceptions need a written reason in a comment next to the exception.
+   `.githooks/pre-push` and CI run crosgha on `.github/workflows` with all four opt-in policies enabled. Accepted exceptions need a written reason in a comment next to the exception.
 5. **Toolchain.** Rust is pinned only in `mise.toml` (1.97), matching the workspace. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
 6. **Tests.** Every rule ships with before/after YAML fixtures and a test asserting the exact fixed output. `tests/cli.rs` runs the real binary end to end.
 

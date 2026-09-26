@@ -52,6 +52,11 @@ pub fn text(files: &[FileReport], fix: bool) -> String {
         ));
         if remaining > 0 {
             output.push_str(&format!("Remaining {remaining} finding(s).\n"));
+            for file in files {
+                if let Some(outcome) = &file.inspection.fix {
+                    append_findings(&mut output, &file.path, &outcome.remaining);
+                }
+            }
         }
         return output;
     }
@@ -61,23 +66,30 @@ pub fn text(files: &[FileReport], fix: bool) -> String {
         .map(|file| file.inspection.findings.len())
         .sum();
     for file in files {
-        for finding in &file.inspection.findings {
-            output.push_str(&format!(
-                "{} [{}:{}] {}:{}: job `{}`, step {} {}\n",
-                finding.rule.id,
-                finding.rule.tag,
-                finding.rule.severity.as_str(),
-                file.path.display(),
-                finding.line,
-                finding.job,
-                finding.step + 1,
-                finding.message
-            ));
-        }
+        append_findings(&mut output, &file.path, &file.inspection.findings);
     }
     output.push_str(&format!(
         "Checked {} workflow file(s); {findings} finding(s).\n",
         files.len()
     ));
     output
+}
+
+fn append_findings(
+    output: &mut String,
+    path: &std::path::Path,
+    findings: &[crate::rules::Finding],
+) {
+    for finding in findings {
+        output.push_str(&format!(
+            "{} [{}:{}] {}:{}: {} {}\n",
+            finding.rule.id,
+            finding.rule.tag,
+            finding.rule.severity.as_str(),
+            path.display(),
+            finding.line,
+            finding.location,
+            finding.message
+        ));
+    }
 }

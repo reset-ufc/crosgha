@@ -1,0 +1,21 @@
+name: Job timeouts
+on: [push]
+permissions: { contents: read }
+jobs:
+  build:
+    runs-on: [self-hosted, linux]
+    steps:
+      - run: cargo build --release
+      - run: cargo test
+  verify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - run: cargo fmt --check
+  deploy:
+    runs-on: ubuntu-22.04
+    environment: staging
+    steps:
+      - run: echo 'Deploy fixture'
+  reuse:
+    uses: ./.github/workflows/reusable.yml

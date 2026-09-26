@@ -15,6 +15,22 @@ struct Args {
     #[arg(long)]
     fix: bool,
 
+    /// Require remote actions and workflows to use commit SHAs, and images to use digests.
+    #[arg(long)]
+    require_immutable_references: bool,
+
+    /// Require timeout-minutes on executable jobs.
+    #[arg(long)]
+    require_job_timeout: bool,
+
+    /// Require explicit GITHUB_TOKEN permissions at the workflow or job level.
+    #[arg(long)]
+    require_explicit_token_permissions: bool,
+
+    /// Reject secrets: inherit on reusable workflow calls.
+    #[arg(long)]
+    require_explicit_workflow_secrets: bool,
+
     /// Report format. JSON and SARIF are reserved for the planned Action.
     #[arg(long, value_enum, default_value_t = report::Format::Text)]
     format: report::Format,
@@ -40,9 +56,15 @@ pub fn run() -> ExitCode {
 
     let mut files = Vec::new();
     let mut failures = 0;
+    let rule_policy = policy::RulePolicy {
+        require_immutable_references: args.require_immutable_references,
+        require_job_timeout: args.require_job_timeout,
+        require_explicit_token_permissions: args.require_explicit_token_permissions,
+        require_explicit_workflow_secrets: args.require_explicit_workflow_secrets,
+    };
     for path in workflows {
-        let inspected =
-            filesystem::read(&path, args.fix).and_then(|source| engine::inspect(source, args.fix));
+        let inspected = filesystem::read(&path, args.fix)
+            .and_then(|source| engine::inspect(source, args.fix, rule_policy));
         match inspected {
             Ok(inspection) => files.push(report::FileReport { path, inspection }),
             Err(error) => {

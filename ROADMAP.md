@@ -4,7 +4,8 @@ The GitHub Action and SARIF integration below are planned. `action.yml` now
 records the Action inputs and outputs, and its entry point validates runner and mode inputs
 before failing explicitly; it does not install or run the binary yet. The CLI
 pipeline is organized in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); it scans
-workflows and implements the `persist-credentials` finding and verified fix.
+workflows, implements the `persist-credentials` finding and verified fix, and
+offers four opt-in detection-only policy checks.
 
 ## Distribution
 

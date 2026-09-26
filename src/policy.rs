@@ -1,5 +1,13 @@
 use clap::ValueEnum;
 
+#[derive(Clone, Copy)]
+pub struct RulePolicy {
+    pub require_immutable_references: bool,
+    pub require_job_timeout: bool,
+    pub require_explicit_token_permissions: bool,
+    pub require_explicit_workflow_secrets: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Severity {
     Note,

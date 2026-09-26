@@ -7,7 +7,7 @@ contain a second detector or fixer.
 | Area | Current state |
 |---|---|
 | CLI pipeline | Structured and runnable, including `fail-on` exit policy. |
-| Rule modules | One implemented rule; shared finding and fix proposal types. |
+| Rule modules | Five implemented rules; shared finding and fix proposal types. |
 | Fix validation | Runnable for add and replace proposals. |
 | Reports | Text works; JSON and SARIF fail explicitly. |
 | Composite Action | Inputs, outputs, and input guard exist; execution stops before installation. |
@@ -50,14 +50,18 @@ returns findings. A finding can have no fix when the change is not safe to
 choose automatically. A fix proposal supplies a `yamlpatch` operation, the
 route it may change, and whether it adds or replaces that node. The shared
 fix module applies and validates proposals. Rule concepts cite primary
-sources in the rule code. The first implementation is
-`persist-credentials`; other taxonomy tags are not registered as rules until
-their detection semantics are specified and tested.
+sources in the rule code. `persist-credentials` has a verified fix.
+`mutable-action-reference`, `missing-job-timeout`, `implicit-token-permissions`,
+and `inherited-workflow-secrets` are opt-in, detection-only policy checks. Other
+taxonomy tags are not registered until their detection semantics are specified
+and tested.
 
 Rules are invoked from `rules::detect_all`. This explicit dispatch keeps one
-analysis path without adding a trait or a registry framework for a single
-implemented rule. Add a rule there when its before/after workflow fixtures
-and binary-level test exist.
+analysis path without a trait or registry framework. The CLI passes the same
+rule policy through initial detection, fix validation, and final detection.
+Add a rule there when its before/after workflow fixtures and binary-level test
+exist. Detection-only rules leave source unchanged under `--fix` and remain
+visible in the report.
 
 ## Fix safety
 
@@ -82,8 +86,7 @@ per-file findings used by text; they must not run separate detectors. A future
 SARIF renderer must include stable rule IDs and source locations. GitHub's
 [SARIF support](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support)
 uses `note`, `warning`, and `error` rule levels. `crosgha` assigns a level per
-implemented rule and uses it for `--fail-on`; the current checkout rule is
-`warning` as a project policy choice. `any` is the default and `none` disables
+implemented rule and uses it for `--fail-on`. `any` is the default and `none` disables
 failure on findings. `--fix` evaluates any remaining findings after fixes.
 Input and unsupported-format errors exit with status 2.
 
