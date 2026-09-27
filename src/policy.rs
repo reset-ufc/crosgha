@@ -30,6 +30,9 @@ pub struct Settings {
     /// `false` with `--no-ignores`: inline and config ignores are not applied.
     pub ignores: bool,
     pub min_severity: Option<Severity>,
+    /// The workflows run on github.com, so its hosted-runner retirements and service shutdowns
+    /// apply; `false` for another `--gh-hostname`.
+    pub hosted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

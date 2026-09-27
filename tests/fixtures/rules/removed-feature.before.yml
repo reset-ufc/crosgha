@@ -8,6 +8,8 @@ jobs:
     steps:
       - uses: actions/upload-artifact@v3 # expect: removed-feature
         with: { name: dist, path: dist }
+      - uses: Actions/Upload-Artifact@v3 # expect: removed-feature
+        with: { name: logs, path: logs }
       - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
       - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2 # expect: removed-feature
       - uses: actions/cache@v2 # expect: removed-feature
@@ -24,20 +26,41 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-24.04, windows-2019]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }} # expect: removed-feature
     timeout-minutes: 10
     steps:
       - run: echo matrix
+  included:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04]
+        include:
+          - os: ubuntu-20.04
+            legacy: true
+    runs-on: ${{ matrix.os }} # expect: removed-feature
+    timeout-minutes: 10
+    steps:
+      - run: echo include
+  self-hosted:
+    runs-on: [self-hosted, ubuntu-20.04]
+    timeout-minutes: 10
+    steps:
+      - run: echo self-hosted
   windows:
     runs-on: [windows-2019] # expect: removed-feature
     timeout-minutes: 10
     steps:
       - run: echo windows
   mac:
-    runs-on: { group: builders, labels: [macos-13] } # expect: removed-feature
+    runs-on: macos-13 # expect: removed-feature
     timeout-minutes: 10
     steps:
       - run: echo mac
+  group:
+    runs-on: { group: builders, labels: [macos-13] }
+    timeout-minutes: 10
+    steps:
+      - run: echo group
   old:
     runs-on: ubuntu-18.04 # expect: removed-feature
     timeout-minutes: 10

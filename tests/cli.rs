@@ -149,6 +149,8 @@ fn invalid_workflow_does_not_hide_findings_in_the_others() {
     let before = fs::read(&valid).unwrap();
 
     let report = bin().arg(&dir).output().unwrap();
+    let json = bin().args(["-f", "json"]).arg(&dir).output().unwrap();
+    let sarif = bin().args(["-f", "sarif"]).arg(&dir).output().unwrap();
     let fix = bin().arg("--fix").arg(&dir).output().unwrap();
     let after = fs::read(&valid).unwrap();
     fs::remove_dir_all(&dir).unwrap();
@@ -160,6 +162,34 @@ fn invalid_workflow_does_not_hide_findings_in_the_others() {
         stdout.matches("persist-credentials [").count(),
         3,
         "{stdout}"
+    );
+
+    // Machine-readable formats carry the failure; stderr is not enough for a SARIF consumer.
+    assert_eq!(json.status.code(), Some(2));
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(json["summary"]["files"], 1, "{json}");
+    assert_eq!(json["summary"]["errors"], 1, "{json}");
+    assert_eq!(json["findings"].as_array().unwrap().len(), 3, "{json}");
+    let error = &json["errors"][0];
+    assert!(
+        error["path"].as_str().unwrap().ends_with("broken.yml")
+            && !error["message"].as_str().unwrap().is_empty(),
+        "{error}"
+    );
+    assert_eq!(sarif.status.code(), Some(2));
+    let sarif: serde_json::Value = serde_json::from_slice(&sarif.stdout).unwrap();
+    let run = &sarif["runs"][0];
+    assert_eq!(run["results"].as_array().unwrap().len(), 3, "{run}");
+    let invocation = &run["invocations"][0];
+    assert_eq!(invocation["executionSuccessful"], false, "{invocation}");
+    let notification = &invocation["toolExecutionNotifications"][0];
+    assert_eq!(notification["level"], "error", "{notification}");
+    assert!(
+        notification["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("broken.yml"),
+        "{notification}"
     );
 
     // A failed input keeps the exit-2 promise that no file changes, but still shows the findings.
@@ -380,6 +410,48 @@ fn repository_rules_flag_retired_node_runtimes() {
         ],
         "{stdout}"
     );
+}
+
+#[test]
+fn github_com_only_rules_are_skipped_for_another_host() {
+    let scan = |host: &str, path: PathBuf| -> Vec<String> {
+        let output = bin()
+            .args([
+                "--offline",
+                "--fail-on",
+                "none",
+                "-f",
+                "json",
+                "--gh-hostname",
+                host,
+            ])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| finding["rule"].as_str().unwrap().to_owned())
+            .filter(|rule| rule == "removed-feature" || rule == "retired-runtime")
+            .collect()
+    };
+    let hosted = fixture("rules/removed-feature.before.yml");
+    let java = fixture("rules/removed-feature.setup-java.before.yml");
+    let runtime = fixture("repos/runtime/.github/workflows");
+
+    assert!(scan("github.com", hosted.clone()).len() > 5);
+    assert_eq!(scan("ghe.example.com", hosted), Vec::<String>::new());
+    // The setup-java distribution removal is a fact about the action, not about the host.
+    assert_eq!(scan("ghe.example.com", java), ["removed-feature"; 2]);
+    assert_eq!(scan("github.com", runtime.clone()).len(), 3);
+    assert_eq!(scan("ghe.example.com", runtime), Vec::<String>::new());
 }
 
 #[test]
@@ -736,6 +808,7 @@ fn every_format_reports_the_findings_of_the_text_report() {
     assert!(sarif["$schema"].as_str().unwrap().contains("sarif-2.1.0"));
     let run = &sarif["runs"][0];
     assert_eq!(run["tool"]["driver"]["name"], "crosgha");
+    assert_eq!(run["invocations"][0]["executionSuccessful"], true, "{run}");
     let rules = run["tool"]["driver"]["rules"].as_array().unwrap();
     for rule in rules {
         for field in ["shortDescription", "fullDescription", "help"] {
@@ -1130,7 +1203,8 @@ fn hook_install_follows_hooks_path_and_never_touches_foreign_hooks() {
     git(&work, &["config", "core.hooksPath", ".githooks"]);
     fs::create_dir_all(work.join(".githooks")).unwrap();
     let foreign = work.join(".githooks/pre-push");
-    fs::write(&foreign, "#!/bin/sh\nmake check\n").unwrap();
+    // Not valid UTF-8: a hook we cannot even read as text is still someone else's.
+    fs::write(&foreign, b"#!/bin/sh\nmake check # \xff\n").unwrap();
 
     for command in [&["hook", "install"][..], &["hook", "uninstall"][..]] {
         let refused = bin().current_dir(&work).args(command).output().unwrap();
@@ -1141,11 +1215,21 @@ fn hook_install_follows_hooks_path_and_never_touches_foreign_hooks() {
             combined(&refused)
         );
         assert_eq!(
-            fs::read_to_string(&foreign).unwrap(),
-            "#!/bin/sh\nmake check\n"
+            fs::read(&foreign).unwrap(),
+            b"#!/bin/sh\nmake check # \xff\n"
         );
     }
     assert!(!work.join(".git/hooks/pre-push").exists());
+
+    fs::remove_file(&foreign).unwrap();
+    std::os::unix::fs::symlink("/nonexistent/pre-push", &foreign).unwrap();
+    let dangling = bin()
+        .current_dir(&work)
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+    assert_eq!(dangling.status.code(), Some(2), "{}", combined(&dangling));
+    assert!(fs::symlink_metadata(&foreign).unwrap().is_symlink());
 
     let typo = bin()
         .current_dir(&work)

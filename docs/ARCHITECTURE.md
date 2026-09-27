@@ -32,7 +32,7 @@ The stages have these interfaces:
 | Module | Input | Output and responsibility |
 |---|---|---|
 | `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, file contents, the owning `.github` directory, and per-file verified writes. |
-| `workflow` | YAML source | A `yamlpath::Document` and semantic YAML value; `parse` also validates the `on`/`jobs` structure. Any parse error stops the run with status 2 before any write. |
+| `workflow` | YAML source | A `yamlpath::Document` and semantic YAML value; `parse` also validates the `on`/`jobs` structure. A parse error is reported for that file, the other files are still checked, and the run exits with status 2 without writing. |
 | `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order. |
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
 | `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, expressions, untrusted contexts, and `uses` refs. |
@@ -69,6 +69,10 @@ four shapes, dispatched from explicit tables in `rules/mod.rs`:
 | Configurable | `fn(&Workflow, Options) -> Vec<Finding>` with its `rules.<id>.config` | `CONFIGURABLE` |
 | Online | `fn(&Workflow, &GitHub, Options) -> Vec<Finding>` | `ONLINE`; runs only with a token |
 | Repository | `fn(&Path, bool, Options) -> Vec<Located>` for the `.github` directory | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
+
+Checks that state github.com facts (retired hosted-runner images and service shutdowns in
+`removed-feature`, and `retired-runtime`) sit in the `HOSTED` and `HOSTED_REPOSITORY` tables and are
+skipped when `--gh-hostname` names another host.
 
 A finding can have no fix when the change is not safe to choose automatically. A fix proposal
 supplies a `yamlpatch` operation, the route it may change, and whether it adds or replaces that
@@ -108,7 +112,8 @@ zizmor's severities map onto the SARIF levels: `informational`/`low` → `note`,
 the findings that remain after fixes.
 
 Input, parse, config, API, and write errors exit with status 2. A workflow that fails to parse is
-reported on stderr while the others are still checked and reported; `--fix` then writes nothing. Exit codes
+reported on stderr while the others are still checked and reported; `--fix` then writes nothing. JSON lists
+such files under `errors` and SARIF as `toolExecutionNotifications` of the invocation. Exit codes
 deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only for non-zero.
 
 ## GitHub Action path

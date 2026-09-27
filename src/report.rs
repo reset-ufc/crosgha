@@ -22,11 +22,17 @@ pub enum Format {
     Agent,
 }
 
-pub fn render(format: Format, files: &[FileReport], repository: &[Located], fix: bool) -> String {
+pub fn render(
+    format: Format,
+    files: &[FileReport],
+    repository: &[Located],
+    errors: &[FileError],
+    fix: bool,
+) -> String {
     match format {
         Format::Text => text(files, repository, fix),
-        Format::Json => json(files, repository, fix),
-        Format::Sarif => sarif(files, repository, fix),
+        Format::Json => json(files, repository, errors, fix),
+        Format::Sarif => sarif(files, repository, errors, fix),
         Format::Github => github(files, repository, fix),
         Format::Agent => agent(files, repository, fix),
     }
@@ -35,6 +41,13 @@ pub fn render(format: Format, files: &[FileReport], repository: &[Located], fix:
 pub struct FileReport {
     pub path: PathBuf,
     pub inspection: Inspection,
+}
+
+/// A workflow that could not be read or parsed; the text formats print it on stderr as it
+/// happens, JSON and SARIF carry it so CI consumers see the failure.
+pub struct FileError {
+    pub path: PathBuf,
+    pub message: String,
 }
 
 fn text(files: &[FileReport], repository: &[Located], fix: bool) -> String {
@@ -200,7 +213,7 @@ fn equivalents(rule: &Rule) -> Value {
 }
 
 /// A stable, versioned JSON report for scripts and the Action.
-fn json(files: &[FileReport], repository: &[Located], fix: bool) -> String {
+fn json(files: &[FileReport], repository: &[Located], errors: &[FileError], fix: bool) -> String {
     let findings: Vec<Value> = reported(files, repository, fix)
         .into_iter()
         .map(|(path, finding)| {
@@ -219,11 +232,21 @@ fn json(files: &[FileReport], repository: &[Located], fix: bool) -> String {
             })
         })
         .collect();
+    let errors: Vec<Value> = errors
+        .iter()
+        .map(|error| json!({ "path": error.path.display().to_string(), "message": error.message }))
+        .collect();
     let report = json!({
         "version": 1,
         "tool": { "name": "crosgha", "version": env!("CARGO_PKG_VERSION") },
-        "summary": { "files": files.len(), "findings": findings.len(), "fixed": fixed(files) },
+        "summary": {
+            "files": files.len(),
+            "findings": findings.len(),
+            "fixed": fixed(files),
+            "errors": errors.len(),
+        },
         "findings": findings,
+        "errors": errors,
     });
     format!("{report:#}\n")
 }
@@ -249,7 +272,12 @@ const QUALITY_TAGS: &[&str] = &[
 /// SARIF 2.1.0 with the fields GitHub code scanning requires:
 /// https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support
 /// `partialFingerprints` is left to `upload-sarif`, which computes GitHub's line hash.
-pub fn sarif(files: &[FileReport], repository: &[Located], fix: bool) -> String {
+pub fn sarif(
+    files: &[FileReport],
+    repository: &[Located],
+    errors: &[FileError],
+    fix: bool,
+) -> String {
     let catalog: Vec<&Rule> = rules::all().map(|(rule, _)| rule).collect();
     let descriptors: Vec<Value> = catalog
         .iter()
@@ -323,6 +351,21 @@ pub fn sarif(files: &[FileReport], repository: &[Located], fix: bool) -> String 
             })
         })
         .collect();
+    // Files that failed to parse are tool execution notifications, not results.
+    let notifications: Vec<Value> = errors
+        .iter()
+        .map(|error| {
+            json!({
+                "level": "error",
+                "message": { "text": error.message },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": artifact_uri(&error.path) },
+                    },
+                }],
+            })
+        })
+        .collect();
     let report = json!({
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -335,6 +378,10 @@ pub fn sarif(files: &[FileReport], repository: &[Located], fix: bool) -> String 
                     "rules": descriptors,
                 },
             },
+            "invocations": [{
+                "executionSuccessful": errors.is_empty(),
+                "toolExecutionNotifications": notifications,
+            }],
             "results": results,
         }],
     });

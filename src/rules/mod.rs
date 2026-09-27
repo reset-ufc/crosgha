@@ -216,8 +216,14 @@ const ONLINE: &[(&Rule, OnlineDetect)] = &[
 const REPOSITORY: &[(&Rule, RepositoryDetect)] = &[
     (&repository::COOLDOWN, repository::cooldown),
     (&repository::TOOLING, repository::tooling),
-    (&repository::RUNTIME, repository::runtime),
 ];
+
+/// Checks that state github.com facts (retired hosted-runner images, service shutdowns, the
+/// runner's Node.js) and are skipped for another `--gh-hostname`. `removed-feature` keeps its
+/// host-independent part in `REGISTRY`, so it is not repeated in `all()`.
+const HOSTED: &[(&Rule, Detect)] = &[(&maintainability::REMOVED, maintainability::removed_hosted)];
+const HOSTED_REPOSITORY: &[(&Rule, RepositoryDetect)] =
+    &[(&repository::RUNTIME, repository::runtime)];
 
 /// Every rule with the scope it reads: one workflow, the repository, or the GitHub API.
 pub fn all() -> impl Iterator<Item = (&'static Rule, &'static str)> {
@@ -227,6 +233,11 @@ pub fn all() -> impl Iterator<Item = (&'static Rule, &'static str)> {
         .chain(CONFIGURABLE.iter().map(|(rule, _)| (*rule, "workflow")))
         .chain(ONLINE.iter().map(|(rule, _)| (*rule, "online")))
         .chain(REPOSITORY.iter().map(|(rule, _)| (*rule, "repository")))
+        .chain(
+            HOSTED_REPOSITORY
+                .iter()
+                .map(|(rule, _)| (*rule, "repository")),
+        )
         .chain([(&online::SETTINGS, "repository")])
 }
 
@@ -237,6 +248,7 @@ pub fn unused_options(config: &crate::config::Config) -> Vec<String> {
         .map(|(rule, _)| *rule)
         .chain(ONLINE.iter().map(|(rule, _)| *rule))
         .chain(REPOSITORY.iter().map(|(rule, _)| *rule))
+        .chain(HOSTED_REPOSITORY.iter().map(|(rule, _)| *rule))
         .filter(|rule| rule.configurable)
         .collect();
     config
@@ -264,7 +276,12 @@ pub fn detect_settings(
 /// Repository-level rules for the `.github` directory next to the scanned workflows.
 pub fn detect_repository(github: &Path, settings: &Settings) -> Result<Vec<Located>, String> {
     let mut found = Vec::new();
-    for (rule, detect) in REPOSITORY {
+    let hosted = if settings.hosted {
+        HOSTED_REPOSITORY
+    } else {
+        &[]
+    };
+    for (rule, detect) in REPOSITORY.iter().chain(hosted) {
         if enabled(rule, settings) {
             found.extend(detect(
                 github,
@@ -303,7 +320,8 @@ pub fn detect_all(
     file: &str,
 ) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
-    for (rule, detect) in REGISTRY {
+    let hosted = if settings.hosted { HOSTED } else { &[] };
+    for (rule, detect) in REGISTRY.iter().chain(hosted) {
         if enabled(rule, settings) {
             findings.extend(detect(workflow)?);
         }
