@@ -9,10 +9,10 @@ What is still planned. Shipped behavior is documented in [README.md](README.md) 
   `persist-credentials` and `removed-feature`, zizmor-compatible personas, ignores, and config,
   text/JSON/SARIF/annotation/agent output, `migrate --from zizmor|actionlint`, and `hook install|uninstall`.
 - **Release:** release-please tags `vX.Y.Z` (`include-component-in-tag: false`); cargo-dist builds
-  `crosgha-x86_64-unknown-linux-gnu.tar.xz` with a per-file `.sha256` and `sha256.sum` (`dist-workspace.toml`).
+  `crosgha-x86_64-unknown-linux-gnu.tar.xz` (`dist-workspace.toml`) and `release.yml` adds its `sha256.sum`.
 - **Action, report mode:** the root `action.yml` is a composite Action (no Docker or Node runtime). It takes a superset
-  of `zizmorcore/zizmor-action`'s inputs, installs the release named by its own `Cargo.toml` after checking the
-  `.sha256`, uploads SARIF with a SHA-pinned `upload-sarif`, writes the job summary, sets the `output-file` and
+  of `zizmorcore/zizmor-action`'s inputs, installs the release named by its own `Cargo.toml` after checking it against
+  `sha256.sum`, uploads SARIF with a SHA-pinned `upload-sarif`, writes the job summary, sets the `output-file` and
   `findings` outputs, and fails fast on non-Linux runners. There is no moving `v1` tag: mutable refs are one of the
   smells we detect.
 

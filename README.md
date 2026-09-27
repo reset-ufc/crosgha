@@ -21,11 +21,11 @@ License: TBD by the author.
 
 ### From a release
 
-Releases ship one Linux binary (`x86_64-unknown-linux-gnu`) with a sha256 file:
+Releases ship one Linux binary (`x86_64-unknown-linux-gnu`) with a `sha256.sum`:
 
 ```sh
-gh release download -R meiazero/crosgha -p 'crosgha-x86_64-unknown-linux-gnu.tar.xz*'
-sha256sum -c crosgha-x86_64-unknown-linux-gnu.tar.xz.sha256
+gh release download -R meiazero/crosgha -p crosgha-x86_64-unknown-linux-gnu.tar.xz -p sha256.sum
+sha256sum -c sha256.sum
 tar -xJf crosgha-x86_64-unknown-linux-gnu.tar.xz
 install crosgha-x86_64-unknown-linux-gnu/crosgha ~/.local/bin/
 ```
@@ -76,7 +76,7 @@ Pin the Action by full commit SHA with a version comment; there is no moving `v1
 `fail-on-no-inputs`, and more) plus `fail-on`, and sets the outputs `output-file` (SARIF path) and `findings` (count).
 A run goes like this:
 
-1. It downloads the release that matches its own revision and checks the archive against the release's `.sha256`
+1. It downloads the release that matches its own revision and checks the archive against the release's `sha256.sum`
    before running it.
 2. It runs crosgha once. The log and the job summary get the text report.
 3. It uploads SARIF with `github/codeql-action/upload-sarif`, pinned by SHA.

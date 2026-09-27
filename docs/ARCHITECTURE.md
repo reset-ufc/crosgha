@@ -125,7 +125,7 @@ over this CLI. Its inputs are a superset of `zizmorcore/zizmor-action`'s, so
 1. Validate Linux runner, persona, severities, modes, token requirements, and
    incompatible inputs.
 2. Resolve the release version associated with the action revision. Download
-   the matching Linux asset and verify its release `.sha256` before execution.
+   the matching Linux asset and verify it against the release `sha256.sum` before execution.
 3. Run the CLI once and produce findings, job summary, and SARIF output.
 4. With `advanced-security: true`, upload SARIF using a SHA-pinned upload
    action; the caller grants `security-events: write`.
