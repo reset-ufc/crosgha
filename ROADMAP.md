@@ -1,25 +1,25 @@
 # Roadmap
 
-The GitHub Action and SARIF integration below are planned. `action.yml` now
-records the Action inputs and outputs, and its entry point validates them before
-failing explicitly; it does not install or run the binary yet. The CLI pipeline is
-organized in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). It runs 45 rules that cover
+The GitHub Action runs in report mode: it installs the sha256-verified release
+binary, uploads SARIF, and writes the job summary. PR and auto-merge modes below
+are still planned. The CLI pipeline is
+organized in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). It runs 46 rules that cover
 the whole taxonomy, with a verified fix for `persist-credentials`, zizmor-compatible
-personas, ignores, and config, and `migrate --from zizmor|actionlint`.
+personas, ignores, and config, text/JSON/SARIF output, and `migrate --from zizmor|actionlint`.
 
 ## Distribution
 
 - **Now:** the release binary is built for `x86_64-unknown-linux-gnu` only (cargo-dist, `dist-workspace.toml`).
   The release ships `crosgha-x86_64-unknown-linux-gnu.tar.xz`, a per-file `.sha256`, and `sha256.sum`.
-- **Planned:** a GitHub Action that runs the released binary, so a repository can use `uses: <owner>/crosgha@<sha>`.
+- **Now:** the root `action.yml` runs the released binary, so a repository can use `uses: <owner>/crosgha@<sha>`. Tags are `vX.Y.Z` (`include-component-in-tag: false`).
 
-## Planned: GitHub Action packaging
+## GitHub Action packaging
 
 Goal: run crosgha on a repository's `.github/workflows/` inside CI and report the findings in the Security tab.
 
 1. **Action type: composite.** The root `action.yml` declares a composite Action, with no Docker or JavaScript runtime.
-   - Planned: download the release asset for the requested version.
-   - Planned: verify the asset against the release's `.sha256` before running.
+   - Downloads the release asset for the requested version (default: the Action revision's `Cargo.toml` version).
+   - Verifies the asset against the release's `.sha256` before running.
    - A composite action avoids the Node runtime deprecations that JavaScript actions go through.
 2. **Inputs:** a superset of `zizmorcore/zizmor-action`, so `crosgha migrate --from zizmor` only swaps the `uses:` line.
    - Shared with zizmor-action: `inputs`, `collect`, `online-audits`, `persona`, `min-severity`, `min-confidence`, `token`, `advanced-security`, `color`, `annotations`, `config`, `fail-on-no-inputs`.
@@ -30,7 +30,7 @@ Goal: run crosgha on a repository's `.github/workflows/` inside CI and report th
    - Findings count.
    - With `advanced-security: true`, upload through `github/codeql-action/upload-sarif`, pinned by SHA, with `security-events: write` requested only by the caller's job.
 4. **Runners:** Linux only, matching the binary. On macOS and Windows runners the action fails fast with a clear message. An `aarch64-unknown-linux-gnu` or musl build is added only when an ARM runner user needs it.
-5. **Dogfood:** our own CI uses the action at the current commit (`uses: ./`) on our own workflows.
+5. **Dogfood (after the first release):** our own CI uses the action at the current commit (`uses: ./`) on our own workflows.
 6. **Versioning:**
    - Action releases are the same SemVer tags cut by release-please (`vX.Y.Z`).
    - No moving major tag (`v1`): mutable refs are one of the smells we detect. Docs tell users to pin the full SHA with a `# vX.Y.Z` comment.
@@ -77,9 +77,9 @@ Every fix crosgha makes touches `.github/workflows/`, and the default token cann
 
 Detection and deterministic fixing of the curated smell taxonomy. The taxonomy and rule concepts are in the research workspace (`CLAUDE.workspace.md` → `../smell-matrix.md`).
 Every taxonomy tag now has a rule with a primary-source citation and before/after fixtures. Next:
-1. JSON/SARIF renderers and verified release installation: the prerequisites for the report-only Action mode.
+1. PR mode (`fix: pull-request`) and opt-in auto-merge, as designed above.
 2. More verified fixes. Candidates whose change needs no project context: `deprecated-command` (environment files), `unsafe-if-condition` (unwrap `${{ }}`), `embedded-script-lint` (quote the path).
-3. Per-rule `rules.<id>.config` from zizmor.yml, such as allow/deny lists for `unpinned-action`.
-4. More `migrate --from` sources (poutine, ghalint, octoscan) once their Action steps are catalogued.
+3. More `migrate --from` sources (poutine, ghalint, octoscan) once their Action steps are catalogued.
+4. Dogfood the Action itself (`uses: ./`) in CI once the first release exists.
 
 PR and auto-merge modes follow the verified report and fix paths.
