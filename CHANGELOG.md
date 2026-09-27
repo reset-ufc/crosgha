@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/meiazero/crosgha/compare/v0.8.0...v0.8.1) (2026-09-27)
+
+
+### Fixed
+
+* audit a dependabot.yml input instead of parsing it as a workflow ([6d2692b](https://github.com/meiazero/crosgha/commit/6d2692b2e0dc5dfa7ce09ea11f0341c4ab498dd3))
+* handle dependabot.yml and .github inputs ([e4a6710](https://github.com/meiazero/crosgha/commit/e4a67106a55849abccb396e44ae2f9f0bd63ee0a))
+* scan a .github input through its workflows directory ([7e6ab05](https://github.com/meiazero/crosgha/commit/7e6ab0564eba73ce09ebe4fed64e325fe1e8589c))
+
 ## [0.8.0](https://github.com/meiazero/crosgha/compare/v0.7.1...v0.8.0) (2026-09-27)
 
 
