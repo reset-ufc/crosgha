@@ -16,10 +16,15 @@ use crate::{
 // https://docs.github.com/en/actions/concepts/security/script-injections
 pub const SCRIPT_INJECTION: Rule = Rule {
     id: "script-injection",
+    summary: "Untrusted event data must not be expanded into scripts with `${{ }}`.",
     tag: "script-injection",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &["template-injection"],
+    equivalents: &[
+        ("zizmor", "template-injection"),
+        ("actionlint", "expression"),
+    ],
+    configurable: false,
 };
 
 // zizmor `github-env` and CodeQL `actions/envvar-injection`: environment files written in
@@ -27,38 +32,46 @@ pub const SCRIPT_INJECTION: Rule = Rule {
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-an-environment-variable
 pub const ENV_INJECTION: Rule = Rule {
     id: "github-env-injection",
+    summary: "GITHUB_ENV and GITHUB_PATH must not be written from untrusted data or in privileged runs.",
     tag: "github-env-injection",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &["github-env"],
+    equivalents: &[("zizmor", "github-env")],
+    configurable: false,
 };
 
 // TaintAWI (arXiv 2605.07135) Prompt-to-Agent: untrusted event data reaches an agent prompt.
 pub const PROMPT_INJECTION: Rule = Rule {
     id: "llm-prompt-injection",
+    summary: "AI agent actions must not receive untrusted event data or run on events outsiders trigger.",
     tag: "llm-prompt-injection",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // GitHub Security Lab "pwn request": privileged triggers that check out untrusted code.
 // https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
 pub const PWN_REQUEST: Rule = Rule {
     id: "pwn-request",
+    summary: "Privileged triggers must not check out or run pull request code.",
     tag: "pwn-request",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // zizmor `dangerous-triggers`: triggers that run with base-repository privileges.
 pub const DANGEROUS_TRIGGER: Rule = Rule {
     id: "dangerous-trigger",
+    summary: "pull_request_target and workflow_run run with base repository privileges.",
     tag: "dangerous-trigger",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    aliases: &["dangerous-triggers"],
+    equivalents: &[("zizmor", "dangerous-triggers")],
+    configurable: false,
 };
 
 // actionlint `if-cond` constant conditions, zizmor `unsound-condition` and `bot-conditions`.
@@ -66,19 +79,27 @@ pub const DANGEROUS_TRIGGER: Rule = Rule {
 // https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
 pub const UNSAFE_IF: Rule = Rule {
     id: "unsafe-if-condition",
+    summary: "Conditions must not be constant, always true, or based on spoofable bot names.",
     tag: "unsafe-if-condition",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &["bot-conditions", "unsound-condition", "if-cond"],
+    equivalents: &[
+        ("zizmor", "bot-conditions"),
+        ("zizmor", "unsound-condition"),
+        ("actionlint", "if-cond"),
+    ],
+    configurable: false,
 };
 
 // CodeQL `actions/artifact-poisoning`: artifacts from another run extracted into the workspace.
 pub const ARTIFACT_POISONING: Rule = Rule {
     id: "artifact-poisoning",
+    summary: "Artifacts from other runs must not be extracted into the workspace.",
     tag: "artifact-poisoning",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // GitHub dependency caching docs (write-capable `cache-mode` on low-trust triggers) and
@@ -86,19 +107,23 @@ pub const ARTIFACT_POISONING: Rule = Rule {
 // https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#bypassing-the-default-untrusted-trigger-cache-restriction
 pub const CACHE_POISONING: Rule = Rule {
     id: "cache-poisoning",
+    summary: "Caches must not be writable from low-trust triggers or restored into release builds.",
     tag: "cache-poisoning",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &[],
+    equivalents: &[("zizmor", "cache-poisoning")],
+    configurable: false,
 };
 
 // zizmor `obfuscation`: paths and expressions written to hide what they do.
 pub const OBFUSCATION: Rule = Rule {
     id: "obfuscation",
+    summary: "`uses` paths and expressions must not hide what they reference.",
     tag: "obfuscation",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[("zizmor", "obfuscation")],
+    configurable: false,
 };
 
 pub fn script_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
@@ -266,22 +291,26 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for (route, location, condition) in conditions {
         let problem = match condition {
-            Value::Bool(value) => Some(format!("condition is always {value}")),
-            Value::String(text) if text.contains("${{") && !single_expression(text) => {
-                Some("text around `${{ }}` makes the condition always true".to_owned())
-            }
+            Value::Bool(value) => Some((format!("condition is always {value}"), None)),
+            Value::String(text) if text.contains("${{") && !single_expression(text) => Some((
+                "text around `${{ }}` makes the condition always true".to_owned(),
+                Some("unsound-condition"),
+            )),
             Value::String(text)
                 if (text.contains("github.actor") || text.contains("github.triggering_actor"))
                     && text.contains("[bot]") =>
             {
-                Some("actor name checks can be spoofed by a bot-triggered event".to_owned())
+                Some((
+                    "actor name checks can be spoofed by a bot-triggered event".to_owned(),
+                    Some("bot-conditions"),
+                ))
             }
             _ => None,
         };
-        if let Some(message) = problem {
-            findings.push(common::finding(
-                workflow, &UNSAFE_IF, route, location, message,
-            )?);
+        if let Some((message, concept)) = problem {
+            let mut finding = common::finding(workflow, &UNSAFE_IF, route, location, message)?;
+            finding.concept = concept;
+            findings.push(finding);
         }
     }
     Ok(findings)

@@ -62,13 +62,17 @@ fn fake_github() -> String {
     format!("http://{address}")
 }
 
-fn scan(path: &Path, fix: bool, api: Option<&str>) -> Output {
+fn scan(path: &Path, fix: bool, api: Option<&str>, config: Option<&Path>) -> Output {
     let mut command = bin();
     command
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .args(["--persona", "auditor", "--fail-on", "none"])
         .args(fix.then_some("--fix"));
+    match config {
+        Some(config) => command.arg("--config").arg(config),
+        None => command.arg("--no-config"),
+    };
     match api {
         Some(api) => command.args(["--gh-token", TOKEN, "--gh-hostname", api]),
         None => command.arg("--offline"),
@@ -88,8 +92,13 @@ fn expected_lines(source: &str, rule: &str) -> BTreeSet<usize> {
         .collect()
 }
 
-fn reported_lines(path: &Path, rule: &str, api: Option<&str>) -> BTreeSet<usize> {
-    let output = scan(path, false, api);
+fn reported_lines(
+    path: &Path,
+    rule: &str,
+    api: Option<&str>,
+    config: Option<&Path>,
+) -> BTreeSet<usize> {
+    let output = scan(path, false, api, config);
     assert!(
         output.status.success(),
         "{} exited with {:?}: {}",
@@ -120,13 +129,17 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         };
         // `<rule>.<variant>.before.yml` covers a second trigger or context for the same rule.
         let rule = stem.split('.').next().unwrap();
+        // `<stem>.config.yml` next to a fixture is passed as its crosgha/zizmor config.
+        let config = Some(path.with_file_name(format!("{stem}.config.yml")))
+            .filter(|config| config.exists());
+        let config = config.as_deref();
         checked += 1;
         let source = fs::read_to_string(&path).unwrap();
         let expected = expected_lines(&source, rule);
         if expected.is_empty() {
             failures.push(format!("{name}: no `# expect: {rule}` marker"));
         }
-        let reported = reported_lines(&path, rule, api);
+        let reported = reported_lines(&path, rule, api, config);
         if reported != expected {
             failures.push(format!(
                 "{name}: expected lines {expected:?}, reported {reported:?}"
@@ -136,8 +149,8 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         // `--fix` either removes every finding of the rule or leaves all of them in place.
         let copy = std::env::temp_dir().join(format!("crosgha-{}-{name}", std::process::id()));
         fs::copy(&path, &copy).unwrap();
-        scan(&copy, true, api);
-        let fixed = reported_lines(&copy, rule, api).len();
+        scan(&copy, true, api, config);
+        let fixed = reported_lines(&copy, rule, api, config).len();
         fs::remove_file(&copy).unwrap();
         if fixed != 0 && fixed != expected.len() {
             failures.push(format!(
@@ -151,7 +164,7 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
             failures.push(format!("{stem}.after.yml is missing"));
             continue;
         }
-        let remaining = reported_lines(&after, rule, api);
+        let remaining = reported_lines(&after, rule, api, config);
         if !remaining.is_empty() {
             failures.push(format!(
                 "{stem}.after.yml still reports lines {remaining:?}"
@@ -189,7 +202,7 @@ fn online_rules_stay_silent_offline() {
             .unwrap()
             .to_owned();
         assert!(
-            reported_lines(&path, &rule, None).is_empty(),
+            reported_lines(&path, &rule, None, None).is_empty(),
             "{rule} ran offline"
         );
     }

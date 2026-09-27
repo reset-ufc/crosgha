@@ -10,82 +10,100 @@ use crate::{
 // GASH (Freitas & Rocha, VEM 2024) "Lack of Error Handling: continue-on-error".
 pub const ERROR_SUPPRESSION: Rule = Rule {
     id: "error-suppression",
+    summary: "`continue-on-error: true` hides failures.",
     tag: "error-suppression",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-06/KZ-07, and zizmor `concurrency-limits`.
 pub const CONCURRENCY: Rule = Rule {
     id: "missing-concurrency",
+    summary: "CI workflows should cancel superseded runs with a concurrency group.",
     tag: "missing-concurrency",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &["concurrency-limits"],
+    equivalents: &[("zizmor", "concurrency-limits")],
+    configurable: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-08, and Semgrep `github-action-push-without-branches`.
 pub const BROAD_TRIGGER: Rule = Rule {
     id: "broad-trigger",
+    summary: "push and pull_request triggers should filter branches, tags, or paths.",
     tag: "broad-trigger",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-09 "Avoid executing scheduled workflows on forks".
 pub const FORK_GUARD: Rule = Rule {
     id: "missing-fork-guard",
+    summary: "Scheduled jobs should skip forks.",
     tag: "missing-fork-guard",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-19/KZ-22: CI on a single OS or language version.
 pub const MATRIX: Rule = Rule {
     id: "missing-matrix",
+    summary: "CI should test more than one OS or toolchain version.",
     tag: "missing-matrix/test-diversity",
     severity: Severity::Note,
     persona: Persona::Auditor,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-17 "Use cache parameter instead of cache option".
 pub const CACHE_MISUSE: Rule = Rule {
     id: "cache-misuse",
+    summary: "Use the setup action's `cache` input instead of a separate actions/cache step.",
     tag: "cache-misuse",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // GASH (VEM 2024) "Code Replica": a step repeated verbatim within one job.
 pub const DUPLICATED_STEPS: Rule = Rule {
     id: "duplicated-steps",
+    summary: "A job should not repeat a step verbatim.",
     tag: "redundant/duplicated-steps",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // GASH (VEM 2024) "Long Code Blocks" and "unnecessary complexity"; Khatami et al. KZ-18.
 pub const COMPLEXITY: Rule = Rule {
     id: "complex-job",
+    summary: "Jobs, scripts, and conditions should stay small enough to review.",
     tag: "long-job/complexity",
     severity: Severity::Note,
     persona: Persona::Auditor,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // zizmor `anonymous-definition` and Khatami et al. (SCAM 2024), KZ-16 "Name run steps".
 pub const READABILITY: Rule = Rule {
     id: "readability",
+    summary: "Workflows and run steps should have names.",
     tag: "readability",
     severity: Severity::Note,
     persona: Persona::Auditor,
-    aliases: &["anonymous-definition"],
+    equivalents: &[("zizmor", "anonymous-definition")],
+    configurable: false,
 };
 
 // GitHub disabled `set-env`/`add-path` and deprecated `set-output`/`save-state`:
@@ -93,10 +111,15 @@ pub const READABILITY: Rule = Rule {
 // https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
 pub const DEPRECATED: Rule = Rule {
     id: "deprecated-command",
+    summary: "Deprecated workflow commands must be replaced by environment files.",
     tag: "deprecated-command/feature",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &["insecure-commands", "deprecated-commands"],
+    equivalents: &[
+        ("zizmor", "insecure-commands"),
+        ("actionlint", "deprecated-commands"),
+    ],
+    configurable: false,
 };
 
 pub fn error_suppression(workflow: &Workflow) -> Result<Vec<Finding>, String> {

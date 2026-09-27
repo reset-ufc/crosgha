@@ -133,38 +133,6 @@ fn fix_does_not_overwrite_invalid_workflow() {
 }
 
 #[test]
-fn unavailable_report_format_fails_before_fixing() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "crosgha-format-{}-{unique}.yml",
-        std::process::id()
-    ));
-    fs::copy(fixture("checkout-credentials.before.yml"), &path).unwrap();
-    let before = fs::read(&path).unwrap();
-
-    let output = bin()
-        .arg("--format")
-        .arg("sarif")
-        .arg("--fix")
-        .arg(&path)
-        .output()
-        .unwrap();
-    let after = fs::read(&path).unwrap();
-    fs::remove_file(&path).unwrap();
-
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("not implemented")
-    );
-    assert_eq!(before, after);
-}
-
-#[test]
 fn failure_threshold_changes_exit_code_without_hiding_findings() {
     let workflow = fixture("checkout-credentials.before.yml");
     let error_only = bin()
@@ -451,21 +419,395 @@ fn migrate_replaces_other_scanners_with_the_crosgha_action() {
             "{tool}: a second migration must be a no-op"
         );
     }
+}
 
-    let zizmor = bin()
-        .args([
-            "migrate",
-            "--from",
-            "zizmor",
-            "--action",
-            &action,
-            "--action-version",
-            "v0.1.0",
-        ])
-        .arg(fixture("migrate/zizmor.after.yml"))
+#[test]
+fn report_names_the_equivalent_rule_in_other_tools() {
+    let output = bin()
+        .args(["--persona", "pedantic", "--offline", "--no-config"])
+        .arg(fixture("repos/configured/.github/workflows/ci.yml"))
         .output()
         .unwrap();
-    let notes = String::from_utf8(zizmor.stderr).unwrap();
-    assert!(notes.contains("zizmor.after.yml:21"), "{notes}");
-    assert!(notes.contains("runs zizmor from a shell"), "{notes}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let line = |rule: &str| {
+        stdout
+            .lines()
+            .find(|line| line.starts_with(&format!("{rule} [")))
+            .unwrap_or_else(|| panic!("no {rule}: {stdout}"))
+            .to_owned()
+    };
+    assert!(
+        line("script-injection").ends_with(" (zizmor: template-injection; actionlint: expression)")
+    );
+    assert!(line("unpinned-action").ends_with(" (zizmor: unpinned-uses, unpinned-images)"));
+}
+
+#[test]
+fn cooldown_days_follow_the_configured_minimum() {
+    let scan = |extra: &[&str]| {
+        let output = bin()
+            .args(["--persona", "pedantic", "--offline", "--fail-on", "none"])
+            .args(extra)
+            .arg(fixture("repos/cooldown/.github/workflows"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let lines: Vec<String> = stdout
+            .lines()
+            .filter(|line| line.starts_with("missing-release-cooldown ["))
+            .map(|line| {
+                line.split("dependabot.yml:")
+                    .nth(1)
+                    .unwrap()
+                    .split(':')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        lines
+    };
+    assert_eq!(scan(&[]), ["3", "9"]);
+    assert_eq!(scan(&["--no-config"]), ["3"]);
+}
+
+#[test]
+fn config_blocks_without_a_crosgha_reader_are_reported() {
+    let output = bin()
+        .args(["--offline", "--config"])
+        .arg(fixture("unsupported-config.yml"))
+        .arg(fixture("workflows"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("`rules.secrets-outside-env.config` has no crosgha equivalent"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("unpinned-uses"), "{stderr}");
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn migrate_converts_configs_and_shell_steps() {
+    let action = format!("meiazero/crosgha@{}", "c".repeat(40));
+    for (tool, workflow, config) in [
+        ("zizmor", "ci.yml", "zizmor.yml"),
+        ("actionlint", "lint.yml", "actionlint.yaml"),
+    ] {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!("crosgha-migrate-repo-{tool}-{unique}"));
+        copy_tree(&fixture(&format!("migrate/{tool}-repo")), &repo);
+
+        let output = bin()
+            .args([
+                "migrate",
+                "--from",
+                tool,
+                "--action",
+                &action,
+                "--action-version",
+                "v0.1.0",
+            ])
+            .arg(repo.join(".github/workflows"))
+            .output()
+            .unwrap();
+        let migrated = fs::read_to_string(repo.join(".github/workflows").join(workflow)).unwrap();
+        let crosgha = fs::read_to_string(repo.join(".github/crosgha.yml")).unwrap_or_default();
+        let original = fs::read_to_string(repo.join(".github").join(config)).unwrap();
+        let scan = bin()
+            .args(["--offline", "--fail-on", "none"])
+            .arg(repo.join(".github/workflows"))
+            .output()
+            .unwrap();
+        fs::remove_dir_all(&repo).unwrap();
+
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(output.status.success(), "{tool}: {stderr}");
+        let expected = |name: &str| {
+            fs::read_to_string(fixture(&format!("migrate/expected/{tool}-repo.{name}"))).unwrap()
+        };
+        assert_eq!(migrated, expected(workflow), "{tool}");
+        assert_eq!(crosgha, expected("crosgha.yml"), "{tool}");
+        assert_eq!(
+            original,
+            fs::read_to_string(fixture(&format!("migrate/{tool}-repo/.github/{config}"))).unwrap(),
+            "{tool}: the original config stays for as long as {tool} runs"
+        );
+        assert!(
+            scan.status.success(),
+            "{tool}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+        match tool {
+            "zizmor" => {
+                assert!(
+                    stderr.contains("`use-trusted-publishing` has no crosgha rule"),
+                    "{stderr}"
+                );
+                assert!(stderr.contains("ci.yml:21"), "{stderr}");
+            }
+            _ => {
+                assert!(stderr.contains("`config-variables`"), "{stderr}");
+                assert!(stderr.contains("`paths`"), "{stderr}");
+            }
+        }
+    }
+}
+
+#[test]
+fn json_and_sarif_report_the_findings_of_the_text_report() {
+    let repo = fixture("repos/configured");
+    let scan = |format: &str| {
+        let output = bin()
+            .current_dir(&repo)
+            .args([
+                "--persona",
+                "pedantic",
+                "--offline",
+                "--no-config",
+                "--format",
+                format,
+            ])
+            .arg(".github/workflows")
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let text = scan("text");
+    let count = text.lines().filter(|line| line.contains(" [")).count();
+    assert!(count >= 3, "{text}");
+
+    let json: serde_json::Value = serde_json::from_str(&scan("json")).unwrap();
+    let findings = json["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), count);
+    assert_eq!(json["summary"]["findings"], count);
+    let injection = findings
+        .iter()
+        .find(|finding| finding["rule"] == "script-injection")
+        .unwrap();
+    assert_eq!(injection["path"], ".github/workflows/ci.yml");
+    assert_eq!(injection["line"], 14);
+    assert_eq!(injection["severity"], "error");
+    assert_eq!(injection["equivalents"][0]["tool"], "zizmor");
+    assert_eq!(injection["equivalents"][0]["rule"], "template-injection");
+
+    let sarif: serde_json::Value = serde_json::from_str(&scan("sarif")).unwrap();
+    assert_eq!(sarif["version"], "2.1.0");
+    assert!(sarif["$schema"].as_str().unwrap().contains("sarif-2.1.0"));
+    let run = &sarif["runs"][0];
+    assert_eq!(run["tool"]["driver"]["name"], "crosgha");
+    let rules = run["tool"]["driver"]["rules"].as_array().unwrap();
+    for rule in rules {
+        for field in ["shortDescription", "fullDescription", "help"] {
+            assert!(!rule[field]["text"].as_str().unwrap().is_empty(), "{rule}");
+        }
+    }
+    let results = run["results"].as_array().unwrap();
+    assert_eq!(results.len(), count);
+    for result in results {
+        let rule = &rules[result["ruleIndex"].as_u64().unwrap() as usize];
+        assert_eq!(rule["id"], result["ruleId"]);
+        assert!(["note", "warning", "error"].contains(&result["level"].as_str().unwrap()));
+        let location = &result["locations"][0]["physicalLocation"];
+        assert!(
+            !location["artifactLocation"]["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with('/')
+        );
+        let region = &location["region"];
+        assert!(region["startLine"].as_u64().unwrap() >= 1);
+        assert!(region["startColumn"].as_u64().unwrap() >= 1);
+        assert!(region["endLine"].as_u64() >= region["startLine"].as_u64());
+        assert!(region["endColumn"].as_u64().unwrap() >= 1);
+    }
+    let injection = results
+        .iter()
+        .find(|result| result["ruleId"] == "script-injection")
+        .unwrap();
+    assert_eq!(
+        injection["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        ".github/workflows/ci.yml"
+    );
+    assert_eq!(
+        injection["locations"][0]["physicalLocation"]["region"]["startLine"],
+        14
+    );
+    let rule = |id: &str| rules.iter().find(|rule| rule["id"] == id).unwrap();
+    assert!(
+        rule("script-injection")["properties"]["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&"security".into())
+    );
+    assert!(rule("script-injection")["properties"]["security-severity"].is_string());
+    assert_eq!(rule("script-injection")["properties"]["precision"], "high");
+    assert_eq!(rule("unpinned-action")["properties"]["precision"], "medium");
+}
+
+#[test]
+fn json_report_after_fix_lists_what_remains() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("crosgha-json-fix-{unique}.yml"));
+    fs::copy(fixture("checkout-credentials.before.yml"), &path).unwrap();
+    let output = bin()
+        .args(["--offline", "--fix", "--format", "json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    fs::remove_file(&path).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["summary"]["fixed"], 3);
+    assert_eq!(json["summary"]["findings"], 0);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 0);
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn zizmor_ids_for_part_of_a_rule_only_touch_that_part() {
+    let output = bin()
+        .args(["--persona", "pedantic", "--offline", "--fail-on", "none"])
+        .arg(fixture("repos/partial/.github/workflows"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let lines = |rule: &str| -> Vec<String> {
+        stdout
+            .lines()
+            .filter(|line| line.starts_with(&format!("{rule} [")))
+            .map(|line| {
+                line.split("ci.yml:")
+                    .nth(1)
+                    .unwrap()
+                    .split(':')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
+    };
+    // `unpinned-images` covers container images only; action refs stay checked.
+    assert_eq!(lines("unpinned-action"), ["13"], "{stdout}");
+    // `unsound-condition` covers text around `${{ }}`, not spoofable bot names.
+    assert_eq!(lines("unsafe-if-condition"), ["14"], "{stdout}");
+}
+
+#[test]
+fn github_annotations_and_a_sarif_file_come_from_one_run() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let sarif_path = std::env::temp_dir().join(format!("crosgha-{unique}.sarif"));
+    let output = bin()
+        .current_dir(fixture("repos/configured"))
+        .args([
+            "--persona",
+            "pedantic",
+            "--offline",
+            "--no-config",
+            "--format",
+            "github",
+        ])
+        .arg("--sarif-file")
+        .arg(&sarif_path)
+        .arg(".github/workflows")
+        .output()
+        .unwrap();
+    let sarif: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&sarif_path).unwrap()).unwrap();
+    fs::remove_file(&sarif_path).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let annotations: Vec<&str> = stdout.lines().collect();
+    assert!(
+        annotations
+            .iter()
+            .all(|line| ["::error ", "::warning ", "::notice "]
+                .iter()
+                .any(|kind| line.starts_with(kind))),
+        "{stdout}"
+    );
+    assert_eq!(
+        annotations.len(),
+        sarif["runs"][0]["results"].as_array().unwrap().len()
+    );
+    let injection = annotations
+        .iter()
+        .find(|line| line.contains("title=script-injection::"))
+        .unwrap();
+    assert!(
+        injection.starts_with("::error file=.github/workflows/ci.yml,line=14,endLine=14,col="),
+        "{injection}"
+    );
+    assert!(
+        injection.ends_with("(zizmor: template-injection; actionlint: expression)"),
+        "{injection}"
+    );
+}
+
+#[test]
+fn repository_roots_and_several_inputs_are_collected_like_zizmor() {
+    let root = bin()
+        .args(["--offline", "--persona", "auditor", "--fail-on", "none"])
+        .arg(fixture("repos/insecure"))
+        .output()
+        .unwrap();
+    assert!(
+        root.status.success(),
+        "{}",
+        String::from_utf8_lossy(&root.stderr)
+    );
+    let stdout = String::from_utf8(root.stdout).unwrap();
+    assert!(stdout.contains("Checked 1 workflow file(s)"), "{stdout}");
+    assert!(stdout.contains("missing-release-cooldown ["), "{stdout}");
+
+    let several = bin()
+        .args(["--offline", "--fail-on", "none"])
+        .arg(fixture("workflows"))
+        .arg(fixture("repos/insecure/.github/workflows"))
+        .output()
+        .unwrap();
+    assert!(
+        several.status.success(),
+        "{}",
+        String::from_utf8_lossy(&several.stderr)
+    );
+    assert!(
+        String::from_utf8(several.stdout)
+            .unwrap()
+            .contains("Checked 3 workflow file(s)")
+    );
 }

@@ -60,5 +60,11 @@
   },
   "/repos/meiazero/crosgha/commits/v0.1.0": {
     "sha": "cccccccccccccccccccccccccccccccccccccccc"
-  }
+  },
+  "/advisories?ecosystem=actions&affects=example/vulnerable@1": [
+    {
+      "ghsa_id": "GHSA-0000-1111-2222"
+    }
+  ],
+  "/advisories?ecosystem=actions&affects=example/vulnerable@2": []
 }

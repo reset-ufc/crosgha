@@ -1,0 +1,12 @@
+name: Configured
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: tj-actions/changed-files@v35
+      - uses: example/vulnerable@v1 # expect: known-vulnerable-action

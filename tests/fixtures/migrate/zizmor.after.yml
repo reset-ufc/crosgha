@@ -18,4 +18,6 @@ jobs:
         with:
           persona: pedantic # Code smells too.
           min-severity: medium
-      - run: uvx zizmor --format plain .
+      - uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          advanced-security: 'false'

@@ -9,7 +9,10 @@ use std::{
 
 use yaml_serde::Value;
 
-use crate::{policy::Severity, rules::Rule};
+use crate::{
+    policy::Severity,
+    rules::{Finding, Rule},
+};
 
 #[derive(Default)]
 pub struct Config {
@@ -22,6 +25,8 @@ struct RuleConfig {
     /// `file.yml`, `file.yml:line`, or `file.yml:line:column` (the column is not checked).
     ignore: Vec<(String, Option<usize>)>,
     severity: Option<Severity>,
+    /// `rules.<id>.config`, read by the rule itself.
+    options: Option<Value>,
 }
 
 const NAMES: &[&str] = &[
@@ -108,39 +113,64 @@ impl Config {
                     disable: settings.get("disable").and_then(Value::as_bool) == Some(true),
                     ignore,
                     severity: remapped.and_then(severity),
+                    options: settings.get("config").cloned(),
                 },
             ));
-            if settings.get("config").is_some() {
-                eprintln!(
-                    "warning: {}",
-                    describe(format!("`rules.{id}.config` is not supported yet"))
-                );
-            }
         }
         Ok(config)
     }
 
-    fn entries<'a>(&'a self, rule: &'a Rule) -> impl Iterator<Item = &'a RuleConfig> + 'a {
+    fn entries(&self, rule: &'static Rule) -> impl Iterator<Item = &RuleConfig> {
         self.rules
             .iter()
             .filter(|(id, _)| rule.answers_to(id))
             .map(|(_, settings)| settings)
     }
 
-    pub fn disabled(&self, rule: &Rule) -> bool {
-        self.entries(rule).any(|settings| settings.disable)
+    /// Settings keyed by an ID that names this finding (see `Finding::answers_to`).
+    fn for_finding<'a>(&'a self, finding: &'a Finding) -> impl Iterator<Item = &'a RuleConfig> {
+        self.rules
+            .iter()
+            .filter(|(id, _)| finding.answers_to(id))
+            .map(|(_, settings)| settings)
     }
 
-    pub fn ignores(&self, rule: &Rule, file: &str, line: usize) -> bool {
-        self.entries(rule).any(|settings| {
+    /// The whole rule is disabled, so it need not run.
+    pub fn disabled(&self, rule: &'static Rule) -> bool {
+        self.rules
+            .iter()
+            .any(|(id, settings)| settings.disable && rule.whole(id))
+    }
+
+    /// A key for part of a rule disables the findings of that part.
+    pub fn drops(&self, finding: &Finding) -> bool {
+        self.for_finding(finding).any(|settings| settings.disable)
+    }
+
+    pub fn ignores(&self, finding: &Finding, file: &str) -> bool {
+        self.for_finding(finding).any(|settings| {
             settings
                 .ignore
                 .iter()
-                .any(|(name, at)| name == file && at.is_none_or(|at| at == line))
+                .any(|(name, at)| name == file && at.is_none_or(|at| at == finding.line))
         })
     }
 
-    pub fn severity(&self, rule: &Rule) -> Option<Severity> {
-        self.entries(rule).find_map(|settings| settings.severity)
+    pub fn options(&self, rule: &'static Rule) -> Option<&Value> {
+        self.entries(rule)
+            .find_map(|settings| settings.options.as_ref())
+    }
+
+    /// IDs that carry a `config` block, to warn about rules that cannot read one.
+    pub fn configured_ids(&self) -> impl Iterator<Item = &str> {
+        self.rules
+            .iter()
+            .filter(|(_, settings)| settings.options.is_some())
+            .map(|(id, _)| id.as_str())
+    }
+
+    pub fn severity(&self, finding: &Finding) -> Option<Severity> {
+        self.for_finding(finding)
+            .find_map(|settings| settings.severity)
     }
 }

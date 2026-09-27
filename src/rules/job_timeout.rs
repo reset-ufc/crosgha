@@ -8,10 +8,12 @@ use crate::{
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idtimeout-minutes
 pub const RULE: Rule = Rule {
     id: "missing-timeout",
+    summary: "Jobs should set `timeout-minutes`.",
     tag: "missing-timeout",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {

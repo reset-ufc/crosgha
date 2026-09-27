@@ -13,29 +13,35 @@ use crate::{
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 pub const SCHEMA: Rule = Rule {
     id: "schema-validity",
+    summary: "Workflows must use only the keys GitHub's workflow syntax defines.",
     tag: "syntax/schema-validity",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &["syntax-check"],
+    equivalents: &[("actionlint", "syntax-check")],
+    configurable: false,
 };
 
 // ShellCheck SC2086 (unquoted expansion), limited to GitHub's environment file variables:
 // https://www.shellcheck.net/wiki/SC2086
 pub const SCRIPT_LINT: Rule = Rule {
     id: "embedded-script-lint",
+    summary: "Environment file paths must be quoted in shell scripts.",
     tag: "embedded-script-lint",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &["shellcheck"],
+    equivalents: &[("actionlint", "shellcheck")],
+    configurable: false,
 };
 
 // zizmor `insecure-url-scheme` and GASH "Unsecured Protocol".
 pub const INSECURE_PROTOCOL: Rule = Rule {
     id: "insecure-protocol",
+    summary: "URLs must use an encrypted scheme.",
     tag: "insecure-protocol",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &["insecure-url-scheme"],
+    equivalents: &[("zizmor", "insecure-url-scheme")],
+    configurable: false,
 };
 
 const WORKFLOW_KEYS: &[&str] = &[

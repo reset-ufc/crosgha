@@ -7,6 +7,13 @@ use std::{
 
 pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mut workflows = Vec::new();
+    // A repository root is scanned through its workflows, as zizmor collects `.` inputs.
+    let workflows_dir = path.join(".github/workflows");
+    let path = if workflows_dir.is_dir() {
+        workflows_dir.as_path()
+    } else {
+        path
+    };
     collect(path, &mut workflows)?;
     workflows.sort();
     if workflows.is_empty() {

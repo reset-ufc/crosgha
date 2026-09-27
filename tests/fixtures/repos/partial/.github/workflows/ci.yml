@@ -1,0 +1,17 @@
+name: Partial
+on:
+  pull_request:
+    branches: [main]
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      image: node:22
+    steps:
+      - uses: example/build@v1
+      - if: github.actor == 'dependabot[bot]' # zizmor: ignore[unsound-condition]
+        run: echo bot
+      - if: ${{ github.event_name == 'push' }} && true # zizmor: ignore[unsound-condition]
+        run: echo text

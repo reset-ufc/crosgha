@@ -10,10 +10,12 @@ use crate::{
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idsecretsinherit
 pub const RULE: Rule = Rule {
     id: "secrets-inherit",
+    summary: "Reusable workflow calls should pass only the secrets they need.",
     tag: "secrets-inherit",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[("zizmor", "secrets-inherit")],
+    configurable: false,
 };
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {

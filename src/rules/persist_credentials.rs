@@ -12,10 +12,12 @@ use crate::{
 // https://github.com/actions/checkout/blob/main/README.md#usage
 pub const RULE: Rule = Rule {
     id: "persist-credentials",
+    summary: "actions/checkout must not leave the token on disk for later steps.",
     tag: "persist-credentials",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &["artipacked"],
+    equivalents: &[("zizmor", "artipacked")],
+    configurable: false,
 };
 
 enum NeededChange {

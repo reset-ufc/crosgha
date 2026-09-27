@@ -26,18 +26,57 @@ use crate::{
 
 pub struct Rule {
     pub id: &'static str,
+    /// One sentence on what the rule requires; SARIF's short description and help text.
+    pub summary: &'static str,
     /// Curated taxonomy tag (`TAXONOMY` in the research workspace's `build_matrix.py`).
     pub tag: &'static str,
     pub severity: Severity,
     /// Lowest persona that runs the rule.
     pub persona: Persona,
-    /// IDs other tools use for the same concept; accepted in ignore comments.
-    pub aliases: &'static [&'static str],
+    /// `(tool, rule)` pairs for the same concept in zizmor or actionlint. Their IDs are
+    /// accepted in ignore comments and config, and the report names them.
+    pub equivalents: &'static [(&'static str, &'static str)],
+    /// Reads `rules.<id>.config`.
+    pub configurable: bool,
 }
 
 impl Rule {
     pub fn answers_to(&self, id: &str) -> bool {
-        self.id == id || self.aliases.contains(&id)
+        self.id == id || self.equivalents.iter().any(|(_, other)| *other == id)
+    }
+
+    /// Whether `id` names this whole rule: its own ID, or the only equivalent from that tool.
+    /// zizmor's `unpinned-images` names only the image half of `unpinned-action`.
+    pub fn whole(&self, id: &str) -> bool {
+        self.id == id
+            || self.equivalents.iter().any(|(tool, other)| {
+                *other == id
+                    && self
+                        .equivalents
+                        .iter()
+                        .filter(|(same, _)| same == tool)
+                        .count()
+                        == 1
+            })
+    }
+
+    /// ` (zizmor: a, b; actionlint: c)`, or nothing when no tool has an equivalent.
+    pub fn equivalents_suffix(&self) -> String {
+        let mut tools: Vec<(&str, Vec<&str>)> = Vec::new();
+        for (tool, id) in self.equivalents {
+            match tools.iter_mut().find(|(name, _)| name == tool) {
+                Some((_, ids)) => ids.push(id),
+                None => tools.push((tool, vec![id])),
+            }
+        }
+        if tools.is_empty() {
+            return String::new();
+        }
+        let named: Vec<String> = tools
+            .iter()
+            .map(|(tool, ids)| format!("{tool}: {}", ids.join(", ")))
+            .collect();
+        format!(" ({})", named.join("; "))
     }
 }
 
@@ -47,9 +86,25 @@ pub struct Finding {
     pub severity: Severity,
     pub message: String,
     pub location: String,
+    /// 1-based start of the reported YAML node.
     pub line: usize,
+    pub column: usize,
+    /// 1-based end, with the column after the node's last character (SARIF `endColumn`).
+    pub end_line: usize,
+    pub end_column: usize,
     pub route: Route<'static>,
     pub fix: Option<ProposedFix>,
+    /// The equivalent ID this finding belongs to when an other tool splits the rule, such as
+    /// `unpinned-images` for an image in `unpinned-action`.
+    pub concept: Option<&'static str>,
+}
+
+impl Finding {
+    /// Whether an ignore or config key names this finding: the whole rule, or its concept.
+    pub fn answers_to(&self, id: &str) -> bool {
+        self.rule.whole(id)
+            || (self.rule.answers_to(id) && self.concept.is_none_or(|concept| concept == id))
+    }
 }
 
 pub struct ProposedFix {
@@ -66,13 +121,16 @@ pub enum ChangeKind {
 
 pub use repository::Located;
 
+/// The rule's `rules.<id>.config` block, if the config has one.
+pub type Options<'a> = Option<&'a yaml_serde::Value>;
+
 type Detect = fn(&Workflow) -> Result<Vec<Finding>, String>;
-type RepositoryDetect = fn(&Path, bool) -> Result<Vec<Located>, String>;
-type OnlineDetect = fn(&Workflow, &GitHub) -> Result<Vec<Finding>, String>;
+type ConfigurableDetect = fn(&Workflow, Options) -> Result<Vec<Finding>, String>;
+type RepositoryDetect = fn(&Path, bool, Options) -> Result<Vec<Located>, String>;
+type OnlineDetect = fn(&Workflow, &GitHub, Options) -> Result<Vec<Finding>, String>;
 
 const REGISTRY: &[(&Rule, Detect)] = &[
     // Supply chain
-    (&immutable_references::RULE, immutable_references::detect),
     (
         &supply_chain::UNPINNED_PACKAGE,
         supply_chain::unpinned_package,
@@ -104,7 +162,6 @@ const REGISTRY: &[(&Rule, Detect)] = &[
     (&persist_credentials::RULE, persist_credentials::detect),
     (&permissions::OIDC, permissions::oidc),
     // Runner
-    (&runner::SELF_HOSTED, runner::self_hosted),
     (&runner::MONITORING, runner::monitoring),
     (&runner::VERSIONING, runner::versioning),
     // Maintainability
@@ -140,6 +197,13 @@ const REGISTRY: &[(&Rule, Detect)] = &[
     ),
 ];
 
+/// Rules that read `rules.<id>.config`, with the option names zizmor documents.
+const CONFIGURABLE: &[(&Rule, ConfigurableDetect)] = &[
+    (&immutable_references::RULE, immutable_references::detect),
+    (&supply_chain::FORBIDDEN, supply_chain::forbidden),
+    (&runner::SELF_HOSTED, runner::self_hosted),
+];
+
 const ONLINE: &[(&Rule, OnlineDetect)] = &[
     (&online::VULNERABLE, online::vulnerable),
     (&online::OUTDATED, online::outdated),
@@ -158,9 +222,26 @@ pub fn all() -> impl Iterator<Item = (&'static Rule, &'static str)> {
     REGISTRY
         .iter()
         .map(|(rule, _)| (*rule, "workflow"))
+        .chain(CONFIGURABLE.iter().map(|(rule, _)| (*rule, "workflow")))
         .chain(ONLINE.iter().map(|(rule, _)| (*rule, "online")))
         .chain(REPOSITORY.iter().map(|(rule, _)| (*rule, "repository")))
         .chain([(&online::SETTINGS, "repository")])
+}
+
+/// Config IDs whose `config` block no crosgha rule reads.
+pub fn unused_options(config: &crate::config::Config) -> Vec<String> {
+    let readers: Vec<&Rule> = CONFIGURABLE
+        .iter()
+        .map(|(rule, _)| *rule)
+        .chain(ONLINE.iter().map(|(rule, _)| *rule))
+        .chain(REPOSITORY.iter().map(|(rule, _)| *rule))
+        .filter(|rule| rule.configurable)
+        .collect();
+    config
+        .configured_ids()
+        .filter(|id| !readers.iter().any(|rule| rule.answers_to(id)))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Actions settings of `repository` (`owner/name`), read through the GitHub API.
@@ -183,23 +264,28 @@ pub fn detect_repository(github: &Path, settings: &Settings) -> Result<Vec<Locat
     let mut found = Vec::new();
     for (rule, detect) in REPOSITORY {
         if enabled(rule, settings) {
-            found.extend(detect(github, settings.ignores)?);
+            found.extend(detect(
+                github,
+                settings.ignores,
+                settings.config.options(rule),
+            )?);
         }
     }
     Ok(finish_located(found, settings))
 }
 
-fn enabled(rule: &Rule, settings: &Settings) -> bool {
+fn enabled(rule: &'static Rule, settings: &Settings) -> bool {
     rule.persona <= settings.persona && !settings.config.disabled(rule)
 }
 
 /// Applies config ignores, severity remaps, and `--min-severity` to findings from `file`.
 fn finish(findings: &mut Vec<Finding>, settings: &Settings, file: &str) {
+    findings.retain(|finding| !settings.config.drops(finding));
     if settings.ignores {
-        findings.retain(|finding| !settings.config.ignores(finding.rule, file, finding.line));
+        findings.retain(|finding| !settings.config.ignores(finding, file));
     }
     for finding in findings.iter_mut() {
-        if let Some(severity) = settings.config.severity(finding.rule) {
+        if let Some(severity) = settings.config.severity(finding) {
             finding.severity = severity;
         }
     }
@@ -220,10 +306,15 @@ pub fn detect_all(
             findings.extend(detect(workflow)?);
         }
     }
+    for (rule, detect) in CONFIGURABLE {
+        if enabled(rule, settings) {
+            findings.extend(detect(workflow, settings.config.options(rule))?);
+        }
+    }
     if let Some(github) = &settings.github {
         for (rule, detect) in ONLINE {
             if enabled(rule, settings) {
-                findings.extend(detect(workflow, github)?);
+                findings.extend(detect(workflow, github, settings.config.options(rule))?);
             }
         }
     }
@@ -265,7 +356,7 @@ pub(super) fn ignored(workflow: &Workflow, finding: &Finding) -> bool {
         .feature_comments(&feature)
         .iter()
         .flat_map(|comment| ignore_list(workflow.document.extract(comment)))
-        .any(|id| finding.rule.answers_to(id))
+        .any(|id| finding.answers_to(id))
 }
 
 fn ignore_list(comment: &str) -> Vec<&str> {

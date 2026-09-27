@@ -1,0 +1,10 @@
+# Team policy for workflow scanning.
+rules:
+  script-injection:
+    ignore:
+      - ci.yml:14 # The title is only echoed.
+  unpinned-images:
+    disable: true
+  excessive-permissions:
+    remap:
+      severity: high

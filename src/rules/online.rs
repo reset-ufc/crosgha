@@ -5,7 +5,7 @@ use std::path::Path;
 
 use yamlpath::Route;
 
-use super::{Finding, Located, Rule, common};
+use super::{Finding, Located, Options, Rule, common};
 use crate::{
     github::GitHub,
     policy::{Persona, Severity},
@@ -16,58 +16,70 @@ use crate::{
 // https://docs.github.com/en/rest/security-advisories/global-advisories
 pub const VULNERABLE: Rule = Rule {
     id: "known-vulnerable-action",
+    summary: "Referenced action versions must not have published advisories.",
     tag: "known-vulnerable-action",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &["known-vulnerable-actions"],
+    equivalents: &[("zizmor", "known-vulnerable-actions")],
+    configurable: true,
 };
 
 // GHAST TP-1 and CIAnalyser `reportUpdateLag`: the referenced version is older than the
 // repository's latest release.
 pub const OUTDATED: Rule = Rule {
     id: "outdated-action",
+    summary: "Referenced action versions should not lag behind the latest release.",
     tag: "outdated-action",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // pinact `--verify-comment` and zizmor `ref-version-mismatch`: the `# vX.Y.Z` comment next to
 // a SHA must name the tag that points at that SHA.
 pub const COMMENT_MISMATCH: Rule = Rule {
     id: "version-comment-mismatch",
+    summary: "The version comment next to a pinned SHA must name that SHA's tag.",
     tag: "version-comment-mismatch",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    aliases: &["ref-version-mismatch"],
+    equivalents: &[("zizmor", "ref-version-mismatch")],
+    configurable: false,
 };
 
 // zizmor `impostor-commit`: a SHA that belongs to a fork, not to the named repository.
 pub const IMPOSTOR: Rule = Rule {
     id: "impostor-commit",
+    summary: "A pinned SHA must belong to the named repository, not to a fork.",
     tag: "typosquatting/impostor-commit",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &[],
+    equivalents: &[("zizmor", "impostor-commit")],
+    configurable: false,
 };
 
 // zizmor `archived-uses`: archived actions receive no security fixes.
 pub const ARCHIVED: Rule = Rule {
     id: "archived-action",
+    summary: "Actions from archived repositories receive no security fixes.",
     tag: "untrusted-3rd-party-action",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &["archived-uses"],
+    equivalents: &[("zizmor", "archived-uses")],
+    configurable: false,
 };
 
 // Repository Actions settings that widen every workflow's token:
 // https://docs.github.com/en/rest/actions/permissions#get-default-workflow-permissions-for-a-repository
 pub const SETTINGS: Rule = Rule {
     id: "repo-org-settings",
+    summary: "Repository Actions settings must not grant write tokens or pull request approval by default.",
     tag: "repo-org-settings",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 struct Pin<'a> {
@@ -129,7 +141,19 @@ fn numbers(version: &str) -> Vec<u64> {
         .collect()
 }
 
-pub fn vulnerable(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, String> {
+pub fn vulnerable(
+    workflow: &Workflow,
+    github: &GitHub,
+    options: Options,
+) -> Result<Vec<Finding>, String> {
+    // zizmor's `rules.known-vulnerable-actions.config.allow`: advisory IDs to accept.
+    let allowed: Vec<&str> = options
+        .and_then(|options| options.get("allow"))
+        .and_then(|allow| allow.as_sequence())
+        .into_iter()
+        .flatten()
+        .filter_map(|id| id.as_str())
+        .collect();
     let mut findings = Vec::new();
     for pin in pins(workflow) {
         let Some(version) = &pin.version else {
@@ -147,6 +171,7 @@ pub fn vulnerable(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, 
             .into_iter()
             .flatten()
             .filter_map(|advisory| advisory.get("ghsa_id")?.as_str())
+            .filter(|id| !allowed.contains(id))
             .collect();
         if !ids.is_empty() {
             findings.push(common::finding(
@@ -161,7 +186,11 @@ pub fn vulnerable(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, 
     Ok(findings)
 }
 
-pub fn outdated(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, String> {
+pub fn outdated(
+    workflow: &Workflow,
+    github: &GitHub,
+    _options: Options,
+) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
         let Some(version) = &pin.version else {
@@ -193,7 +222,11 @@ pub fn outdated(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, St
     Ok(findings)
 }
 
-pub fn comment_mismatch(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, String> {
+pub fn comment_mismatch(
+    workflow: &Workflow,
+    github: &GitHub,
+    _options: Options,
+) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
         let (Some(sha), Some(version)) = (pin.sha, &pin.version) else {
@@ -224,7 +257,11 @@ pub fn comment_mismatch(workflow: &Workflow, github: &GitHub) -> Result<Vec<Find
     Ok(findings)
 }
 
-pub fn impostor(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, String> {
+pub fn impostor(
+    workflow: &Workflow,
+    github: &GitHub,
+    _options: Options,
+) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
         let Some(sha) = pin.sha else { continue };
@@ -274,7 +311,11 @@ pub fn impostor(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, St
     Ok(findings)
 }
 
-pub fn archived(workflow: &Workflow, github: &GitHub) -> Result<Vec<Finding>, String> {
+pub fn archived(
+    workflow: &Workflow,
+    github: &GitHub,
+    _options: Options,
+) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
         let repository = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo))?;
@@ -326,8 +367,12 @@ pub fn settings(github: &GitHub, repository: &str, path: &Path) -> Result<Vec<Lo
                 message: message.to_owned(),
                 location: format!("repository {repository}"),
                 line: 1,
+                column: 1,
+                end_line: 1,
+                end_column: 1,
                 route: Route::default(),
                 fix: None,
+                concept: None,
             },
         })
         .collect())

@@ -14,9 +14,9 @@ struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Workflow file or directory to scan.
+    /// Workflow files, workflow directories, or repository roots to scan.
     #[arg(value_name = "PATH", default_value = ".github/workflows")]
-    path: PathBuf,
+    paths: Vec<PathBuf>,
 
     /// Apply verified fixes to workflow files.
     #[arg(long)]
@@ -71,7 +71,11 @@ struct Args {
     #[arg(long)]
     list_rules: bool,
 
-    /// Report format. JSON and SARIF are reserved for the planned Action.
+    /// Also write a SARIF report to this file, whatever `--format` prints.
+    #[arg(long, value_name = "FILE")]
+    sarif_file: Option<PathBuf>,
+
+    /// Report format: text (also `plain`), json, sarif, or github (workflow annotations).
     #[arg(long, value_enum, default_value_t = report::Format::Text)]
     format: report::Format,
 
@@ -118,12 +122,18 @@ pub fn run() -> ExitCode {
         print!("{}", report::rules());
         return ExitCode::SUCCESS;
     }
-    if let Err(error) = args.format.ensure_available() {
-        eprintln!("error: {error}");
-        return ExitCode::from(2);
-    }
-    let workflows = match filesystem::discover(&args.path) {
-        Ok(workflows) => workflows,
+    let workflows = match args
+        .paths
+        .iter()
+        .map(|path| filesystem::discover(path))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(found) => {
+            let mut workflows: Vec<PathBuf> = found.into_iter().flatten().collect();
+            workflows.sort();
+            workflows.dedup();
+            workflows
+        }
         Err(error) => {
             eprintln!("error: {error}");
             return ExitCode::from(2);
@@ -144,6 +154,9 @@ pub fn run() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    for id in rules::unused_options(&config) {
+        eprintln!("warning: `rules.{id}.config` has no crosgha equivalent and is ignored");
+    }
     let settings = policy::Settings {
         persona: args.persona,
         github: token
@@ -171,13 +184,25 @@ pub fn run() -> ExitCode {
     if failures > 0 {
         return ExitCode::from(2);
     }
-    let repository = filesystem::github_dir(&args.path)
-        .map(|github| rules::detect_repository(&github, &settings))
-        .transpose()
-        .map(Option::unwrap_or_default)
+    let mut github_dirs: Vec<PathBuf> = args
+        .paths
+        .iter()
+        .filter_map(|path| filesystem::github_dir(path))
+        .collect();
+    github_dirs.sort();
+    github_dirs.dedup();
+    let repository = github_dirs
+        .iter()
+        .map(|github| rules::detect_repository(github, &settings))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|found| found.into_iter().flatten().collect::<Vec<_>>())
         .and_then(|mut found| {
             if let Some(repository) = &args.repository {
-                found.extend(rules::detect_settings(repository, &args.path, &settings)?);
+                found.extend(rules::detect_settings(
+                    repository,
+                    &args.paths[0],
+                    &settings,
+                )?);
             }
             Ok(found)
         });
@@ -200,7 +225,16 @@ pub fn run() -> ExitCode {
             }
         }
     }
-    print!("{}", report::text(&files, &repository, args.fix));
+    if let Some(target) = &args.sarif_file
+        && let Err(error) = std::fs::write(target, report::sarif(&files, &repository, args.fix))
+    {
+        eprintln!("error: {}: {error}", target.display());
+        return ExitCode::from(2);
+    }
+    print!(
+        "{}",
+        report::render(args.format, &files, &repository, args.fix)
+    );
 
     let should_fail = files.iter().any(|file| {
         let findings = if args.fix {
@@ -236,7 +270,7 @@ fn load_config(args: &Args) -> Result<config::Config, String> {
         .or_else(|| std::env::var_os("ZIZMOR_CONFIG").map(PathBuf::from));
     match explicit {
         Some(path) => config::Config::load(&path),
-        None => Ok(config::Config::discover(&args.path)?
+        None => Ok(config::Config::discover(&args.paths[0])?
             .map(|(_, config)| config)
             .unwrap_or_default()),
     }
@@ -274,6 +308,9 @@ fn run_migrate(
                 "Migrated {} step(s) in {} workflow file(s).",
                 summary.steps, summary.files
             );
+            if let Some(config) = &summary.config {
+                println!("Wrote {}.", config.display());
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {

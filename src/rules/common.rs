@@ -312,14 +312,20 @@ pub fn all_uses(workflow: &Workflow) -> Vec<(Route<'static>, String, &str)> {
     found
 }
 
-/// Line (1-based) of the key a route ends with, or of the node for index routes.
-pub fn line(workflow: &Workflow, route: &Route) -> Result<usize, String> {
+/// 1-based start and end of the key a route ends with, or of the node for index routes. The
+/// end column is exclusive, as SARIF's `endColumn` is.
+pub fn span(workflow: &Workflow, route: &Route) -> Result<[usize; 4], String> {
     let feature = workflow
         .document
         .query_key_only(route)
         .or_else(|_| workflow.document.query_pretty(route))
         .map_err(|error| error.to_string())?;
-    Ok(feature.location.point_span.0.0 + 1)
+    let ((line, column), (end_line, end_column)) = feature.location.point_span;
+    Ok([line + 1, column + 1, end_line + 1, end_column + 1])
+}
+
+pub fn line(workflow: &Workflow, route: &Route) -> Result<usize, String> {
+    Ok(span(workflow, route)?[0])
 }
 
 pub fn finding(
@@ -329,13 +335,54 @@ pub fn finding(
     location: impl Into<String>,
     message: impl Into<String>,
 ) -> Result<Finding, String> {
+    let [line, column, end_line, end_column] = span(workflow, &route)?;
     Ok(Finding {
         rule,
         severity: rule.severity,
         message: message.into(),
         location: location.into(),
-        line: line(workflow, &route)?,
+        line,
+        column,
+        end_line,
+        end_column,
         route,
         fix: None,
+        concept: None,
     })
+}
+
+/// How specifically a zizmor repository pattern matches a `uses` value, or `None` when it does
+/// not. Higher is more specific: `owner/repo/path@ref` > `owner/repo/path` > `owner/repo` >
+/// `owner/repo/*` > `owner/*` > `*`. https://docs.zizmor.sh/configuration/#repository-patterns
+pub fn pattern_specificity(pattern: &str, uses: &str) -> Option<u8> {
+    let reference = parse_uses(uses)?;
+    let (name, _) = uses.rsplit_once('@')?;
+    let same = |left: &str, right: &str| left.eq_ignore_ascii_case(right);
+    if pattern == "*" {
+        return Some(0);
+    }
+    if pattern.contains('@') {
+        return same(pattern, uses).then_some(5);
+    }
+    let parts: Vec<&str> = pattern.split('/').collect();
+    match parts.as_slice() {
+        [owner, "*"] => same(owner, reference.owner).then_some(1),
+        [owner, repo, "*"] => {
+            (same(owner, reference.owner) && same(repo, reference.repo)).then_some(2)
+        }
+        [_, _] => same(pattern, name).then_some(3),
+        _ => same(pattern, name).then_some(4),
+    }
+}
+
+/// The value of the most specific pattern in `patterns` that matches `uses`.
+pub fn most_specific<'a, T>(
+    patterns: impl IntoIterator<Item = (&'a str, T)>,
+    uses: &str,
+) -> Option<T> {
+    patterns
+        .into_iter()
+        .filter_map(|(pattern, value)| Some((pattern_specificity(pattern, uses)?, value)))
+        .max_by_key(|(specificity, _)| *specificity)
+        .map(|(_, value)| value)
 }

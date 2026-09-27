@@ -8,7 +8,7 @@ use std::{
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule, common};
+use super::{Finding, Options, Rule, common};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -18,20 +18,24 @@ use crate::{
 // https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#cooldown-
 pub const COOLDOWN: Rule = Rule {
     id: "missing-release-cooldown",
+    summary: "Dependabot updates should wait for a minimum release age.",
     tag: "missing-release-cooldown",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    aliases: &["dependabot-cooldown"],
+    equivalents: &[("zizmor", "dependabot-cooldown")],
+    configurable: true,
 };
 
 // Fares et al. (arXiv 2601.14455) FGB-05 "Hardening Gap Weakness" and the StepSecurity
 // secure-repo checks (Dependabot, CodeQL, dependency review, OpenSSF Scorecard).
 pub const TOOLING: Rule = Rule {
     id: "missing-security-tooling",
+    summary: "Repositories should run dependency updates, CodeQL, dependency review, and OpenSSF Scorecard.",
     tag: "missing-security-tooling",
     severity: Severity::Note,
     persona: Persona::Auditor,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 pub struct Located {
@@ -39,7 +43,18 @@ pub struct Located {
     pub finding: Finding,
 }
 
-pub fn cooldown(github: &Path, honor_ignores: bool) -> Result<Vec<Located>, String> {
+/// zizmor's default for `rules.dependabot-cooldown.config.days`.
+const DEFAULT_COOLDOWN_DAYS: u64 = 7;
+
+pub fn cooldown(
+    github: &Path,
+    honor_ignores: bool,
+    options: Options,
+) -> Result<Vec<Located>, String> {
+    let minimum = options
+        .and_then(|options| options.get("days"))
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_COOLDOWN_DAYS);
     let mut found = Vec::new();
     for name in ["dependabot.yml", "dependabot.yaml"] {
         let path = github.join(name);
@@ -52,9 +67,19 @@ pub fn cooldown(github: &Path, honor_ignores: bool) -> Result<Vec<Located>, Stri
             continue;
         };
         for (index, update) in updates.iter().enumerate() {
-            if update.get("cooldown").is_some() {
-                continue;
-            }
+            let days = update.get("cooldown").map(|cooldown| {
+                cooldown
+                    .get("default-days")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            });
+            let message = match days {
+                None => "updates are adopted without a minimum release age".to_owned(),
+                Some(days) if days < minimum => {
+                    format!("cooldown of {days} day(s) is below the {minimum}-day minimum")
+                }
+                Some(_) => continue,
+            };
             let ecosystem = update
                 .get("package-ecosystem")
                 .and_then(Value::as_str)
@@ -64,7 +89,7 @@ pub fn cooldown(github: &Path, honor_ignores: bool) -> Result<Vec<Located>, Stri
                 &COOLDOWN,
                 Route::default().with_key("updates").with_key(index),
                 format!("update `{ecosystem}`"),
-                "updates are adopted without a minimum release age",
+                message,
             )?;
             if !honor_ignores || !super::ignored(&config, &finding) {
                 found.push(Located {
@@ -94,7 +119,11 @@ const SCANNERS: &[(&str, &str)] = &[
     ("OpenSSF Scorecard", "ossf/scorecard-action"),
 ];
 
-pub fn tooling(github: &Path, _honor_ignores: bool) -> Result<Vec<Located>, String> {
+pub fn tooling(
+    github: &Path,
+    _honor_ignores: bool,
+    _options: Options,
+) -> Result<Vec<Located>, String> {
     let root = github.parent().unwrap_or(github);
     let mut workflows = String::new();
     if let Ok(entries) = fs::read_dir(github.join("workflows")) {
@@ -128,8 +157,12 @@ pub fn tooling(github: &Path, _honor_ignores: bool) -> Result<Vec<Located>, Stri
                 message: format!("repository has no {what}"),
                 location: "repository".to_owned(),
                 line: 1,
+                column: 1,
+                end_line: 1,
+                end_column: 1,
                 route: Route::default(),
                 fix: None,
+                concept: None,
             },
         })
         .collect())

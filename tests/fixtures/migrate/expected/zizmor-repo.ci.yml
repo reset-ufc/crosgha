@@ -1,0 +1,27 @@
+name: Security
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  zizmor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Run zizmor
+        uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          inputs: .github/workflows
+          persona: pedantic
+          min-severity: medium
+          online-audits: 'false'
+          advanced-security: 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Report
+        run: |
+          zizmor --format sarif . > results.sarif
+          cat results.sarif

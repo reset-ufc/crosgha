@@ -1,0 +1,6 @@
+rules:
+  forbidden-action:
+    config:
+      allow:
+        - actions/*
+        - github/codeql-action/*

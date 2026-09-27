@@ -8,10 +8,12 @@ use crate::{
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions
 pub const RULE: Rule = Rule {
     id: "missing-permissions-block",
+    summary: "Jobs must declare GITHUB_TOKEN permissions instead of relying on defaults.",
     tag: "missing-permissions-block",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {

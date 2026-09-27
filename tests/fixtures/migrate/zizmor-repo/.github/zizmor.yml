@@ -1,0 +1,12 @@
+# Team policy for workflow scanning.
+rules:
+  template-injection:
+    ignore:
+      - ci.yml:14 # The title is only echoed.
+  unpinned-images:
+    disable: true
+  use-trusted-publishing:
+    disable: true
+  excessive-permissions:
+    remap:
+      severity: high

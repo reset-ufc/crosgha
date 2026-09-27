@@ -1,4 +1,6 @@
-use super::{Finding, Rule, common};
+use yaml_serde::Value;
+
+use super::{Finding, Options, Rule, common};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -8,30 +10,83 @@ use crate::{
 // `adhoc-packages`/`unpinned-tools` audits: https://docs.zizmor.sh/audits/
 pub const UNPINNED_PACKAGE: Rule = Rule {
     id: "unpinned-package",
+    summary: "Tools installed in run steps must name an exact version.",
     tag: "unpinned-package",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    aliases: &["adhoc-packages", "unpinned-tools"],
+    equivalents: &[("zizmor", "adhoc-packages"), ("zizmor", "unpinned-tools")],
+    configurable: false,
 };
 
 // Poutine `unverified_script_exec` and Semgrep `curl-eval`: a downloaded script runs
 // before anything checks its integrity.
 pub const REMOTE_SCRIPT: Rule = Rule {
     id: "unverified-remote-script",
+    summary: "Downloaded scripts must not run before their integrity is checked.",
     tag: "unverified-remote-script",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 // zizmor `typosquat-uses`: an owner one edit away from a well-known publisher.
 pub const TYPOSQUATTING: Rule = Rule {
     id: "typosquatted-action",
+    summary: "Action owners one edit away from a well-known publisher may be typosquats.",
     tag: "typosquatting/impostor-commit",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &["typosquat-uses"],
+    equivalents: &[("zizmor", "typosquat-uses")],
+    configurable: false,
 };
+
+// zizmor `forbidden-uses`: an allowlist or denylist of `uses` repository patterns. It does
+// nothing until configured. https://docs.zizmor.sh/audits/#forbidden-uses
+pub const FORBIDDEN: Rule = Rule {
+    id: "forbidden-action",
+    summary: "`uses` must match the configured allowlist or denylist.",
+    tag: "untrusted-3rd-party-action",
+    severity: Severity::Warning,
+    persona: Persona::Regular,
+    equivalents: &[("zizmor", "forbidden-uses")],
+    configurable: true,
+};
+
+pub fn forbidden(workflow: &Workflow, options: Options) -> Result<Vec<Finding>, String> {
+    let patterns = |key: &str| -> Option<Vec<&str>> {
+        let list = options?.get(key)?.as_sequence()?;
+        Some(list.iter().filter_map(Value::as_str).collect())
+    };
+    let (allow, deny) = (patterns("allow"), patterns("deny"));
+    if allow.is_none() && deny.is_none() {
+        return Ok(Vec::new());
+    }
+    let matches = |list: &Option<Vec<&str>>, uses: &str| {
+        list.as_ref().is_some_and(|list| {
+            list.iter()
+                .any(|pattern| common::pattern_specificity(pattern, uses).is_some())
+        })
+    };
+    let mut findings = Vec::new();
+    for (route, location, uses) in common::all_uses(workflow) {
+        // Repository refs only, like zizmor: local paths and `docker://` images are skipped.
+        if common::parse_uses(uses).is_none() || uses.starts_with("docker://") {
+            continue;
+        }
+        let forbidden = matches(&deny, uses) || (allow.is_some() && !matches(&allow, uses));
+        if forbidden {
+            findings.push(common::finding(
+                workflow,
+                &FORBIDDEN,
+                route,
+                location,
+                format!("`{uses}` is not allowed by the forbidden-uses policy"),
+            )?);
+        }
+    }
+    Ok(findings)
+}
 
 pub fn unpinned_package(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();

@@ -1,0 +1,10 @@
+self-hosted-runner:
+  labels:
+    - linux.2xlarge
+    - gpu-*
+config-variables:
+  - DEFAULT_RUNNER
+paths:
+  .github/workflows/**/*.yml:
+    ignore:
+      - 'shellcheck reported issue in this script: SC2086:.+'

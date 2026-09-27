@@ -1,0 +1,8 @@
+rules:
+  secrets-outside-env:
+    config:
+      allow: [CI_COVERAGE_TOKEN]
+  unpinned-uses:
+    config:
+      policies:
+        "*": ref-pin

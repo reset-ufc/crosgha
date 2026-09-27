@@ -1,7 +1,7 @@
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule, common};
+use super::{Finding, Options, Rule, common};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -15,13 +15,31 @@ use crate::{
 // https://github.com/opencontainers/image-spec/blob/main/descriptor.md#registered-algorithms
 pub const RULE: Rule = Rule {
     id: "unpinned-action",
+    summary: "Actions, reusable workflows, and container images must be pinned to a full commit SHA or image digest.",
     tag: "unpinned-action",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    aliases: &["unpinned-uses", "unpinned-images"],
+    equivalents: &[("zizmor", "unpinned-uses"), ("zizmor", "unpinned-images")],
+    configurable: true,
 };
 
-pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+/// zizmor's `rules.unpinned-uses.config.policies`: pattern -> `hash-pin`, `ref-pin`, or `any`.
+/// Unmatched refs get the implicit `"*": hash-pin`.
+/// https://docs.zizmor.sh/audits/#unpinned-uses-configuration
+fn policies(options: Options) -> Vec<(String, String)> {
+    options
+        .and_then(|options| options.get("policies"))
+        .and_then(Value::as_mapping)
+        .into_iter()
+        .flatten()
+        .filter_map(|(pattern, policy)| {
+            Some((pattern.as_str()?.to_owned(), policy.as_str()?.to_owned()))
+        })
+        .collect()
+}
+
+pub fn detect(workflow: &Workflow, options: Options) -> Result<Vec<Finding>, String> {
+    let policies = policies(options);
     let Some(jobs) = workflow.value.get("jobs").and_then(Value::as_mapping) else {
         return Ok(Vec::new());
     };
@@ -38,6 +56,7 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         if let Some(uses) = job.get("uses").and_then(Value::as_str) {
             check_action(
                 workflow,
+                &policies,
                 &mut findings,
                 job_route.clone().with_key("uses"),
                 format!("job `{job_name}`"),
@@ -90,6 +109,7 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             if let Some(uses) = step.uses() {
                 check_action(
                     workflow,
+                    &policies,
                     &mut findings,
                     step.key("uses"),
                     step.location.clone(),
@@ -104,6 +124,7 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 
 fn check_action(
     workflow: &Workflow,
+    policies: &[(String, String)],
     findings: &mut Vec<Finding>,
     route: Route<'static>,
     location: String,
@@ -114,6 +135,15 @@ fn check_action(
     }
     if let Some(image) = reference.strip_prefix("docker://") {
         return check_image(workflow, findings, route, location, image);
+    }
+    let policy = common::most_specific(
+        policies
+            .iter()
+            .map(|(pattern, policy)| (pattern.as_str(), policy.as_str())),
+        reference,
+    );
+    if matches!(policy, Some("ref-pin" | "any")) {
+        return Ok(());
     }
     // ponytail: Check literal full-length SHA syntax; resolve commit ownership
     // through the hosting provider when reference identity checks are added.
@@ -178,6 +208,12 @@ fn push_finding(
     location: String,
     message: &'static str,
 ) -> Result<(), String> {
-    findings.push(common::finding(workflow, &RULE, route, location, message)?);
+    let mut finding = common::finding(workflow, &RULE, route, location, message)?;
+    finding.concept = Some(if message.starts_with("container image") {
+        "unpinned-images"
+    } else {
+        "unpinned-uses"
+    });
+    findings.push(finding);
     Ok(())
 }

@@ -1,0 +1,19 @@
+name: Custom runners
+on: [pull_request]
+permissions: {}
+jobs:
+  big:
+    runs-on: linux.2xlarge # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo big
+  gpu:
+    runs-on: [gpu-a100] # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo gpu
+  hosted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo hosted

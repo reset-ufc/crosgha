@@ -1,0 +1,6 @@
+rules:
+  self-hosted-runner:
+    config:
+      labels:
+        - linux.2xlarge
+        - gpu-*

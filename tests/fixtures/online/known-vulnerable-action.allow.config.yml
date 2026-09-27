@@ -1,0 +1,5 @@
+rules:
+  known-vulnerable-actions:
+    config:
+      allow:
+        - GHSA-mrrh-fwg8-r2c3

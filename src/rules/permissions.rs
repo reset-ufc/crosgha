@@ -17,30 +17,39 @@ use crate::{
 // GHAST PERM-1 flags permissions declared only at the workflow level.
 pub const EXCESSIVE: Rule = Rule {
     id: "excessive-permissions",
+    summary: "GITHUB_TOKEN must not get write-all or workflow-level write scopes.",
     tag: "excessive-permissions",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &[],
+    equivalents: &[("zizmor", "excessive-permissions")],
+    configurable: false,
 };
 
 // ghalint 005 (workflow-level secrets in env) and zizmor `overprovisioned-secrets`
 // (`toJSON(secrets)`, dynamic `secrets[...]`).
 pub const SECRETS_EXPOSURE: Rule = Rule {
     id: "secrets-exposure",
+    summary: "Secrets must not be exposed to every step or read in bulk.",
     tag: "secrets-exposure",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    aliases: &["overprovisioned-secrets"],
+    equivalents: &[("zizmor", "overprovisioned-secrets")],
+    configurable: false,
 };
 
 // actionlint `credentials` and zizmor `hardcoded-container-credentials`, plus token formats
 // GitHub and AWS publish for secret scanning.
 pub const HARDCODED: Rule = Rule {
     id: "hardcoded-credentials",
+    summary: "Passwords and access tokens must not be written in workflows.",
     tag: "hardcoded-credentials",
     severity: Severity::Error,
     persona: Persona::Regular,
-    aliases: &["hardcoded-container-credentials", "credentials"],
+    equivalents: &[
+        ("zizmor", "hardcoded-container-credentials"),
+        ("actionlint", "credentials"),
+    ],
+    configurable: false,
 };
 
 // Trajan `oidc-token-not-narrowed`: `id-token: write` granted beyond the job that deploys,
@@ -48,10 +57,12 @@ pub const HARDCODED: Rule = Rule {
 // https://docs.github.com/en/actions/concepts/security/openid-connect
 pub const OIDC: Rule = Rule {
     id: "oidc-misconfig",
+    summary: "`id-token: write` must be scoped to the job that needs it.",
     tag: "oidc-misconfig",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    aliases: &[],
+    equivalents: &[],
+    configurable: false,
 };
 
 fn permissions_route() -> Route<'static> {
