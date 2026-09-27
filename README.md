@@ -19,6 +19,18 @@ License: TBD by the author.
 
 ## Install
 
+### Install script
+
+On Linux x86_64, this installs the latest release to `~/.local/bin` after checking it against the release's
+`sha256.sum`:
+
+```sh
+curl -fsSL https://crosgha.meiazero.dev/install.sh | sh
+```
+
+`CROSGHA_VERSION=0.9.0` pins a release and `CROSGHA_INSTALL_DIR` changes the target directory. Uninstall with
+`rm ~/.local/bin/crosgha`.
+
 ### From a release
 
 Releases ship one Linux binary (`x86_64-unknown-linux-gnu`) with a `sha256.sum`:
