@@ -1,0 +1,13 @@
+name: Welcome stargazers
+on:
+  watch:
+    types: [started]
+permissions: {}
+jobs:
+  welcome:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: anthropics/claude-code-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: llm-prompt-injection
+        with:
+          prompt: Write a thank-you note for the newest stargazer

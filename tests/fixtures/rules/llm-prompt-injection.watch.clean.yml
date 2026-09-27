@@ -1,0 +1,11 @@
+name: Welcome stargazers
+on:
+  watch:
+    types: [started]
+permissions: {}
+jobs:
+  welcome:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "Thanks for the star"

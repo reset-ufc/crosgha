@@ -1,0 +1,13 @@
+name: Mirror forks
+on: fork
+permissions: {}
+jobs:
+  register:
+    permissions:
+      id-token: write # expect: oidc-misconfig
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: ./register-fork "$FORK"
+        env:
+          FORK: ${{ github.event.forkee.full_name }}

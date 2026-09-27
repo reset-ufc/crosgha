@@ -160,8 +160,12 @@ pub fn has_trigger(workflow: &Workflow, names: &[&str]) -> bool {
 /// https://docs.github.com/en/actions/reference/security/secure-use#mitigating-the-risks-of-untrusted-code-checkout
 pub const PRIVILEGED_TRIGGERS: &[&str] = &["pull_request_target", "workflow_run"];
 
-/// Events that anyone who can open an issue, comment, or fork can start.
+/// Events that anyone who can open an issue, comment, fork, or star can start; `fork` and `watch`
+/// run on the default branch:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
 pub const EXTERNAL_TRIGGERS: &[&str] = &[
+    "fork",
+    "watch",
     "issues",
     "issue_comment",
     "discussion",
