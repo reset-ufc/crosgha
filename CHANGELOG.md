@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/meiazero/crosgha/compare/v0.8.1...v0.9.0) (2026-09-27)
+
+
+### Added
+
+* render text findings as source diagnostics with color ([26591cf](https://github.com/meiazero/crosgha/commit/26591cfb156ca6333f67f07f4a5b60ee594491ee))
+* **report:** render text findings as source diagnostics with color ([f5183ec](https://github.com/meiazero/crosgha/commit/f5183ecc842d45c47ccbc3436ea3406c98c2a9ea))
+
 ## [0.8.1](https://github.com/meiazero/crosgha/compare/v0.8.0...v0.8.1) (2026-09-27)
 
 
