@@ -5,7 +5,7 @@ formatting. The CLI recursively scans workflows, parses YAML with `yamlpath`, an
 46 rules cover every tag of the curated taxonomy: 38 per workflow, 3 per repository, and 5 that query the GitHub API.
 Only `persist-credentials` has a verified fix so far. Personas, ignore comments, `zizmor.yml` (including per-rule
 options), and `crosgha migrate` follow zizmor so users can switch tools without rewriting configuration; reports name
-the equivalent zizmor or actionlint rule. Output is text, JSON, SARIF, or GitHub annotations. The Action runs in report mode with a sha256-verified release
+the equivalent zizmor or actionlint rule. Output is text, JSON, SARIF, GitHub annotations (the default under `GITHUB_ACTIONS=true`), or brief agent lines. The Action runs in report mode with a sha256-verified release
 binary; PR and auto-merge modes are still pending.
 `crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
 
@@ -20,7 +20,7 @@ It is listed in `.git/info/exclude` and never committed.
 | One-time hook setup after cloning | `make setup` (sets `core.hooksPath=.githooks`) |
 | Build / run | `cargo build --release` · `cargo run` |
 | Everything the pre-push hook checks | `.githooks/pre-push` or `make check` (fmt, clippy `-D warnings`, tests, dogfood) |
-| Rule catalog (id, tag, severity, persona, scope) | `cargo run -- --list-rules` |
+| Rule catalog (id, tag, severity, persona, scope) | `cargo run -- --list-rules` (`-f json` adds summaries and equivalents) |
 | Release plan preview (offline) | `.tools/bin/dist plan` |
 
 ## Rules

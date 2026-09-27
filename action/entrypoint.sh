@@ -106,8 +106,11 @@ else
     unset GH_TOKEN GITHUB_TOKEN
     args+=(--offline)
 fi
+# Explicit either way: crosgha defaults to annotations when GITHUB_ACTIONS=true.
 if [[ "${CROSGHA_ANNOTATIONS:-false}" == true ]]; then
     args+=(--format github)
+else
+    args+=(--format plain)
 fi
 sarif="$RUNNER_TEMP/crosgha.sarif"
 args+=(--sarif-file "$sarif")

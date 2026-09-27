@@ -5,7 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn bin() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_crosgha"));
-    command.env_remove("GH_TOKEN").env_remove("GITHUB_TOKEN");
+    command
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GITHUB_ACTIONS");
     command
 }
 
@@ -577,7 +580,7 @@ fn migrate_converts_configs_and_shell_steps() {
 }
 
 #[test]
-fn json_and_sarif_report_the_findings_of_the_text_report() {
+fn every_format_reports_the_findings_of_the_text_report() {
     let repo = fixture("repos/configured");
     let scan = |format: &str| {
         let output = bin()
@@ -618,6 +621,23 @@ fn json_and_sarif_report_the_findings_of_the_text_report() {
     assert_eq!(injection["severity"], "error");
     assert_eq!(injection["equivalents"][0]["tool"], "zizmor");
     assert_eq!(injection["equivalents"][0]["rule"], "template-injection");
+
+    let agent = scan("agent");
+    assert_eq!(agent.lines().count(), count, "{agent}");
+    for line in agent.lines() {
+        assert!(line.starts_with(".github/workflows/"), "{line}");
+        assert!(line.contains(" help: "), "{line}");
+    }
+    let injection = agent
+        .lines()
+        .find(|line| line.contains(" script-injection: "))
+        .unwrap();
+    assert!(
+        injection.starts_with(".github/workflows/ci.yml:14:")
+            && injection.contains(": error script-injection: ")
+            && injection.contains("template-injection"),
+        "{injection}"
+    );
 
     let sarif: serde_json::Value = serde_json::from_str(&scan("sarif")).unwrap();
     assert_eq!(sarif["version"], "2.1.0");
@@ -671,6 +691,69 @@ fn json_and_sarif_report_the_findings_of_the_text_report() {
     assert!(rule("script-injection")["properties"]["security-severity"].is_string());
     assert_eq!(rule("script-injection")["properties"]["precision"], "high");
     assert_eq!(rule("unpinned-action")["properties"]["precision"], "medium");
+}
+
+#[test]
+fn github_actions_runs_default_to_annotations_unless_a_format_is_given() {
+    let scan = |format: &[&str]| {
+        let output = bin()
+            .current_dir(fixture("repos/configured"))
+            .env("GITHUB_ACTIONS", "true")
+            .args(["--persona", "pedantic", "--offline", "--no-config"])
+            .args(format)
+            .arg(".github/workflows")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let annotations = scan(&[]);
+    assert!(
+        annotations.lines().all(|line| line.starts_with("::")),
+        "{annotations}"
+    );
+    assert!(annotations.contains("::error file=.github/workflows/ci.yml,line=14,"));
+    serde_json::from_str::<serde_json::Value>(&scan(&["-f", "json"])).unwrap();
+    assert!(scan(&["--format", "plain"]).contains("script-injection ["));
+}
+
+#[test]
+fn rule_catalog_as_json_matches_the_text_catalog() {
+    let list = |format: &[&str]| {
+        let output = bin()
+            .env("GITHUB_ACTIONS", "true")
+            .arg("--list-rules")
+            .args(format)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let text = list(&[]);
+    let json: serde_json::Value = serde_json::from_str(&list(&["-f", "json"])).unwrap();
+    let rules = json["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), text.lines().count());
+    for (rule, line) in rules.iter().zip(text.lines()) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        for (key, value) in ["id", "tag", "severity", "persona", "scope"]
+            .iter()
+            .zip(fields)
+        {
+            assert_eq!(rule[key], value, "{rule}");
+        }
+        assert!(!rule["summary"].as_str().unwrap().is_empty(), "{rule}");
+    }
+    let injection = rules
+        .iter()
+        .find(|rule| rule["id"] == "script-injection")
+        .unwrap();
+    assert_eq!(injection["equivalents"][0]["rule"], "template-injection");
+
+    let rejected = bin()
+        .args(["--list-rules", "--format", "sarif"])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(2));
 }
 
 #[test]

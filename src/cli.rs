@@ -67,7 +67,8 @@ struct Args {
     #[arg(long, env = "GITHUB_REPOSITORY")]
     repository: Option<String>,
 
-    /// Print every rule with its taxonomy tag, severity, and persona, then exit.
+    /// Print every rule with its taxonomy tag, severity, persona, and scope, then exit;
+    /// `--format json` adds each rule's summary and equivalents.
     #[arg(long)]
     list_rules: bool,
 
@@ -75,9 +76,10 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     sarif_file: Option<PathBuf>,
 
-    /// Report format: text (also `plain`), json, sarif, or github (workflow annotations).
-    #[arg(long, value_enum, default_value_t = report::Format::Text)]
-    format: report::Format,
+    /// Report format: text (also `plain`), json, sarif, github (workflow annotations), or agent
+    /// (brief lines for AI agents). Defaults to github when GITHUB_ACTIONS=true, text otherwise.
+    #[arg(short, long, value_enum)]
+    format: Option<report::Format>,
 
     /// Minimum severity that makes a scan fail (any, note, warning, error, or none).
     #[arg(long, value_enum, default_value_t = policy::FailOn::Any)]
@@ -119,7 +121,14 @@ pub fn run() -> ExitCode {
         return run_migrate(*from, action.clone().zip(action_version.clone()), path);
     }
     if args.list_rules {
-        print!("{}", report::rules());
+        match args.format {
+            None | Some(report::Format::Text) => print!("{}", report::rules()),
+            Some(report::Format::Json) => print!("{}", report::rules_json()),
+            Some(_) => {
+                eprintln!("error: --list-rules prints text or json");
+                return ExitCode::from(2);
+            }
+        }
         return ExitCode::SUCCESS;
     }
     let workflows = match args
@@ -231,10 +240,14 @@ pub fn run() -> ExitCode {
         eprintln!("error: {}: {error}", target.display());
         return ExitCode::from(2);
     }
-    print!(
-        "{}",
-        report::render(args.format, &files, &repository, args.fix)
+    let format = args.format.unwrap_or(
+        if std::env::var_os("GITHUB_ACTIONS").is_some_and(|value| value == "true") {
+            report::Format::Github
+        } else {
+            report::Format::Text
+        },
     );
+    print!("{}", report::render(format, &files, &repository, args.fix));
 
     let should_fail = files.iter().any(|file| {
         let findings = if args.fix {

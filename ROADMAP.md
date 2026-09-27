@@ -5,7 +5,7 @@ binary, uploads SARIF, and writes the job summary. PR and auto-merge modes below
 are still planned. The CLI pipeline is
 organized in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). It runs 46 rules that cover
 the whole taxonomy, with a verified fix for `persist-credentials`, zizmor-compatible
-personas, ignores, and config, text/JSON/SARIF output, and `migrate --from zizmor|actionlint`.
+personas, ignores, and config, text/JSON/SARIF/annotation/agent output, and `migrate --from zizmor|actionlint`.
 
 ## Distribution
 

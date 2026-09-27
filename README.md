@@ -7,7 +7,7 @@ workflows and fixes them deterministically, preserving comments and formatting.
   the GitHub API.
 - It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
   actionlint rule in every finding, so switching tools does not mean rewriting configuration.
-- Output is text, JSON, SARIF 2.1.0, or GitHub annotations.
+- Output is text, JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), or brief lines for AI agents.
 
 License: TBD by the author.
 
@@ -27,9 +27,10 @@ cargo build --release
 ./target/release/crosgha path/to/workflow.yml
 ./target/release/crosgha --persona pedantic .github/workflows
 ./target/release/crosgha --fix .github/workflows
-./target/release/crosgha --format sarif > results.sarif   # also: json, github
+./target/release/crosgha -f sarif > results.sarif        # also: json, github, agent
 ./target/release/crosgha --sarif-file results.sarif .     # text on stdout, SARIF on disk
 ./target/release/crosgha --list-rules
+./target/release/crosgha --list-rules -f json          # catalog with summaries and equivalents
 ./target/release/crosgha migrate --from zizmor            # swap zizmor-action for the crosgha Action
 ```
 
@@ -93,7 +94,9 @@ Text lines end with the equivalent rule in other tools, such as `(zizmor: templa
 actionlint: expression)`. `--format json` writes a versioned report (`version`, `summary`,
 `findings`). `--format sarif` writes SARIF 2.1.0 with the rule metadata GitHub code scanning
 requires; it validates against the official schema. `--format github` prints workflow-command
-annotations. `--sarif-file FILE` also writes SARIF during any format, so one run serves the log and
+annotations and is the default when `GITHUB_ACTIONS=true`. `--format agent` prints one brief line
+per finding for AI agents (`path:line:col: severity rule: message help: <rule summary>`), after
+oxlint's format of the same name. `--sarif-file FILE` also writes SARIF during any format, so one run serves the log and
 the Security tab. After `--fix`, every format lists what remains.
 
 ### GitHub Action

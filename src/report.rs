@@ -18,6 +18,8 @@ pub enum Format {
     Sarif,
     /// GitHub workflow command annotations, zizmor's `github` format.
     Github,
+    /// One brief line per finding for AI agents, after oxlint's `agent` format.
+    Agent,
 }
 
 pub fn render(format: Format, files: &[FileReport], repository: &[Located], fix: bool) -> String {
@@ -26,6 +28,7 @@ pub fn render(format: Format, files: &[FileReport], repository: &[Located], fix:
         Format::Json => json(files, repository, fix),
         Format::Sarif => sarif(files, repository, fix),
         Format::Github => github(files, repository, fix),
+        Format::Agent => agent(files, repository, fix),
     }
 }
 
@@ -129,6 +132,29 @@ pub fn rules() -> String {
             )
         })
         .collect()
+}
+
+/// The `--list-rules` catalog with the fields SARIF rule descriptors carry.
+pub fn rules_json() -> String {
+    let rules: Vec<Value> = crate::rules::all()
+        .map(|(rule, scope)| {
+            json!({
+                "id": rule.id,
+                "tag": rule.tag,
+                "severity": rule.severity.as_str(),
+                "persona": rule.persona.as_str(),
+                "scope": scope,
+                "summary": rule.summary,
+                "equivalents": equivalents(rule),
+            })
+        })
+        .collect();
+    let report = json!({
+        "version": 1,
+        "tool": { "name": "crosgha", "version": env!("CARGO_PKG_VERSION") },
+        "rules": rules,
+    });
+    format!("{report:#}\n")
 }
 
 /// Every reported finding with its path: what remains after `--fix`, or everything found.
@@ -351,15 +377,40 @@ fn github(files: &[FileReport], repository: &[Located], fix: bool) -> String {
         .collect()
 }
 
-/// A relative URI from the working directory, which is the repository root in CI.
-fn artifact_uri(path: &Path) -> String {
-    let relative = std::env::current_dir()
+/// `path:line:col: severity rule: message help: summary`, one line each, like oxlint's agent
+/// format; the rule summary is the help because it states what the rule requires.
+fn agent(files: &[FileReport], repository: &[Located], fix: bool) -> String {
+    reported(files, repository, fix)
+        .into_iter()
+        .map(|(path, finding)| {
+            let line = format!(
+                "{}:{}:{}: {} {}: {}: {}{} help: {}",
+                relative(path),
+                finding.line,
+                finding.column,
+                finding.severity.as_str(),
+                finding.rule.id,
+                finding.location,
+                finding.message,
+                finding.rule.equivalents_suffix(),
+                finding.rule.summary
+            );
+            line.replace(['\r', '\n'], " ") + "\n"
+        })
+        .collect()
+}
+
+/// A path relative to the working directory, which is the repository root in CI.
+fn relative(path: &Path) -> String {
+    std::env::current_dir()
         .ok()
         .and_then(|root| path.strip_prefix(root).ok())
-        .unwrap_or(path);
-    relative
+        .unwrap_or(path)
         .to_string_lossy()
         .trim_start_matches("./")
-        .replace('%', "%25")
-        .replace(' ', "%20")
+        .to_owned()
+}
+
+fn artifact_uri(path: &Path) -> String {
+    relative(path).replace('%', "%25").replace(' ', "%20")
 }
