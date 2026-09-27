@@ -1,8 +1,7 @@
 # Architecture
 
-`crosgha` has one analysis path for local CLI use and the planned GitHub Action.
-The Action will install a verified release binary and invoke the CLI; it will not
-contain a second detector or fixer.
+`crosgha` has one analysis path, shared by the CLI, the pre-push hook, and the GitHub Action.
+The hook and the Action both run the CLI binary; neither contains a second detector or fixer.
 
 | Area | Current state |
 |---|---|
@@ -17,14 +16,14 @@ contain a second detector or fixer.
 ## Execution path
 
 ```text
-CLI / future Action
+CLI (directly, from the pre-push hook, or from the Action)
     -> discover workflow files and the config
     -> parse and validate each workflow
     -> run the rules enabled by persona and config (online rules only with a token)
     -> drop ignored findings, remap severities, apply --min-severity
     -> validate every proposed patch
-    -> write verified files when --fix is requested
     -> run repository rules for the .github directory next to the scanned workflows
+    -> write verified files when --fix is requested and every workflow parsed
     -> render the report and choose an exit status
 ```
 
@@ -114,7 +113,7 @@ deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only
 
 ## GitHub Action path
 
-The composite Action in [ROADMAP.md](../ROADMAP.md) is a distribution layer
+The composite Action (`action.yml`, `action/entrypoint.sh`) is a distribution layer
 over this CLI. Its inputs are a superset of `zizmorcore/zizmor-action`'s, so
 `crosgha migrate --from zizmor` swaps only the `uses:` line. Its sequence is:
 
@@ -128,7 +127,7 @@ over this CLI. Its inputs are a superset of `zizmorcore/zizmor-action`'s, so
 5. In requested PR mode, run verified fixes, then create a branch and a PR with
    the supplied `fix-token` (GitHub App token or fine-grained PAT) that lists
    each rule and fix. Auto-merge is a separate explicit opt-in and requires the
-   checks described in the roadmap. The Action never merges directly.
+   checks described in [ROADMAP.md](../ROADMAP.md). The Action never merges directly.
 
 Steps 1-4 are implemented in `action/entrypoint.sh` and `action.yml`. The release version comes
 from the Action's own `Cargo.toml`, which release-please bumps in the tagged commit, and tags are
@@ -143,7 +142,7 @@ validated and then refused until its repository operations have end-to-end fixtu
 | `tests/rules.rs` | Scans every `tests/fixtures/rules/<rule>[.<variant>].before.yml` at the `auditor` persona. Findings of the rule must match the `# expect: <rule>` markers exactly, `--fix` must remove all or none of them and write exactly `.after.yml` (or nothing when that file is absent; `CROSGHA_BLESS=1` regenerates it), and the hand-written `.clean.yml` must not be reported. |
 | `tests/rules.rs` (online) | Runs the online fixtures against a local server that replays `tests/fixtures/online/api.json` and rejects wrong tokens. |
 | `tests/rules.rs` (coverage) | Fails if any registered rule lacks a fixture. |
-| `tests/cli.rs` | The binary end to end: fixes, exit codes, symlinks, ignores, config discovery, repository rules, report formats, and `migrate`. |
+| `tests/cli.rs` | The binary end to end: fixes, exit codes, symlinks, ignores, config discovery, repository rules, report formats, `migrate`, and `hook`. |
 | `tests/action.rs` | `action/entrypoint.sh` with a runner environment against a local release server: verified install, SARIF and outputs, a tampered checksum, and `fail-on-no-inputs`. |
 
 The pre-push hook and CI run formatting, Clippy, the tests, and crosgha itself on
