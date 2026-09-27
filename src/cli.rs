@@ -1,4 +1,7 @@
-use std::{path::PathBuf, process::ExitCode};
+use std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use clap::{Parser, Subcommand};
 
@@ -150,8 +153,11 @@ pub fn run() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
-    let workflows = match args
+    let (dependabot, inputs): (Vec<&PathBuf>, Vec<&PathBuf>) = args
         .paths
+        .iter()
+        .partition(|path| filesystem::is_dependabot(path));
+    let workflows = match inputs
         .iter()
         .map(|path| filesystem::discover(path))
         .collect::<Result<Vec<_>, _>>()
@@ -222,9 +228,21 @@ pub fn run() -> ExitCode {
         .collect();
     github_dirs.sort();
     github_dirs.dedup();
+    // A Dependabot file inside a scanned `.github` is already checked by the repository rules.
+    let scanned: Vec<PathBuf> = github_dirs
+        .iter()
+        .filter_map(|github| github.canonicalize().ok())
+        .collect();
+    let dependabot = dependabot.into_iter().filter(|path| {
+        path.canonicalize()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .is_none_or(|parent| !scanned.contains(&parent))
+    });
     let repository = github_dirs
         .iter()
         .map(|github| rules::detect_repository(github, &settings))
+        .chain(dependabot.map(|path| rules::detect_dependabot(path, &settings)))
         .collect::<Result<Vec<_>, _>>()
         .map(|found| found.into_iter().flatten().collect::<Vec<_>>())
         .and_then(|mut found| {

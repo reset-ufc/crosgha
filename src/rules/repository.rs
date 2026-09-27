@@ -55,54 +55,64 @@ pub fn cooldown(
     honor_ignores: bool,
     options: Options,
 ) -> Result<Vec<Located>, String> {
+    let mut found = Vec::new();
+    for name in ["dependabot.yml", "dependabot.yaml"] {
+        found.extend(cooldown_file(&github.join(name), honor_ignores, options)?);
+    }
+    Ok(found)
+}
+
+/// Checks one Dependabot config; a missing file has no findings.
+pub fn cooldown_file(
+    path: &Path,
+    honor_ignores: bool,
+    options: Options,
+) -> Result<Vec<Located>, String> {
     let minimum = options
         .and_then(|options| options.get("days"))
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_COOLDOWN_DAYS);
     let mut found = Vec::new();
-    for name in ["dependabot.yml", "dependabot.yaml"] {
-        let path = github.join(name);
-        let Ok(source) = fs::read_to_string(&path) else {
+    let Ok(source) = fs::read_to_string(path) else {
+        return Ok(found);
+    };
+    let config =
+        Workflow::parse_yaml(source).map_err(|error| format!("{}: {error}", path.display()))?;
+    let Some(updates) = config.value.get("updates").and_then(Value::as_sequence) else {
+        return Ok(found);
+    };
+    for (index, update) in updates.iter().enumerate() {
+        let configured = update
+            .get("cooldown")
+            .and_then(|cooldown| cooldown.get("default-days"))
+            .and_then(Value::as_u64);
+        let days = configured.unwrap_or(DEPENDABOT_DEFAULT_DAYS);
+        if days >= minimum {
             continue;
+        }
+        let source = if configured.is_some() {
+            ""
+        } else {
+            " (Dependabot's default)"
         };
-        let config =
-            Workflow::parse_yaml(source).map_err(|error| format!("{}: {error}", path.display()))?;
-        let Some(updates) = config.value.get("updates").and_then(Value::as_sequence) else {
-            continue;
-        };
-        for (index, update) in updates.iter().enumerate() {
-            let configured = update
-                .get("cooldown")
-                .and_then(|cooldown| cooldown.get("default-days"))
-                .and_then(Value::as_u64);
-            let days = configured.unwrap_or(DEPENDABOT_DEFAULT_DAYS);
-            if days >= minimum {
-                continue;
-            }
-            let source = if configured.is_some() {
-                ""
-            } else {
-                " (Dependabot's default)"
-            };
-            let message =
-                format!("cooldown of {days} day(s){source} is below the {minimum}-day minimum");
-            let ecosystem = update
-                .get("package-ecosystem")
-                .and_then(Value::as_str)
-                .unwrap_or("?");
-            let finding = common::finding(
-                &config,
-                &COOLDOWN,
-                Route::default().with_key("updates").with_key(index),
-                format!("update `{ecosystem}`"),
-                message,
-            )?;
-            if !honor_ignores || !super::ignored(&config, &finding) {
-                found.push(Located {
-                    path: path.clone(),
-                    finding,
-                });
-            }
+        let message =
+            format!("cooldown of {days} day(s){source} is below the {minimum}-day minimum");
+        let ecosystem = update
+            .get("package-ecosystem")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        let finding = common::finding(
+            &config,
+            &COOLDOWN,
+            Route::default().with_key("updates").with_key(index),
+            format!("update `{ecosystem}`"),
+            message,
+        )?;
+        if !honor_ignores || !super::ignored(&config, &finding) {
+            found.push(Located {
+                path: path.to_path_buf(),
+                finding,
+            });
         }
     }
     Ok(found)

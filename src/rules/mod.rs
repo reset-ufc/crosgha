@@ -293,6 +293,19 @@ pub fn detect_repository(github: &Path, settings: &Settings) -> Result<Vec<Locat
     Ok(finish_located(found, settings))
 }
 
+/// Runs the Dependabot rule on a config passed as an input path.
+pub fn detect_dependabot(path: &Path, settings: &Settings) -> Result<Vec<Located>, String> {
+    if !enabled(&repository::COOLDOWN, settings) {
+        return Ok(Vec::new());
+    }
+    let found = repository::cooldown_file(
+        path,
+        settings.ignores,
+        settings.config.options(&repository::COOLDOWN),
+    )?;
+    Ok(finish_located(found, settings))
+}
+
 fn enabled(rule: &'static Rule, settings: &Settings) -> bool {
     rule.persona <= settings.persona && !settings.config.disabled(rule)
 }

@@ -644,6 +644,45 @@ fn cooldown_days_follow_the_configured_minimum() {
 }
 
 #[test]
+fn dependabot_config_input_is_audited_not_parsed_as_a_workflow() {
+    let dependabot = fixture("repos/cooldown/.github/dependabot.yml");
+    let scan = |paths: &[PathBuf]| {
+        let output = bin()
+            .args(["--persona", "auditor", "--offline", "--fail-on", "none"])
+            .args(paths)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    // Config is discovered next to the file: `.github/crosgha.yml` raises the minimum to 12 days.
+    let alone = scan(std::slice::from_ref(&dependabot));
+    let cooldown: Vec<&str> = alone
+        .lines()
+        .filter(|line| line.starts_with("missing-release-cooldown ["))
+        .collect();
+    assert_eq!(cooldown.len(), 2, "{alone}");
+    assert!(cooldown[0].contains("dependabot.yml:3:"), "{alone}");
+    assert!(cooldown[1].contains("dependabot.yml:9:"), "{alone}");
+    // A lone Dependabot file says nothing about the repository's workflows.
+    assert!(!alone.contains("missing-security-tooling ["), "{alone}");
+
+    let both = scan(&[fixture("repos/cooldown/.github/workflows"), dependabot]);
+    assert_eq!(
+        both.lines()
+            .filter(|line| line.starts_with("missing-release-cooldown ["))
+            .count(),
+        2,
+        "{both}"
+    );
+}
+
+#[test]
 fn config_blocks_without_a_crosgha_reader_are_reported() {
     let output = bin()
         .args(["--offline", "--config"])

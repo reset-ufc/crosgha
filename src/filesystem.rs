@@ -66,6 +66,14 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+/// A Dependabot config shares the `.yml` extension but is not a workflow.
+pub fn is_dependabot(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .file_name()
+            .is_some_and(|name| name == "dependabot.yml" || name == "dependabot.yaml")
+}
+
 fn is_yaml_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|extension| extension.to_str()),
