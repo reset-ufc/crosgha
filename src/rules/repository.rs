@@ -173,3 +173,82 @@ pub fn tooling(
         })
         .collect())
 }
+
+// GitHub retired these JavaScript action runtimes; runners now run such actions on Node 24:
+// https://github.blog/changelog/2023-05-04-github-actions-all-actions-will-run-on-node16-instead-of-node12/
+// https://github.blog/changelog/2024-09-25-end-of-life-for-actions-node16/
+// https://github.blog/changelog/2026-09-23-node-20-is-no-longer-available-in-github-actions/
+pub const RUNTIME: Rule = Rule {
+    id: "retired-runtime",
+    summary: "JavaScript actions must not declare a retired Node.js runtime.",
+    tag: "deprecated-command/feature",
+    severity: Severity::Warning,
+    persona: Persona::Regular,
+    equivalents: &[],
+    configurable: false,
+};
+
+const RETIRED_RUNTIMES: &[&str] = &["node12", "node16", "node20"];
+
+/// Checks the action this repository publishes (`action.yml` at the root) and every local action
+/// its workflows use. Unparseable files are skipped: the workflow scan already reports them.
+pub fn runtime(
+    github: &Path,
+    honor_ignores: bool,
+    _options: Options,
+) -> Result<Vec<Located>, String> {
+    let root = github.parent().unwrap_or(github);
+    let mut actions: Vec<PathBuf> = vec![root.to_path_buf()];
+    for entry in fs::read_dir(github.join("workflows"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let Some(workflow) = fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|source| Workflow::parse_yaml(source).ok())
+        else {
+            continue;
+        };
+        for (_, _, uses) in common::all_uses(&workflow) {
+            if let Some(path) = uses.strip_prefix("./") {
+                actions.push(root.join(path));
+            }
+        }
+    }
+    actions.sort();
+    actions.dedup();
+
+    let mut found = Vec::new();
+    for directory in actions {
+        let Some((path, action)) = ["action.yml", "action.yaml"].iter().find_map(|name| {
+            let path = directory.join(name);
+            let action = Workflow::parse_yaml(fs::read_to_string(&path).ok()?).ok()?;
+            Some((path, action))
+        }) else {
+            continue;
+        };
+        let Some(using) = action
+            .value
+            .get("runs")
+            .and_then(|runs| runs.get("using"))
+            .and_then(Value::as_str)
+            .filter(|using| RETIRED_RUNTIMES.contains(using))
+        else {
+            continue;
+        };
+        let finding = common::finding(
+            &action,
+            &RUNTIME,
+            Route::default().with_key("runs").with_key("using"),
+            "action",
+            format!(
+                "`{using}` is retired; runners run this action on Node 24, so declare `node24`"
+            ),
+        )?;
+        if !honor_ignores || !super::ignored(&action, &finding) {
+            found.push(Located { path, finding });
+        }
+    }
+    Ok(found)
+}

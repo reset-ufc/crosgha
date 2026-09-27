@@ -1,0 +1,23 @@
+name: CI
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/old
+      - uses: ./.github/actions/current
+      - uses: ./.github/actions/wrapper
+      - uses: ./tools/legacy
+      - uses: ./.github/actions/missing
+  again:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: ./.github/actions/old
