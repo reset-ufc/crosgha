@@ -1,0 +1,25 @@
+name: Retired
+on: [push]
+permissions: {}
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: actions/cache@v4.2.0
+        with: { path: ~/.cargo, key: cargo }
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - run: echo mac

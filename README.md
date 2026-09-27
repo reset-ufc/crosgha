@@ -3,7 +3,7 @@
 aCtions Repair Of miSconfigured GitHub Actions: a Rust CLI and GitHub Action that detects smells in GitHub Actions
 workflows and fixes them deterministically, preserving comments and formatting.
 
-- 46 rules cover every tag of a curated smell taxonomy: 38 check workflow files, 3 check the repository, and 5 query
+- 47 rules cover every tag of a curated smell taxonomy: 39 check workflow files, 3 check the repository, and 5 query
   the GitHub API.
 - It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
   actionlint rule in every finding, so switching tools does not mean rewriting configuration.
@@ -85,8 +85,10 @@ Rules marked `online` below query the GitHub API. They run when a token is avail
 ### Fixes
 
 `--fix` applies a fix only when the patched YAML parses, the targeted finding disappears, no new
-finding appears, and only the intended YAML node changed. Today only `persist-credentials` has a
-fix. Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger
+finding appears, and only the intended YAML node changed. Two rules have fixes:
+`persist-credentials` sets `persist-credentials: false`, and `removed-feature` replaces the
+AdoptOpenJDK distributions that setup-java v6 removed with the successor its README names. Every
+other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger
 filter needs project context.
 
 ### Pre-push hook
@@ -188,6 +190,7 @@ token, pass the reference yourself with `--action owner/repo@<sha> --action-vers
 | `complex-job` | `long-job/complexity` | note | auditor | workflow |  |  |
 | `readability` | `readability` | note | auditor | workflow | zizmor: `anonymous-definition` |  |
 | `deprecated-command` | `deprecated-command/feature` | warning | regular | workflow | zizmor: `insecure-commands`; actionlint: `deprecated-commands` |  |
+| `removed-feature` | `deprecated-command/feature` | error | regular | workflow |  |  |
 | `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check` |  |
 | `embedded-script-lint` | `embedded-script-lint` | note | pedantic | workflow | actionlint: `shellcheck` |  |
 | `insecure-protocol` | `insecure-protocol` | warning | regular | workflow | zizmor: `insecure-url-scheme` |  |

@@ -99,10 +99,7 @@ fn pins(workflow: &Workflow) -> Vec<Pin<'_>> {
             let sha = Some(reference.git_ref).filter(|git_ref| {
                 git_ref.len() == 40 && git_ref.bytes().all(|byte| byte.is_ascii_hexdigit())
             });
-            let version = match sha {
-                Some(_) => comment_version(workflow, &route),
-                None => Some(reference.git_ref.to_owned()).filter(|git_ref| is_version(git_ref)),
-            };
+            let version = ref_version(workflow, &route, reference.git_ref);
             Some(Pin {
                 route,
                 location,
@@ -113,6 +110,15 @@ fn pins(workflow: &Workflow) -> Vec<Pin<'_>> {
             })
         })
         .collect()
+}
+
+/// The version a `uses` ref names: the tag itself, or the `# vX.Y.Z` comment after a full SHA.
+pub(super) fn ref_version(workflow: &Workflow, route: &Route, git_ref: &str) -> Option<String> {
+    if git_ref.len() == 40 && git_ref.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        comment_version(workflow, route)
+    } else {
+        Some(git_ref.to_owned()).filter(|git_ref| is_version(git_ref))
+    }
 }
 
 /// The first word of the YAML comment on a `uses` line, such as `v4.2.2` in `# v4.2.2`.
@@ -130,7 +136,7 @@ fn is_version(text: &str) -> bool {
         .starts_with(|character: char| character.is_ascii_digit())
 }
 
-fn numbers(version: &str) -> Vec<u64> {
+pub(super) fn numbers(version: &str) -> Vec<u64> {
     version
         .trim_start_matches('v')
         .split('.')

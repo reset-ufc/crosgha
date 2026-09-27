@@ -53,7 +53,7 @@ const UNTRUSTED_RUNNER_TRIGGERS: &[&str] = &[
 ];
 
 /// Literal runner labels from the string, list, and `labels` mapping forms of `runs-on`.
-fn labels(runs_on: &Value) -> Vec<&str> {
+pub(super) fn labels(runs_on: &Value) -> Vec<&str> {
     let labels = match runs_on {
         Value::Mapping(_) => runs_on.get("labels").unwrap_or(&Value::Null),
         other => other,

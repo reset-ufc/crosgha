@@ -188,6 +188,7 @@ const REGISTRY: &[(&Rule, Detect)] = &[
     (&maintainability::COMPLEXITY, maintainability::complexity),
     (&maintainability::READABILITY, maintainability::readability),
     (&maintainability::DEPRECATED, maintainability::deprecated),
+    (&maintainability::REMOVED, maintainability::removed),
     // Correctness
     (&correctness::SCHEMA, correctness::schema),
     (&correctness::SCRIPT_LINT, correctness::script_lint),

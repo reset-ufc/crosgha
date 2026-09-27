@@ -2,8 +2,8 @@
 
 Rust CLI that detects smells in GitHub Actions workflows and fixes them deterministically, preserving comments and
 formatting. The CLI recursively scans workflows, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
-46 rules cover every tag of the curated taxonomy: 38 per workflow, 3 per repository, and 5 that query the GitHub API.
-Only `persist-credentials` has a verified fix so far. Personas, ignore comments, `zizmor.yml` (including per-rule
+47 rules cover every tag of the curated taxonomy: 39 per workflow, 3 per repository, and 5 that query the GitHub API.
+Only `persist-credentials` and `removed-feature` (setup-java distributions) have verified fixes so far. Personas, ignore comments, `zizmor.yml` (including per-rule
 options), and `crosgha migrate` follow zizmor so users can switch tools without rewriting configuration; reports name
 the equivalent zizmor or actionlint rule. Output is text, JSON, SARIF, GitHub annotations (the default under `GITHUB_ACTIONS=true`), or brief agent lines. The Action runs in report mode with a sha256-verified release
 binary; PR and auto-merge modes are still pending.
