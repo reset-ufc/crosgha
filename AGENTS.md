@@ -46,7 +46,7 @@ It is listed in `.git/info/exclude` and never committed.
    - `persist-credentials: false`
 
    `.githooks/pre-push` and CI run crosgha on `.github/workflows` with `--offline --persona pedantic`. Accepted exceptions need a written reason in a comment next to the exception.
-5. **Toolchain.** The Rust toolchain is pinned only in `mise.toml` (1.97), matching the workspace; `rust-version` in `Cargo.toml` declares the same minimum. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
+5. **Toolchain.** The Rust toolchain is pinned only in `mise.toml` (1.97), matching the workspace; `rust-version` in `Cargo.toml` declares the same minimum. `.githooks/pre-push` re-runs itself under `mise exec` when mise is not active in the calling shell (e.g., `gh repo create --push`, IDEs), so it never falls back to rustup's default toolchain. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
 
 ## Tests
 
@@ -94,8 +94,8 @@ mise.toml                   Rust version (the only pin; used locally and in CI)
 ROADMAP.md                  plans: GitHub Action packaging (composite, SHA-verified binary, SARIF)
 ```
 
-## Going live (not done yet)
-1. Create the GitHub repo as **private** (a study comes out of it; the author creates it, not agents) and push `master`.
-2. Enable "Allow GitHub Actions to create and approve pull requests".
+## Hosting
+- GitHub repo: `meiazero/crosgha`, **private** (a study comes out of it), default branch `master`, remote `origin`.
+- "Allow GitHub Actions to create and approve pull requests" is enabled, so release-please can open its release PR.
 
 No PAT or secret is needed: `release-please.yml` dispatches `release.yml` with the default `GITHUB_TOKEN`.

@@ -1,28 +1,36 @@
 # crosgha
 
-aCtions Repair Of miSconfigured GitHub Actions: a tool that detects and fixes smells in GitHub Actions workflows.
-It covers every tag of the curated smell taxonomy with 46 rules and is built to replace zizmor or actionlint
-without rewriting their configuration.
+aCtions Repair Of miSconfigured GitHub Actions: a Rust CLI and GitHub Action that detects smells in GitHub Actions
+workflows and fixes them deterministically, preserving comments and formatting.
+
+- 46 rules cover every tag of a curated smell taxonomy: 38 check workflow files, 3 check the repository, and 5 query
+  the GitHub API.
+- It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
+  actionlint rule in every finding, so switching tools does not mean rewriting configuration.
+- Output is text, JSON, SARIF 2.1.0, or GitHub annotations.
 
 License: TBD by the author.
 
 ## Build
 
+Needs Rust 1.97, pinned in `mise.toml`:
+
 ```sh
+mise install
 cargo build --release
 ```
 
 ## Run
 
 ```sh
-./target/release/crosgha                           # scans .github/workflows
+./target/release/crosgha                                  # scans .github/workflows
 ./target/release/crosgha path/to/workflow.yml
 ./target/release/crosgha --persona pedantic .github/workflows
 ./target/release/crosgha --fix .github/workflows
 ./target/release/crosgha --format sarif > results.sarif   # also: json, github
-./target/release/crosgha --sarif-file results.sarif .      # text on stdout, SARIF on disk
+./target/release/crosgha --sarif-file results.sarif .     # text on stdout, SARIF on disk
 ./target/release/crosgha --list-rules
-./target/release/crosgha migrate --from zizmor     # swap zizmor-action for the crosgha Action
+./target/release/crosgha migrate --from zizmor            # swap zizmor-action for the crosgha Action
 ```
 
 Each `PATH` may be a workflow file, a directory (scanned recursively), or a repository root, which
@@ -184,19 +192,14 @@ token, pass the reference yourself with `--action owner/repo@<sha> --action-vers
 Rule concepts cite their primary sources in `src/rules/`. The module layout is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Test
-
-```sh
-cargo test
-```
-
-## Release
-
-Versioning and releases are automated by release-please (from Conventional Commits) and cargo-dist.
-
-## Development setup
+## Development
 
 ```sh
 make setup   # enables the versioned git hooks in .githooks/
+cargo test   # end-to-end and fixture-driven rule tests
 make check   # the pre-push checks: fmt, clippy -D warnings, tests, dogfood scan
 ```
+
+The pre-push hook runs under `mise exec` when mise is not active in the calling shell, so pushes from `gh` or an IDE
+use the pinned toolchain too. Commits follow Conventional Commits (enforced by the `commit-msg` hook); release-please
+turns them into versions and the changelog, and cargo-dist builds the release binaries.
