@@ -52,20 +52,62 @@ const UNTRUSTED_RUNNER_TRIGGERS: &[&str] = &[
     "discussion_comment",
 ];
 
-/// Literal runner labels from the string, list, and `labels` mapping forms of `runs-on`.
-pub(super) fn labels(runs_on: &Value) -> Vec<&str> {
+/// Literal runner labels of a job from the string, list, and `labels` mapping forms of
+/// `runs-on`. A label that is exactly `${{ matrix.<key> }}` expands to the literal values under
+/// `strategy.matrix.<key>` and `strategy.matrix.include[*].<key>`; other expressions are dropped.
+pub(super) fn job_labels<'a>(job: &common::Job<'a>) -> Vec<&'a str> {
+    let Some(runs_on) = job.get("runs-on") else {
+        return Vec::new();
+    };
     let labels = match runs_on {
         Value::Mapping(_) => runs_on.get("labels").unwrap_or(&Value::Null),
         other => other,
     };
-    match labels {
+    let labels = match labels {
         Value::String(label) => vec![label.as_str()],
         Value::Sequence(items) => items.iter().filter_map(Value::as_str).collect(),
         _ => Vec::new(),
-    }
-    .into_iter()
-    .filter(|label| !label.contains("${{"))
-    .collect()
+    };
+    let matrix = job
+        .get("strategy")
+        .and_then(|strategy| strategy.get("matrix"));
+    labels
+        .into_iter()
+        .flat_map(|label| match matrix_key(label) {
+            Some(key) => matrix_values(matrix, key),
+            None => vec![label],
+        })
+        .filter(|label| !label.contains("${{"))
+        .collect()
+}
+
+/// `key` when `label` is exactly `${{ matrix.<key> }}`.
+fn matrix_key(label: &str) -> Option<&str> {
+    let inner = label.trim().strip_prefix("${{")?.strip_suffix("}}")?.trim();
+    inner.strip_prefix("matrix.").filter(|key| {
+        !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    })
+}
+
+fn matrix_values<'a>(matrix: Option<&'a Value>, key: &str) -> Vec<&'a str> {
+    let Some(matrix) = matrix else {
+        return Vec::new();
+    };
+    let direct = matrix
+        .get(key)
+        .and_then(Value::as_sequence)
+        .into_iter()
+        .flatten();
+    let include = matrix
+        .get("include")
+        .and_then(Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get(key));
+    direct.chain(include).filter_map(Value::as_str).collect()
 }
 
 /// `rules.self-hosted-runner.config.labels`: custom labels of self-hosted runners, with `*`
@@ -100,11 +142,9 @@ pub fn self_hosted(workflow: &Workflow, options: Options) -> Result<Vec<Finding>
     common::jobs(workflow)
         .iter()
         .filter(|job| {
-            job.get("runs-on").is_some_and(|runs_on| {
-                labels(runs_on)
-                    .iter()
-                    .any(|label| known.iter().any(|pattern| glob(pattern, label)))
-            })
+            job_labels(job)
+                .iter()
+                .any(|label| known.iter().any(|pattern| glob(pattern, label)))
         })
         .map(|job| {
             common::finding(
@@ -145,11 +185,9 @@ pub fn versioning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     common::jobs(workflow)
         .iter()
         .filter(|job| {
-            job.get("runs-on").is_some_and(|runs_on| {
-                labels(runs_on)
-                    .iter()
-                    .any(|label| label.ends_with("-latest"))
-            })
+            job_labels(job)
+                .iter()
+                .any(|label| label.ends_with("-latest"))
         })
         .map(|job| {
             common::finding(

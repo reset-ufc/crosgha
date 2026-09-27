@@ -514,11 +514,15 @@ const ADOPT_SUCCESSORS: &[(&str, &str)] = &[
 pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
-        let retired = job.get("runs-on").and_then(|runs_on| {
-            runner::labels(runs_on)
-                .into_iter()
-                .find_map(|label| RETIRED_RUNNERS.iter().find(|(name, _)| *name == label))
-        });
+        // A self-hosted runner labelled after an OS is not a hosted image.
+        let labels = runner::job_labels(&job);
+        let retired = if labels.contains(&"self-hosted") {
+            None
+        } else {
+            labels
+                .iter()
+                .find_map(|label| RETIRED_RUNNERS.iter().find(|(name, _)| name == label))
+        };
         if let Some((label, date)) = retired {
             findings.push(common::finding(
                 workflow,
@@ -537,7 +541,8 @@ pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 continue;
             };
             let version = online::numbers(&version);
-            let name = format!("{}/{}", action.owner, action.repo);
+            // GitHub resolves `owner/repo` case-insensitively.
+            let name = format!("{}/{}", action.owner, action.repo).to_ascii_lowercase();
             if let Some(reason) = shut_down(&name, &version) {
                 findings.push(common::finding(
                     workflow,
