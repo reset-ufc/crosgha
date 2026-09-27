@@ -1,0 +1,19 @@
+name: Comment commands
+on:
+  push:
+    branches: [main]
+  issue_comment:
+    types: [created]
+cache-mode: read
+permissions: {}
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+  test:
+    uses: example/workflows/.github/workflows/test.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    secrets: inherit
+  reply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo reply

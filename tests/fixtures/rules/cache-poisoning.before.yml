@@ -2,6 +2,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  release:
+    types: [published]
 permissions: {}
 jobs:
   release:
@@ -20,3 +22,5 @@ jobs:
         with:
           cache: false
       - uses: actions/setup-node@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  publish:
+    uses: ./.github/workflows/publish.yml

@@ -1,0 +1,24 @@
+name: Comment commands
+on:
+  push:
+    branches: [main]
+  issue_comment:
+    types: [created]
+permissions: {}
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml # expect: cache-poisoning
+  test:
+    uses: example/workflows/.github/workflows/test.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: cache-poisoning
+    secrets: inherit
+  docs:
+    cache-mode: read
+    uses: ./.github/workflows/docs.yml
+  audit:
+    cache-mode: none
+    uses: ./.github/workflows/audit.yml
+  reply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo reply
