@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.1](https://github.com/meiazero/crosgha/compare/v0.7.0...v0.7.1) (2026-09-27)
+
+
+### Documentation
+
+* **agents:** list capabilities as bullets and fix layout entries ([0363439](https://github.com/meiazero/crosgha/commit/0363439830d4ee1e89b1764d7328b52258094eea))
+* **architecture:** drop planned-action wording and fix stage order ([84c6f8e](https://github.com/meiazero/crosgha/commit/84c6f8e95ec05d3a43322a4b0e90368a56fd0ada))
+* **readme:** reorder by user journey and add release install ([81e6d3a](https://github.com/meiazero/crosgha/commit/81e6d3ae60a900bdd873ce10574ad22bc3b69c17))
+* restructure readme, roadmap, and architecture ([0f09644](https://github.com/meiazero/crosgha/commit/0f0964442bc2807b6841facf3f38edf38616aca7))
+* **roadmap:** split shipped work from next steps ([ce544c7](https://github.com/meiazero/crosgha/commit/ce544c72a5892b1a11fb5db9ba8bf4b9ba47553c))
+
 ## [0.7.0](https://github.com/meiazero/crosgha/compare/v0.6.0...v0.7.0) (2026-09-27)
 
 
