@@ -31,6 +31,19 @@ jobs:
           version: 2026.9.14
           sha256: 2b289d1b3074e0b1d3f95bad0bd78bbc517c1a5bcb020cbc1643d260f5d1a351
 
+      # Exact-key hits skip the save, so source-only changes reuse the dependency build; a
+      # Cargo.lock or toolchain change starts a new entry from the closest prefix.
+      - name: Cache cargo registry and build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('mise.toml', 'Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
       - name: Check formatting
         run: cargo fmt --check
 
