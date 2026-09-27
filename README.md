@@ -7,112 +7,54 @@ workflows and fixes them deterministically, preserving comments and formatting.
   the GitHub API.
 - It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
   actionlint rule in every finding, so switching tools does not mean rewriting configuration.
-- Output is text, JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), or brief lines for AI agents.
+- Output is text, JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), or brief lines for AI
+  agents.
 
 License: TBD by the author.
 
-## Build
+**Contents:** [Install](#install) · [Quick start](#quick-start) · [GitHub Action](#github-action) ·
+[Pre-push hook](#pre-push-hook) · [Migrating from zizmor or actionlint](#migrating-from-zizmor-or-actionlint) ·
+[Configuration](#configuration) · [Output and exit status](#output-and-exit-status) · [Fixes](#fixes) ·
+[Rules](#rules) · [Development](#development)
+
+## Install
+
+### From a release
+
+Releases ship one Linux binary (`x86_64-unknown-linux-gnu`) with a sha256 file:
+
+```sh
+gh release download -R meiazero/crosgha -p 'crosgha-x86_64-unknown-linux-gnu.tar.xz*'
+sha256sum -c crosgha-x86_64-unknown-linux-gnu.tar.xz.sha256
+tar -xJf crosgha-x86_64-unknown-linux-gnu.tar.xz
+install crosgha-x86_64-unknown-linux-gnu/crosgha ~/.local/bin/
+```
+
+### From source
 
 Needs Rust 1.97, pinned in `mise.toml`:
 
 ```sh
 mise install
-cargo build --release
+cargo build --release   # binary at target/release/crosgha
 ```
 
-## Run
+## Quick start
 
 ```sh
-./target/release/crosgha                                  # scans .github/workflows
-./target/release/crosgha path/to/workflow.yml
-./target/release/crosgha --persona pedantic .github/workflows
-./target/release/crosgha --fix .github/workflows
-./target/release/crosgha -f sarif > results.sarif        # also: json, github, agent
-./target/release/crosgha --sarif-file results.sarif .     # text on stdout, SARIF on disk
-./target/release/crosgha --list-rules
-./target/release/crosgha --list-rules -f json          # catalog with summaries and equivalents
-./target/release/crosgha migrate --from zizmor            # swap zizmor-action for the crosgha Action
-./target/release/crosgha hook install -- --offline        # scan before every git push
+crosgha                                   # scans .github/workflows
+crosgha path/to/workflow.yml
+crosgha --persona pedantic .github/workflows
+crosgha --fix .github/workflows
+crosgha -f sarif > results.sarif          # also: json, github, agent
+crosgha --sarif-file results.sarif .      # text on stdout, SARIF on disk
+crosgha --list-rules                      # add -f json for summaries and equivalents
 ```
 
-Each `PATH` may be a workflow file, a directory (scanned recursively), or a repository root, which
-is scanned through its `.github/workflows` as zizmor does with `.`. Symlinked files are scanned but
-never rewritten. Exit status: 0 when nothing reaches `--fail-on`, 1 when a
-finding does, 2 when a path, workflow, config, write, or API call fails. In that last case no file
-is changed, and findings in the workflows that did parse are still reported.
+Each `PATH` may be a workflow file, a directory (scanned recursively), or a repository root, which is scanned through
+its `.github/workflows` as zizmor does with `.`. Symlinked files are scanned but never rewritten.
 
-### Personas
-
-Rules are grouped by sensitivity, with zizmor's persona names:
-
-| Persona | Adds |
-|---|---|
-| `regular` (default) | High-signal security findings. |
-| `pedantic` | Code smells and hardening policies (pinning, timeouts, permissions blocks, triggers). |
-| `auditor` | Heuristics that are likely to include false positives (complexity, readability, runtime monitoring). |
-
-### Online rules
-
-Rules marked `online` below query the GitHub API. They run when a token is available (`--gh-token`,
-`GH_TOKEN`, or `GITHUB_TOKEN`) unless `--offline` or `--no-online-audits` is set. `--gh-hostname`
-(or `GH_HOST`) points them at GitHub Enterprise Server. `repo-org-settings` also needs
-`--repository owner/name` (or `GITHUB_REPOSITORY`).
-
-### Ignoring findings
-
-- Inline: `# crosgha: ignore[rule]` anywhere in the finding's YAML span. `# zizmor: ignore[...]`
-  works too, with zizmor's rule names.
-- Config: `crosgha.yml` or an existing `zizmor.yml`, found the same way zizmor finds its config, or
-  passed with `--config` (also `CROSGHA_CONFIG` or `ZIZMOR_CONFIG`). The config supports
-  `rules.<id>.disable`, `rules.<id>.ignore` (`file.yml[:line]`), `rules.<id>.remap.severity`, and
-  the `rules.<id>.config` options below. Keys may use crosgha's or zizmor's rule names. A
-  `config` block that no crosgha rule reads produces a warning.
-
-  | Option | Rule |
-  |---|---|
-  | `unpinned-uses.config.policies` (`pattern: hash-pin \| ref-pin \| any`) | `unpinned-action` |
-  | `forbidden-uses.config.allow` or `.deny` (repository patterns) | `forbidden-action` |
-  | `known-vulnerable-actions.config.allow` (advisory IDs) | `known-vulnerable-action` |
-  | `dependabot-cooldown.config.days` (default 7) | `missing-release-cooldown` |
-  | `self-hosted-runner.config.labels` (custom runner labels, `*` wildcards) | `self-hosted-runner` |
-- Some zizmor IDs name part of a crosgha rule: `unpinned-uses` and `unpinned-images` split
-  `unpinned-action`, and `bot-conditions` and `unsound-condition` split `unsafe-if-condition`.
-  Ignoring or disabling such an ID affects only that part.
-- `--no-ignores` reports everything, and `--no-config` skips config discovery.
-- `--min-severity` takes zizmor's scale: `informational` and `low` map to `note`, `medium` to
-  `warning`, and `high` to `error`.
-
-### Fixes
-
-`--fix` applies a fix only when the patched YAML parses, the targeted finding disappears, no new
-finding appears, and only the intended YAML node changed. Two rules have fixes:
-`persist-credentials` sets `persist-credentials: false`, and `removed-feature` replaces the
-AdoptOpenJDK distributions that setup-java v6 removed with the successor its README names. Every
-other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger
-filter needs project context.
-
-### Pre-push hook
-
-`crosgha hook install` writes a git `pre-push` hook in the current repository, in the directory
-git resolves for hooks (so `core.hooksPath` is respected). Arguments after `--` are validated and
-passed to every scan, e.g. `crosgha hook install -- --offline --persona pedantic`; re-running
-`install` replaces them. The hook runs `crosgha` from `PATH` at the repository root and blocks the
-push on findings, telling you to run `crosgha --fix`; it never edits files itself. It scans the
-working tree, so uncommitted edits count. `crosgha hook uninstall` removes it. Both refuse to touch
-a `pre-push` hook that crosgha did not write.
-
-### Output
-
-Text lines end with the equivalent rule in other tools, such as `(zizmor: template-injection;
-actionlint: expression)`. `--format json` writes a versioned report (`version`, `summary`,
-`findings`). `--format sarif` writes SARIF 2.1.0 with the rule metadata GitHub code scanning
-requires; it validates against the official schema. `--format github` prints workflow-command
-annotations and is the default when `GITHUB_ACTIONS=true`. `--format agent` prints one brief line
-per finding for AI agents (`path:line:col: severity rule: message help: <rule summary>`), after
-oxlint's format of the same name. `--sarif-file FILE` also writes SARIF during any format, so one run serves the log and
-the Security tab. After `--fix`, every format lists what remains.
-
-### GitHub Action
+## GitHub Action
 
 ```yaml
 permissions:
@@ -127,34 +69,146 @@ steps:
       persona: pedantic
 ```
 
-The Action takes zizmor-action's inputs (`inputs`, `persona`, `min-severity`, `online-audits`,
-`token`, `advanced-security`, `annotations`, `config`, `fail-on-no-inputs`, and more) plus
-`fail-on`. It works like this:
-1. It downloads the release that matches its own revision and checks the archive against the
-   release's `.sha256` before running it.
+Pin the Action by full commit SHA with a version comment; there is no moving `v1` tag. It takes zizmor-action's inputs
+(`inputs`, `persona`, `min-severity`, `online-audits`, `token`, `advanced-security`, `annotations`, `config`,
+`fail-on-no-inputs`, and more) plus `fail-on`, and sets the outputs `output-file` (SARIF path) and `findings` (count).
+A run goes like this:
+
+1. It downloads the release that matches its own revision and checks the archive against the release's `.sha256`
+   before running it.
 2. It runs crosgha once. The log and the job summary get the text report.
 3. It uploads SARIF with `github/codeql-action/upload-sarif`, pinned by SHA.
 4. Only then does it fail according to `fail-on`.
 
-Linux runners only. `fix: pull-request` is validated but not implemented yet.
+Linux runners only. `fix: pull-request` is validated but not implemented yet; see [ROADMAP.md](ROADMAP.md).
 
-### Migrating from zizmor or actionlint
+## Pre-push hook
+
+```sh
+crosgha hook install -- --offline --persona pedantic
+crosgha hook uninstall
+```
+
+`install` writes a git `pre-push` hook in the directory git resolves for hooks, so `core.hooksPath` is respected.
+
+- **Arguments:** everything after `--` is validated and passed to every scan. Re-running `install` replaces them.
+- **What it runs:** `crosgha` from `PATH`, at the repository root, on the working tree (uncommitted edits count).
+- **On findings:** it blocks the push and tells you to run `crosgha --fix`. It never edits files itself.
+- **Safety:** both commands refuse to touch a `pre-push` hook that crosgha did not write.
+
+## Migrating from zizmor or actionlint
 
 `crosgha migrate --from zizmor|actionlint [PATH]` moves a repository over:
-- **Action steps:** `zizmorcore/zizmor-action`, `raven-actions/actionlint`, `reviewdog/action-actionlint`,
-  and `rhysd/actionlint` steps become crosgha Action steps. zizmor steps keep their `with:` block
-  (the crosgha Action accepts zizmor-action's inputs); actionlint steps lose theirs.
-- **Shell steps:** steps that only install the tool are removed. Steps that only run it become
-  crosgha Action steps, with CLI flags translated to inputs. Steps that mix the tool with other
-  commands are listed for a manual change.
-- **Config:** `zizmor.yml` becomes `crosgha.yml` next to it, with rule keys renamed where the match
-  is one to one and keys without a crosgha rule dropped. `actionlint.yaml` self-hosted runner labels
-  become `rules.self-hosted-runner.config.labels`. The original config stays in place.
 
-The command writes the latest crosgha release, pinned by SHA with a version comment. Without a
-token, pass the reference yourself with `--action owner/repo@<sha> --action-version vX.Y.Z`.
+- **Action steps:** `zizmorcore/zizmor-action`, `raven-actions/actionlint`, `reviewdog/action-actionlint`, and
+  `rhysd/actionlint` steps become crosgha Action steps. zizmor steps keep their `with:` block (the crosgha Action
+  accepts zizmor-action's inputs); actionlint steps lose theirs.
+- **Shell steps:** steps that only install the tool are removed. Steps that only run it become crosgha Action steps,
+  with CLI flags translated to inputs. Steps that mix the tool with other commands are listed for a manual change.
+- **Config:** `zizmor.yml` becomes `crosgha.yml` next to it, with rule keys renamed where the match is one to one and
+  keys without a crosgha rule dropped. `actionlint.yaml` self-hosted runner labels become
+  `rules.self-hosted-runner.config.labels`. The original config stays in place.
+
+The command writes the latest crosgha release, pinned by SHA with a version comment. Without a token, pass the
+reference yourself with `--action owner/repo@<sha> --action-version vX.Y.Z`.
+
+## Configuration
+
+### Personas
+
+Rules are grouped by sensitivity, with zizmor's persona names. Each persona includes the ones above it.
+
+| Persona | Adds |
+|---|---|
+| `regular` (default) | High-signal security findings. |
+| `pedantic` | Code smells and hardening policies (pinning, timeouts, permissions blocks, triggers). |
+| `auditor` | Heuristics that are likely to include false positives (complexity, readability, runtime monitoring). |
+
+### Online rules
+
+Rules with scope `online` in the [rule table](#rules) query the GitHub API.
+
+- **When they run:** whenever a token is available (`--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`), unless
+  `--offline` or `--no-online-audits` is set.
+- **GitHub Enterprise Server:** `--gh-hostname` (or `GH_HOST`).
+- **`repo-org-settings`** also needs `--repository owner/name` (or `GITHUB_REPOSITORY`).
+
+### Config file
+
+crosgha reads `crosgha.yml` or an existing `zizmor.yml`, found the same way zizmor finds its config, or passed with
+`--config` (also `CROSGHA_CONFIG` or `ZIZMOR_CONFIG`). `--no-config` skips discovery. Keys may use crosgha's or
+zizmor's rule names.
+
+| Key | Effect |
+|---|---|
+| `rules.<id>.disable` | Turns the rule off. |
+| `rules.<id>.ignore` | Ignores findings in `file.yml` or at `file.yml:line`. |
+| `rules.<id>.remap.severity` | Changes the rule's severity. |
+| `rules.<id>.config` | Rule options, listed below. A `config` block that no crosgha rule reads produces a warning. |
+
+| Option | Rule |
+|---|---|
+| `unpinned-uses.config.policies` (`pattern: hash-pin \| ref-pin \| any`) | `unpinned-action` |
+| `forbidden-uses.config.allow` or `.deny` (repository patterns) | `forbidden-action` |
+| `known-vulnerable-actions.config.allow` (advisory IDs) | `known-vulnerable-action` |
+| `dependabot-cooldown.config.days` (default 7) | `missing-release-cooldown` |
+| `self-hosted-runner.config.labels` (custom runner labels, `*` wildcards) | `self-hosted-runner` |
+
+### Ignoring findings
+
+- **Inline:** `# crosgha: ignore[rule]` anywhere in the finding's YAML span. `# zizmor: ignore[...]` works too, with
+  zizmor's rule names.
+- **Partial zizmor IDs:** some zizmor IDs name part of a crosgha rule. `unpinned-uses` and `unpinned-images` split
+  `unpinned-action`; `bot-conditions` and `unsound-condition` split `unsafe-if-condition`. Ignoring or disabling such
+  an ID affects only that part.
+- **Override:** `--no-ignores` reports everything, including findings that comments or the config ignore.
+
+### Severity
+
+`--min-severity` hides findings below a threshold on zizmor's scale: `informational` and `low` map to `note`, `medium`
+to `warning`, and `high` to `error`. `--fail-on any|note|warning|error|none` (default `any`) sets which findings make
+the run fail.
+
+## Output and exit status
+
+| `--format` | Output |
+|---|---|
+| `text` (default; `plain` in zizmor) | One line per finding, ending with the equivalent rule in other tools, such as `(zizmor: template-injection; actionlint: expression)`. |
+| `json` | Versioned report: `version`, `summary`, `findings`. |
+| `sarif` | SARIF 2.1.0 with the rule metadata GitHub code scanning requires; it validates against the official schema. |
+| `github` | Workflow-command annotations. The default when `GITHUB_ACTIONS=true`. |
+| `agent` | One brief line per finding for AI agents: `path:line:col: severity rule: message help: <rule summary>`, after oxlint's format of the same name. |
+
+`--sarif-file FILE` also writes SARIF during any format, so one run serves the log and the Security tab. After `--fix`,
+every format lists what remains.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | No finding reaches `--fail-on`. |
+| 1 | A finding does. |
+| 2 | A path, workflow, config, write, or API call failed. No file is changed; findings in the workflows that did parse are still reported. |
+
+## Fixes
+
+`--fix` applies a fix only when all of these hold:
+
+1. the patched YAML parses;
+2. the targeted finding disappears and no new finding appears;
+3. only the intended YAML node changed.
+
+Two rules have fixes:
+
+- `persist-credentials` sets `persist-credentials: false`.
+- `removed-feature` replaces the AdoptOpenJDK distributions that setup-java v6 removed with the successor its README
+  names.
+
+Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger filter needs project
+context.
 
 ## Rules
+
+Rule concepts cite their primary sources in `src/rules/`. `cargo run -- --list-rules` prints this catalog from the
+code. **Config** marks rules that read `rules.<id>.config`.
 
 | Rule | Taxonomy tag | Severity | Persona | Scope | Equivalent in | Config |
 |---|---|---|---|---|---|---|
@@ -207,9 +261,6 @@ token, pass the reference yourself with `--action owner/repo@<sha> --action-vers
 | `retired-runtime` | `deprecated-command/feature` | warning | regular | repository |  |  |
 | `repo-org-settings` | `repo-org-settings` | warning | pedantic | repository |  |  |
 
-Rule concepts cite their primary sources in `src/rules/`. The module layout is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
 ## Development
 
 ```sh
@@ -218,6 +269,8 @@ cargo test   # end-to-end and fixture-driven rule tests
 make check   # the pre-push checks: fmt, clippy -D warnings, tests, dogfood scan
 ```
 
-The pre-push hook runs under `mise exec` when mise is not active in the calling shell, so pushes from `gh` or an IDE
-use the pinned toolchain too. Commits follow Conventional Commits (enforced by the `commit-msg` hook); release-please
-turns them into versions and the changelog, and cargo-dist builds the release binaries.
+- **Toolchain:** the pre-push hook runs under `mise exec` when mise is not active in the calling shell, so pushes from
+  `gh` or an IDE use the pinned toolchain too.
+- **Releases:** commits follow Conventional Commits (enforced by the `commit-msg` hook). release-please turns them
+  into versions and the changelog, and cargo-dist builds the release binaries.
+- **Internals:** module interfaces, the rule contract, and fix safety are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
