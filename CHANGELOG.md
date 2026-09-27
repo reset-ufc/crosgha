@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/meiazero/crosgha/compare/v0.5.0...v0.6.0) (2026-09-27)
+
+
+### Added
+
+* flag the removed node version opt-out variable ([c656de5](https://github.com/meiazero/crosgha/commit/c656de5e725c7c4d05ca11b1cb3a8315975a52b2))
+
 ## [0.5.0](https://github.com/meiazero/crosgha/compare/v0.4.0...v0.5.0) (2026-09-27)
 
 
