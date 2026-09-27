@@ -17,3 +17,10 @@ jobs:
         with:
           path: ~/.cargo
           key: cargo
+  dotnet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-dotnet@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          cache: true

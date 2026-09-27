@@ -19,3 +19,12 @@ jobs:
         with:
           path: ~/.cargo
           key: cargo
+  dotnet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-dotnet@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - uses: actions/cache@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: cache-misuse
+        with:
+          path: ~/.nuget/packages
+          key: nuget

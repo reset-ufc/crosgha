@@ -256,6 +256,7 @@ const SETUP_WITH_CACHE: &[&str] = &[
     "actions/setup-python",
     "actions/setup-java",
     "actions/setup-go",
+    "actions/setup-dotnet",
 ];
 
 pub fn cache_misuse(workflow: &Workflow) -> Result<Vec<Finding>, String> {
