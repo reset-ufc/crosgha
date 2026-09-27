@@ -6,11 +6,23 @@ fail() {
     exit 1
 }
 
+boolean() {
+    case "$2" in
+        true|false) ;;
+        *) fail "$1 must be true or false" ;;
+    esac
+}
+
 [[ "${RUNNER_OS:-}" == Linux ]] || fail "crosgha Action supports Linux runners only"
 
-case "${CROSGHA_FORMAT:-sarif}" in
-    sarif|json|text) ;;
-    *) fail "format must be sarif, json, or text" ;;
+case "${CROSGHA_PERSONA:-regular}" in
+    regular|pedantic|auditor) ;;
+    *) fail "persona must be regular, pedantic, or auditor" ;;
+esac
+
+case "${CROSGHA_MIN_SEVERITY:-}" in
+    ''|unknown|informational|low|medium|high) ;;
+    *) fail "min-severity must be unknown, informational, low, medium, or high" ;;
 esac
 
 case "${CROSGHA_FAIL_ON:-any}" in
@@ -23,24 +35,19 @@ case "${CROSGHA_FIX:-none}" in
     *) fail "fix must be none or pull-request" ;;
 esac
 
-case "${CROSGHA_AUTO_MERGE:-false}" in
-    true|false) ;;
-    *) fail "dangerously-auto-merge must be true or false" ;;
-esac
+boolean online-audits "${CROSGHA_ONLINE_AUDITS:-true}"
+boolean advanced-security "${CROSGHA_ADVANCED_SECURITY:-true}"
+boolean annotations "${CROSGHA_ANNOTATIONS:-false}"
+boolean dangerously-auto-merge "${CROSGHA_AUTO_MERGE:-false}"
 
-case "${CROSGHA_UPLOAD_SARIF:-false}" in
-    true|false) ;;
-    *) fail "upload-sarif must be true or false" ;;
-esac
-
-if [[ "${CROSGHA_FIX:-none}" == pull-request && -z "${CROSGHA_TOKEN:-}" ]]; then
-    fail "fix: pull-request requires token; see ROADMAP.md"
+if [[ "${CROSGHA_ANNOTATIONS:-false}" == true && "${CROSGHA_ADVANCED_SECURITY:-true}" == true ]]; then
+    fail "annotations requires advanced-security: false"
+fi
+if [[ "${CROSGHA_FIX:-none}" == pull-request && -z "${CROSGHA_FIX_TOKEN:-}" ]]; then
+    fail "fix: pull-request requires fix-token; see ROADMAP.md"
 fi
 if [[ "${CROSGHA_AUTO_MERGE:-false}" == true && "${CROSGHA_FIX:-none}" != pull-request ]]; then
     fail "dangerously-auto-merge requires fix: pull-request"
-fi
-if [[ "${CROSGHA_UPLOAD_SARIF:-false}" == true && "${CROSGHA_FORMAT:-sarif}" != sarif ]]; then
-    fail "upload-sarif requires format: sarif"
 fi
 
 # ponytail: This entry point validates the Action contract only. Add release

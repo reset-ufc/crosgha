@@ -4,44 +4,82 @@ branding:
   icon: shield
   color: blue
 
+# Inputs from `inputs` through `fail-on-no-inputs` match zizmorcore/zizmor-action, so
+# `crosgha migrate --from zizmor` only swaps the `uses:` line.
 inputs:
+  inputs:
+    description: Whitespace-separated files or directories to scan.
+    required: false
+    default: .
+  collect:
+    description: Accepted for zizmor-action compatibility; crosgha scans workflows only.
+    required: false
+    default: default
+  online-audits:
+    description: Run rules that query the GitHub API.
+    required: false
+    default: 'true'
+  persona:
+    description: Sensitivity, one of regular, pedantic, or auditor.
+    required: false
+    default: regular
+  min-severity:
+    description: Lowest severity to report (unknown, informational, low, medium, or high).
+    required: false
+    default: ''
+  min-confidence:
+    description: Accepted for zizmor-action compatibility; crosgha findings carry no confidence.
+    required: false
+    default: ''
   version:
     description: Release version; defaults to the version bundled with this Action revision.
     required: false
     default: ''
-  path:
-    description: Workflow file or directory to scan.
+  token:
+    description: Token for online rules.
     required: false
-    default: .github/workflows
-  format:
-    description: Report format (sarif, json, or text).
+    default: ${{ github.token }}
+  advanced-security:
+    description: Upload SARIF results to the Security tab; the caller grants security-events write.
     required: false
-    default: sarif
+    default: 'true'
+  color:
+    description: Colorize terminal output.
+    required: false
+    default: 'true'
+  annotations:
+    description: Emit workflow annotations; requires advanced-security false.
+    required: false
+    default: 'false'
+  config:
+    description: Config file (crosgha.yml or zizmor.yml) for every input.
+    required: false
+    default: ''
+  fail-on-no-inputs:
+    description: Fail when no workflow files are found.
+    required: false
+    default: 'true'
   fail-on:
-    description: Severity threshold for a failing result.
+    description: Severity threshold for a failing result (any, note, warning, error, or none).
     required: false
     default: any
   fix:
     description: Fix mode (none or pull-request).
     required: false
     default: none
-  token:
-    description: GitHub App token or fine-grained PAT for pull-request mode.
+  fix-token:
+    description: GitHub App token or fine-grained PAT with Workflows write, for pull-request mode.
     required: false
     default: ''
   dangerously-auto-merge:
     description: Opt in to GitHub auto-merge after required checks and reviews pass.
     required: false
     default: 'false'
-  upload-sarif:
-    description: Upload SARIF to the Security tab when the caller grants permission.
-    required: false
-    default: 'false'
 
 outputs:
-  sarif-file:
-    description: Path to the generated SARIF file.
-    value: ${{ steps.crosgha.outputs['sarif-file'] }}
+  output-file:
+    description: Path to the SARIF results.
+    value: ${{ steps.crosgha.outputs['output-file'] }}
   findings:
     description: Number of reported findings.
     value: ${{ steps.crosgha.outputs.findings }}
@@ -50,15 +88,20 @@ runs:
   using: composite
   steps:
     - id: crosgha
-      name: Validate crosgha Action inputs
+      name: Run crosgha
       shell: bash
       env:
+        CROSGHA_INPUTS: ${{ inputs.inputs }}
+        CROSGHA_ONLINE_AUDITS: ${{ inputs['online-audits'] }}
+        CROSGHA_PERSONA: ${{ inputs.persona }}
+        CROSGHA_MIN_SEVERITY: ${{ inputs['min-severity'] }}
         CROSGHA_VERSION: ${{ inputs.version }}
-        CROSGHA_PATH: ${{ inputs.path }}
-        CROSGHA_FORMAT: ${{ inputs.format }}
+        CROSGHA_TOKEN: ${{ inputs.token }}
+        CROSGHA_ADVANCED_SECURITY: ${{ inputs['advanced-security'] }}
+        CROSGHA_ANNOTATIONS: ${{ inputs.annotations }}
+        CROSGHA_CONFIG_FILE: ${{ inputs.config }}
         CROSGHA_FAIL_ON: ${{ inputs['fail-on'] }}
         CROSGHA_FIX: ${{ inputs.fix }}
-        CROSGHA_TOKEN: ${{ inputs.token }}
+        CROSGHA_FIX_TOKEN: ${{ inputs['fix-token'] }}
         CROSGHA_AUTO_MERGE: ${{ inputs['dangerously-auto-merge'] }}
-        CROSGHA_UPLOAD_SARIF: ${{ inputs['upload-sarif'] }}
       run: bash "$GITHUB_ACTION_PATH/action/entrypoint.sh"
