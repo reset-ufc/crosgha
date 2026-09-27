@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/meiazero/crosgha/compare/v0.1.0...v0.2.0) (2026-09-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **report:** add agent format and default to annotations in actions
+
+### Added
+
+* **report:** add agent format and default to annotations in actions ([9d840d5](https://github.com/meiazero/crosgha/commit/9d840d586d3c5fad6c94cd025c5d6999934b041d))
+
+
+### Documentation
+
+* document the agent format and the annotations default ([73cf8a1](https://github.com/meiazero/crosgha/commit/73cf8a13aa2ed5a6320babba1edda48688f77eec))
+
 ## 0.1.0 (2026-09-27)
 
 
