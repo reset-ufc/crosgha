@@ -3,6 +3,9 @@
 # false) to build the release binary and undraft that same release. A tag
 # pushed with the default GITHUB_TOKEN does not trigger other workflows, but
 # workflow_dispatch does, so no PAT is needed.
+# force-tag-creation (release-please-config.json) tags the draft at once:
+# GitHub defers a draft's tag until publish, and without it release-please
+# cannot find the previous release and re-releases every commit.
 name: release-please
 
 permissions: {}
