@@ -2,6 +2,12 @@
 # Fails fast on fmt, clippy, and test regressions before a push.
 set -euo pipefail
 
+# Callers such as `gh repo create --push` or IDEs run without mise activated, so cargo would use rustup's default
+# toolchain instead of the one pinned in mise.toml.
+if [[ -z "${CROSGHA_HOOK_IN_MISE:-}" ]] && command -v mise >/dev/null; then
+  CROSGHA_HOOK_IN_MISE=1 exec mise exec -- "$0" "$@"
+fi
+
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
