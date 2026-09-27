@@ -17,7 +17,9 @@ fn fixtures() -> PathBuf {
 }
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_crosgha"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_crosgha"));
+    command.env_remove("GITHUB_ACTIONS");
+    command
 }
 
 /// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.

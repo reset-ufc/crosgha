@@ -118,6 +118,7 @@ fn run_action(base: &str, inputs: &str, extra: &[(&str, &str)]) -> Run {
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
         .env("RUNNER_OS", "Linux")
+        .env("GITHUB_ACTIONS", "true")
         .env("RUNNER_TEMP", &temp)
         .env("GITHUB_OUTPUT", &outputs)
         .env("GITHUB_STEP_SUMMARY", &summary)
