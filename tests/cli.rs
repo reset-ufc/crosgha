@@ -683,6 +683,31 @@ fn dependabot_config_input_is_audited_not_parsed_as_a_workflow() {
 }
 
 #[test]
+fn no_path_the_repository_root_and_github_dir_scan_the_same_workflows() {
+    // `.github` also holds `crosgha.yml` and `dependabot.yml`, which are not workflows.
+    let scan = |paths: &[&str]| {
+        let output = bin()
+            .current_dir(fixture("repos/cooldown"))
+            .args(["--persona", "auditor", "--offline", "--fail-on", "none"])
+            .args(paths)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{paths:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().replace("./", "")
+    };
+    let default = scan(&[]);
+    assert!(default.contains("Checked 1 workflow file(s)"), "{default}");
+    assert!(default.contains(".github/dependabot.yml:3:"), "{default}");
+    for paths in [&["."][..], &[".github"], &[".github/workflows"]] {
+        assert_eq!(scan(paths), default, "{paths:?}");
+    }
+}
+
+#[test]
 fn config_blocks_without_a_crosgha_reader_are_reported() {
     let output = bin()
         .args(["--offline", "--config"])

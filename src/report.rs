@@ -18,7 +18,7 @@ pub enum Format {
     Sarif,
     /// GitHub workflow command annotations, zizmor's `github` format.
     Github,
-    /// One brief line per finding for AI agents, after oxlint's `agent` format.
+    /// One brief line per finding for AI agents.
     Agent,
 }
 
