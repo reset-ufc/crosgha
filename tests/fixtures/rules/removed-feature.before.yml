@@ -52,10 +52,15 @@ jobs:
     steps:
       - run: echo windows
   mac:
-    runs-on: { group: builders, labels: [macos-13] } # expect: removed-feature
+    runs-on: macos-13 # expect: removed-feature
     timeout-minutes: 10
     steps:
       - run: echo mac
+  group:
+    runs-on: { group: builders, labels: [macos-13] }
+    timeout-minutes: 10
+    steps:
+      - run: echo group
   old:
     runs-on: ubuntu-18.04 # expect: removed-feature
     timeout-minutes: 10

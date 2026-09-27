@@ -70,6 +70,10 @@ four shapes, dispatched from explicit tables in `rules/mod.rs`:
 | Online | `fn(&Workflow, &GitHub, Options) -> Vec<Finding>` | `ONLINE`; runs only with a token |
 | Repository | `fn(&Path, bool, Options) -> Vec<Located>` for the `.github` directory | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
 
+Checks that state github.com facts (retired hosted-runner images and service shutdowns in
+`removed-feature`, and `retired-runtime`) sit in the `HOSTED` and `HOSTED_REPOSITORY` tables and are
+skipped when `--gh-hostname` names another host.
+
 A finding can have no fix when the change is not safe to choose automatically. A fix proposal
 supplies a `yamlpatch` operation, the route it may change, and whether it adds or replaces that
 node. The shared fix module applies and validates proposals. Detection-only rules leave source
@@ -108,7 +112,8 @@ zizmor's severities map onto the SARIF levels: `informational`/`low` → `note`,
 the findings that remain after fixes.
 
 Input, parse, config, API, and write errors exit with status 2. A workflow that fails to parse is
-reported on stderr while the others are still checked and reported; `--fix` then writes nothing. Exit codes
+reported on stderr while the others are still checked and reported; `--fix` then writes nothing. JSON lists
+such files under `errors` and SARIF as `toolExecutionNotifications` of the invocation. Exit codes
 deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only for non-zero.
 
 ## GitHub Action path

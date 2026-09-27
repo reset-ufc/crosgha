@@ -511,12 +511,26 @@ const ADOPT_SUCCESSORS: &[(&str, &str)] = &[
     ("adopt-openj9", "semeru"),
 ];
 
-pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+/// `owner/repo` (lowercased, as GitHub resolves it) and the `major.minor...` numbers of a step's
+/// action, when its ref names a version.
+fn versioned_action(workflow: &Workflow, step: &common::Step<'_>) -> Option<(String, Vec<u64>)> {
+    let action = step.uses().and_then(common::parse_uses)?;
+    let version = online::ref_version(workflow, &step.key("uses"), action.git_ref)?;
+    let name = format!("{}/{}", action.owner, action.repo).to_ascii_lowercase();
+    Some((name, online::numbers(&version)))
+}
+
+/// github.com facts: retired hosted-runner images and action versions its services no longer
+/// serve. Registered in `HOSTED`, so another `--gh-hostname` skips it.
+pub fn removed_hosted(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
-        // A self-hosted runner labelled after an OS is not a hosted image.
+        // Labels of a runner group or of a self-hosted runner name a machine, not a hosted image.
+        let grouped = job
+            .get("runs-on")
+            .is_some_and(|runs_on| runs_on.get("group").is_some());
         let labels = runner::job_labels(&job);
-        let retired = if labels.contains(&"self-hosted") {
+        let retired = if grouped || labels.contains(&"self-hosted") {
             None
         } else {
             labels
@@ -533,16 +547,9 @@ pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             )?);
         }
         for step in common::steps(&job) {
-            let Some(action) = step.uses().and_then(common::parse_uses) else {
+            let Some((name, version)) = versioned_action(workflow, &step) else {
                 continue;
             };
-            let Some(version) = online::ref_version(workflow, &step.key("uses"), action.git_ref)
-            else {
-                continue;
-            };
-            let version = online::numbers(&version);
-            // GitHub resolves `owner/repo` case-insensitively.
-            let name = format!("{}/{}", action.owner, action.repo).to_ascii_lowercase();
             if let Some(reason) = shut_down(&name, &version) {
                 findings.push(common::finding(
                     workflow,
@@ -552,6 +559,19 @@ pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     reason,
                 )?);
             }
+        }
+    }
+    Ok(findings)
+}
+
+/// Inputs an action's newer major removed, whatever host runs it.
+pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let mut findings = Vec::new();
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
+            let Some((name, version)) = versioned_action(workflow, &step) else {
+                continue;
+            };
             let successor = step
                 .value
                 .get("with")

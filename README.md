@@ -130,7 +130,8 @@ Rules with scope `online` in the [rule table](#rules) query the GitHub API.
 
 - **When they run:** whenever a token is available (`--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`), unless
   `--offline` or `--no-online-audits` is set.
-- **GitHub Enterprise Server:** `--gh-hostname` (or `GH_HOST`).
+- **GitHub Enterprise Server:** `--gh-hostname` (or `GH_HOST`). It also turns off the checks that describe github.com:
+  retired runner images and shut-down action versions in `removed-feature`, and `retired-runtime`.
 - **`repo-org-settings`** also needs `--repository owner/name` (or `GITHUB_REPOSITORY`).
 
 ### Config file
@@ -174,8 +175,8 @@ the run fail.
 | `--format` | Output |
 |---|---|
 | `text` (default; `plain` in zizmor) | One line per finding, ending with the equivalent rule in other tools, such as `(zizmor: template-injection; actionlint: expression)`. |
-| `json` | Versioned report: `version`, `summary`, `findings`. |
-| `sarif` | SARIF 2.1.0 with the rule metadata GitHub code scanning requires; it validates against the official schema. |
+| `json` | Versioned report: `version`, `summary`, `findings`, and `errors` for workflows that failed to parse. |
+| `sarif` | SARIF 2.1.0 with the rule metadata GitHub code scanning requires; it validates against the official schema. Parse failures are `toolExecutionNotifications` of the invocation. |
 | `github` | Workflow-command annotations. The default when `GITHUB_ACTIONS=true`. |
 | `agent` | One brief line per finding for AI agents: `path:line:col: severity rule: message help: <rule summary>`, after oxlint's format of the same name. |
 
@@ -186,7 +187,7 @@ every format lists what remains.
 |---|---|
 | 0 | No finding reaches `--fail-on`. |
 | 1 | A finding does. |
-| 2 | A path, workflow, config, write, or API call failed. No file is changed; findings in the workflows that did parse are still reported. |
+| 2 | A path, workflow, config, write, or API call failed. No file is changed; findings in the workflows that did parse are still reported, and JSON and SARIF list the failed files. |
 
 ## Fixes
 

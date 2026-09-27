@@ -169,7 +169,7 @@ pub fn run() -> ExitCode {
     };
 
     let mut files = Vec::new();
-    let mut failures = 0;
+    let mut failures: Vec<report::FileError> = Vec::new();
     let token = args
         .gh_token
         .clone()
@@ -193,6 +193,7 @@ pub fn run() -> ExitCode {
         config,
         ignores: !args.no_ignores,
         min_severity: args.min_severity.as_deref().and_then(config::severity),
+        hosted: api_url(&args.gh_hostname) == "https://api.github.com",
     };
     for path in workflows {
         let file = path
@@ -204,13 +205,16 @@ pub fn run() -> ExitCode {
         match inspected {
             Ok(inspection) => files.push(report::FileReport { path, inspection }),
             Err(error) => {
-                failures += 1;
                 eprintln!("ERROR {}: {error}", path.display());
+                failures.push(report::FileError {
+                    path,
+                    message: error,
+                });
             }
         }
     }
     // One unreadable workflow must not hide the others' findings, but exit 2 promises no writes.
-    let fix = args.fix && failures == 0;
+    let fix = args.fix && failures.is_empty();
     let mut github_dirs: Vec<PathBuf> = args
         .paths
         .iter()
@@ -253,7 +257,8 @@ pub fn run() -> ExitCode {
         }
     }
     if let Some(target) = &args.sarif_file
-        && let Err(error) = std::fs::write(target, report::sarif(&files, &repository, fix))
+        && let Err(error) =
+            std::fs::write(target, report::sarif(&files, &repository, &failures, fix))
     {
         eprintln!("error: {}: {error}", target.display());
         return ExitCode::from(2);
@@ -265,8 +270,11 @@ pub fn run() -> ExitCode {
             report::Format::Text
         },
     );
-    print!("{}", report::render(format, &files, &repository, fix));
-    if failures > 0 {
+    print!(
+        "{}",
+        report::render(format, &files, &repository, &failures, fix)
+    );
+    if !failures.is_empty() {
         return ExitCode::from(2);
     }
 
