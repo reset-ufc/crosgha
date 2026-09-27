@@ -38,7 +38,7 @@ Each `PATH` may be a workflow file, a directory (scanned recursively), or a repo
 is scanned through its `.github/workflows` as zizmor does with `.`. Symlinked files are scanned but
 never rewritten. Exit status: 0 when nothing reaches `--fail-on`, 1 when a
 finding does, 2 when a path, workflow, config, write, or API call fails. In that last case no file
-is changed.
+is changed, and findings in the workflows that did parse are still reported.
 
 ### Personas
 

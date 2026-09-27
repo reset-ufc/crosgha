@@ -190,9 +190,8 @@ pub fn run() -> ExitCode {
             }
         }
     }
-    if failures > 0 {
-        return ExitCode::from(2);
-    }
+    // One unreadable workflow must not hide the others' findings, but exit 2 promises no writes.
+    let fix = args.fix && failures == 0;
     let mut github_dirs: Vec<PathBuf> = args
         .paths
         .iter()
@@ -223,7 +222,7 @@ pub fn run() -> ExitCode {
         }
     };
 
-    if args.fix {
+    if fix {
         for file in &files {
             if let Some(outcome) = &file.inspection.fix
                 && outcome.fixed_count > 0
@@ -235,7 +234,7 @@ pub fn run() -> ExitCode {
         }
     }
     if let Some(target) = &args.sarif_file
-        && let Err(error) = std::fs::write(target, report::sarif(&files, &repository, args.fix))
+        && let Err(error) = std::fs::write(target, report::sarif(&files, &repository, fix))
     {
         eprintln!("error: {}: {error}", target.display());
         return ExitCode::from(2);
@@ -247,10 +246,13 @@ pub fn run() -> ExitCode {
             report::Format::Text
         },
     );
-    print!("{}", report::render(format, &files, &repository, args.fix));
+    print!("{}", report::render(format, &files, &repository, fix));
+    if failures > 0 {
+        return ExitCode::from(2);
+    }
 
     let should_fail = files.iter().any(|file| {
-        let findings = if args.fix {
+        let findings = if fix {
             file.inspection
                 .fix
                 .as_ref()

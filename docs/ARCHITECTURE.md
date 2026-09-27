@@ -107,7 +107,8 @@ zizmor's severities map onto the SARIF levels: `informational`/`low` → `note`,
 `any` is the default `--fail-on`, and `none` disables failure on findings. `--fix` evaluates
 the findings that remain after fixes.
 
-Input, parse, config, API, and write errors exit with status 2. Exit codes
+Input, parse, config, API, and write errors exit with status 2. A workflow that fails to parse is
+reported on stderr while the others are still checked and reported; `--fix` then writes nothing. Exit codes
 deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only for non-zero.
 
 ## GitHub Action path

@@ -136,6 +136,45 @@ fn fix_does_not_overwrite_invalid_workflow() {
 }
 
 #[test]
+fn invalid_workflow_does_not_hide_findings_in_the_others() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("crosgha-mixed-{}-{unique}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let valid = dir.join("ci.yml");
+    fs::copy(fixture("checkout-credentials.before.yml"), &valid).unwrap();
+    fs::copy(fixture("malformed.yml"), dir.join("broken.yml")).unwrap();
+    let before = fs::read(&valid).unwrap();
+
+    let report = bin().arg(&dir).output().unwrap();
+    let fix = bin().arg("--fix").arg(&dir).output().unwrap();
+    let after = fs::read(&valid).unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+
+    assert_eq!(report.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&report.stderr).contains("broken.yml"));
+    let stdout = String::from_utf8(report.stdout).unwrap();
+    assert_eq!(
+        stdout.matches("persist-credentials [").count(),
+        3,
+        "{stdout}"
+    );
+
+    // A failed input keeps the exit-2 promise that no file changes, but still shows the findings.
+    assert_eq!(fix.status.code(), Some(2));
+    assert_eq!(before, after);
+    let stdout = String::from_utf8(fix.stdout).unwrap();
+    assert_eq!(
+        stdout.matches("persist-credentials [").count(),
+        3,
+        "{stdout}"
+    );
+    assert!(!stdout.contains("Fixed"), "{stdout}");
+}
+
+#[test]
 fn failure_threshold_changes_exit_code_without_hiding_findings() {
     let workflow = fixture("checkout-credentials.before.yml");
     let error_only = bin()
