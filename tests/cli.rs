@@ -1021,6 +1021,7 @@ fn git(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
         .env("GIT_COMMITTER_EMAIL", "t@example.com")
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
+        .env_remove("GITHUB_ACTIONS")
         .output()
         .unwrap()
 }
