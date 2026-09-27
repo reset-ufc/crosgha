@@ -1,0 +1,15 @@
+name: Errors
+on: [push]
+permissions: {}
+jobs:
+  a:
+    continue-on-error: true # expect: error-suppression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make lint
+        continue-on-error: true # expect: error-suppression
+      - run: make test
+        continue-on-error: ${{ github.event_name == 'schedule' }}
+      - run: make build
+        continue-on-error: false

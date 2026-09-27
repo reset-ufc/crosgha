@@ -1,0 +1,15 @@
+name: CI
+on:
+  issues:
+permissions: {}
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - uses: example/unpinned@v1
+        with:
+          persist-credentials: false
+      - run: echo "${{ github.event.issue.title }}"
+      - run: echo "${{ github.event.issue.body }}"

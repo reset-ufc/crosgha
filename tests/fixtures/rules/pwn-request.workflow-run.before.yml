@@ -1,0 +1,15 @@
+name: After CI
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+permissions: {}
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: pwn-request
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false

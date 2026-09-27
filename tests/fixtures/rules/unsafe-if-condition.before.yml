@@ -1,0 +1,22 @@
+name: Conditions
+on: [pull_request]
+permissions: {}
+jobs:
+  test:
+    if: true # expect: unsafe-if-condition
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - if: ${{ github.event_name == 'push' }} && ${{ github.ref == 'refs/heads/main' }} # expect: unsafe-if-condition
+        run: echo a
+      - if: | # expect: unsafe-if-condition
+          ${{ github.event_name == 'push' }}
+        run: echo b
+      - if: github.actor == 'dependabot[bot]' # expect: unsafe-if-condition
+        run: echo c
+      - if: github.event_name == 'push'
+        run: echo d
+      - if: ${{ github.event_name == 'push' }}
+        run: echo e
+      - if: github.event.pull_request.user.login == 'dependabot[bot]'
+        run: echo f

@@ -1,0 +1,11 @@
+name: Agent on comments
+on:
+  issue_comment:
+    types: [created]
+permissions: {}
+jobs:
+  agent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: example/labeler@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

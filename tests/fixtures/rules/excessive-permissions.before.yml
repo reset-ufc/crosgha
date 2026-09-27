@@ -1,0 +1,17 @@
+name: Permissions
+on: [push]
+permissions: write-all # expect: excessive-permissions
+jobs:
+  a:
+    permissions: write-all # expect: excessive-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo a
+  b:
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo b

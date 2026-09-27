@@ -1,0 +1,26 @@
+name: Self-hosted
+on: [pull_request]
+permissions: {}
+jobs:
+  a:
+    runs-on: self-hosted # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo a
+  b:
+    runs-on: [self-hosted, linux] # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo b
+  c:
+    runs-on: # expect: self-hosted-runner
+      group: private
+      labels: [self-hosted, gpu]
+    timeout-minutes: 10
+    steps:
+      - run: echo c
+  d:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo d

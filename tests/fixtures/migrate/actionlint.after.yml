@@ -1,0 +1,18 @@
+name: Lint
+on:
+  pull_request:
+    branches: [main]
+permissions: {}
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+      - name: reviewdog
+        uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+      - uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+      - run: echo done

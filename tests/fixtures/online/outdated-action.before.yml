@@ -1,0 +1,14 @@
+name: Online
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v3 # expect: outdated-action
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@4444444444444444444444444444444444444444 # v4.0.0 # expect: outdated-action
+      - uses: actions/setup-node@4444444444444444444444444444444444444444 # v4.1.0

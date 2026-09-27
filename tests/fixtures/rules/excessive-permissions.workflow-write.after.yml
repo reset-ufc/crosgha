@@ -1,0 +1,13 @@
+name: Permissions
+on: [push]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  a:
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo a

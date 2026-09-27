@@ -1,0 +1,16 @@
+name: Complexity
+on: [push]
+permissions: {}
+jobs:
+  long:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: ./scripts/steps.sh
+  script:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: ./scripts/lines.sh
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: echo simple

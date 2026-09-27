@@ -1,0 +1,16 @@
+name: Deprecated
+on: [push]
+permissions: {}
+env:
+  ACTIONS_ALLOW_UNSECURE_COMMANDS: true # expect: deprecated-command
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "::set-output name=x::1" # expect: deprecated-command
+      - run: echo "::save-state name=y::2" # expect: deprecated-command
+      - run: | # expect: deprecated-command
+          echo "::add-path::/opt/bin"
+      - run: echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: echo "::add-mask::value"

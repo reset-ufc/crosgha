@@ -1,0 +1,14 @@
+name: Shell
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> "$GITHUB_ENV"
+      - run: echo "b=2" >> "$GITHUB_OUTPUT"
+      - run: |
+          echo "## Summary" >> "${GITHUB_STEP_SUMMARY}"
+      - shell: pwsh
+        run: echo "c=3" >> $env:GITHUB_ENV

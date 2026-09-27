@@ -1,0 +1,14 @@
+name: Remote scripts
+on: [push]
+permissions: {}
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: curl -fsSLo install.sh https://example.com/install.sh && sha256sum -c install.sh.sha256 && sh install.sh
+      - run: |
+          echo "installing"
+          wget -qO setup.sh https://example.com/setup && sha256sum -c setup.sh.sha256
+      - run: curl -fsSL https://example.com/tool.tgz -o tool.tgz && sha256sum -c tool.tgz.sha256
+      - run: curl -s https://api.example.com/status | jq .

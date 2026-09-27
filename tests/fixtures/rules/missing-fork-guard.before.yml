@@ -1,0 +1,23 @@
+name: Nightly
+on:
+  schedule:
+    - cron: '0 3 * * *'
+permissions: {}
+jobs:
+  nightly: # expect: missing-fork-guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  guarded:
+    if: github.repository == 'example/project'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  owner-guarded:
+    if: ${{ github.repository_owner == 'example' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly

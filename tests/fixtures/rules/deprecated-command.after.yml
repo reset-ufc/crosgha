@@ -1,0 +1,12 @@
+name: Deprecated
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: echo "y=2" >> "$GITHUB_STATE"
+      - run: echo "/opt/bin" >> "$GITHUB_PATH"
+      - run: echo "::add-mask::value"

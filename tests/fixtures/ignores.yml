@@ -1,0 +1,14 @@
+name: Ignores
+on: [issues]
+permissions: {}
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # crosgha: ignore[persist-credentials] read-only job
+      - run: | # zizmor: ignore[template-injection] the title is only echoed
+          echo "${{ github.event.issue.title }}"
+      - run: echo "${{ github.event.issue.body }}"
+      - run: | # zizmor: ignore[unpinned-uses] wrong rule, so this stays reported
+          echo "${{ github.event.comment.body }}"

@@ -1,11 +1,35 @@
 use clap::ValueEnum;
 
-#[derive(Clone, Copy)]
-pub struct RulePolicy {
-    pub require_immutable_references: bool,
-    pub require_job_timeout: bool,
-    pub require_explicit_token_permissions: bool,
-    pub require_explicit_workflow_secrets: bool,
+/// Sensitivity levels named after zizmor's personas so users can switch tools
+/// without relearning the flag: https://docs.zizmor.sh/usage/#using-personas
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, ValueEnum)]
+pub enum Persona {
+    /// High-signal, actionable findings.
+    Regular,
+    /// Adds code smells that are worth cleaning up.
+    Pedantic,
+    /// Everything, including likely false positives.
+    Auditor,
+}
+
+impl Persona {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Regular => "regular",
+            Self::Pedantic => "pedantic",
+            Self::Auditor => "auditor",
+        }
+    }
+}
+
+pub struct Settings {
+    pub persona: Persona,
+    /// Present in online mode: a token is available and `--offline` is not set.
+    pub github: Option<crate::github::GitHub>,
+    pub config: crate::config::Config,
+    /// `false` with `--no-ignores`: inline and config ignores are not applied.
+    pub ignores: bool,
+    pub min_severity: Option<Severity>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

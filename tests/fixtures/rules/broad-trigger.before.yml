@@ -1,0 +1,13 @@
+name: Triggers
+on:
+  push: # expect: broad-trigger
+  pull_request: # expect: broad-trigger
+    types: [opened, synchronize]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make test

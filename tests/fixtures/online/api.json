@@ -1,0 +1,64 @@
+{
+  "/advisories?ecosystem=actions&affects=tj-actions/changed-files@35": [
+    {
+      "ghsa_id": "GHSA-mrrh-fwg8-r2c3"
+    }
+  ],
+  "/advisories?ecosystem=actions&affects=tj-actions/changed-files@35.0.0": [
+    {
+      "ghsa_id": "GHSA-mrrh-fwg8-r2c3"
+    }
+  ],
+  "/advisories?ecosystem=actions&affects=tj-actions/changed-files@46.0.5": [],
+  "/advisories?ecosystem=actions&affects=actions/checkout@4": [],
+  "/repos/actions/checkout": {
+    "default_branch": "main",
+    "archived": false
+  },
+  "/repos/actions/create-release": {
+    "default_branch": "master",
+    "archived": true
+  },
+  "/repos/actions/checkout/releases/latest": {
+    "tag_name": "v4.2.2"
+  },
+  "/repos/actions/setup-node/releases/latest": {
+    "tag_name": "v4.1.0"
+  },
+  "/repos/actions/checkout/commits/v4.2.2": {
+    "sha": "1111111111111111111111111111111111111111"
+  },
+  "/repos/actions/checkout/compare/main...1111111111111111111111111111111111111111": {
+    "status": "behind"
+  },
+  "/repos/actions/checkout/compare/main...2222222222222222222222222222222222222222": {
+    "status": "diverged"
+  },
+  "/repos/actions/checkout/compare/main...3333333333333333333333333333333333333333": {
+    "status": "diverged"
+  },
+  "/repos/actions/checkout/tags?per_page=100": [
+    {
+      "name": "v4.2.2",
+      "commit": {
+        "sha": "1111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "name": "v4.1.0",
+      "commit": {
+        "sha": "3333333333333333333333333333333333333333"
+      }
+    }
+  ],
+  "/repos/example/project/actions/permissions/workflow": {
+    "default_workflow_permissions": "write",
+    "can_approve_pull_request_reviews": true
+  },
+  "/repos/meiazero/crosgha/releases/latest": {
+    "tag_name": "v0.1.0"
+  },
+  "/repos/meiazero/crosgha/commits/v0.1.0": {
+    "sha": "cccccccccccccccccccccccccccccccccccccccc"
+  }
+}

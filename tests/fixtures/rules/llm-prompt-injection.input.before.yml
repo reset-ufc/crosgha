@@ -1,0 +1,14 @@
+name: Agent on pull requests
+on: [pull_request]
+permissions: {}
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: openai/codex-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: llm-prompt-injection
+        with:
+          prompt: "Summarize: ${{ github.event.pull_request.body }}"
+      - uses: google-github-actions/run-gemini-cli@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          prompt: Review the diff

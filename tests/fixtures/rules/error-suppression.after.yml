@@ -1,0 +1,12 @@
+name: Errors
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make lint
+      - run: make test
+        continue-on-error: ${{ github.event_name == 'schedule' }}
+      - run: make build

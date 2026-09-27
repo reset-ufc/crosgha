@@ -1,0 +1,9 @@
+name: Triggers
+on: [push] # expect: broad-trigger
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make test

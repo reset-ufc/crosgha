@@ -1,0 +1,14 @@
+name: Privileged PR build
+on:
+  pull_request_target:
+    types: [opened]
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+      - run: gh pr view ${{ github.event.pull_request.number }} --json title

@@ -1,0 +1,21 @@
+name: Security
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  zizmor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Run zizmor 🌈
+        uses: zizmorcore/zizmor-action@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v0.6.4
+        with:
+          persona: pedantic # Code smells too.
+          min-severity: medium
+      - run: uvx zizmor --format plain .

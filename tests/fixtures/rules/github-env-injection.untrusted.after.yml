@@ -1,0 +1,9 @@
+name: Environment file writes
+on: [issues]
+permissions: {}
+jobs:
+  label:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"

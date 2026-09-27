@@ -7,19 +7,19 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     container:
-      image: ghcr.io/example/build:stable
+      image: ghcr.io/example/build:stable # expect: unpinned-action
     services:
       database:
-        image: postgres:16
+        image: postgres:16 # expect: unpinned-action
     steps:
-      - uses: example/setup@v2
-      - uses: example/build@abc1234
-      - uses: docker://alpine:3.20
+      - uses: example/setup@v2 # expect: unpinned-action
+      - uses: example/build@abc1234 # expect: unpinned-action
+      - uses: docker://alpine:3.20 # expect: unpinned-action
       - uses: example/pinned@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       - uses: ./.github/actions/local
       - uses: docker://alpine@sha256:1111111111111111111111111111111111111111111111111111111111111111
   reuse:
-    uses: example/shared/.github/workflows/build.yml@main
+    uses: example/shared/.github/workflows/build.yml@main # expect: unpinned-action
   local-reuse:
     uses: ./.github/workflows/build.yml
   pinned-reuse:

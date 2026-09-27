@@ -1,0 +1,11 @@
+name: Triggers
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make test

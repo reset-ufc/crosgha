@@ -1,0 +1,12 @@
+name: Triggers
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions: {}
+jobs:
+  noop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo ok

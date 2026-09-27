@@ -45,7 +45,14 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
 
         if entry_type.is_dir() {
             collect(&entry.path(), workflows)?;
-        } else if entry_type.is_file() && is_yaml_file(&entry.path()) {
+            continue;
+        }
+        // ponytail: Symlinked files are scanned like direct paths; symlinked
+        // directories are not followed, which avoids cycle detection for now.
+        let is_file = entry_type.is_file()
+            || (entry_type.is_symlink()
+                && entry.path().metadata().is_ok_and(|meta| meta.is_file()));
+        if is_file && is_yaml_file(&entry.path()) {
             workflows.push(entry.path());
         }
     }
@@ -98,4 +105,18 @@ pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
         let _ = fs::remove_file(&temporary);
     }
     result.map_err(|error| format!("cannot write verified fix: {error}"))
+}
+
+/// The `.github` directory that owns a scanned `.github/workflows` directory or repository root.
+pub fn github_dir(scanned: &Path) -> Option<PathBuf> {
+    if !scanned.is_dir() {
+        return None;
+    }
+    let parent = scanned.parent().filter(|parent| {
+        scanned.file_name().is_some_and(|name| name == "workflows")
+            && parent.file_name().is_some_and(|name| name == ".github")
+    });
+    parent
+        .map(Path::to_path_buf)
+        .or_else(|| Some(scanned.join(".github")).filter(|github| github.is_dir()))
 }

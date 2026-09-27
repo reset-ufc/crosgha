@@ -1,0 +1,15 @@
+name: URLs
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: curl -fsSL http://example.com/tool.tar.gz -o tool.tgz # expect: insecure-protocol
+      - run: curl http://localhost:8080/health
+      - uses: example/deploy@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          registry: http://registry.example.com # expect: insecure-protocol
+      - run: git clone git://example.com/repo.git # expect: insecure-protocol
+      - run: curl https://example.com

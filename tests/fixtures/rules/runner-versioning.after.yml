@@ -1,0 +1,14 @@
+name: Runner labels
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo a
+  b:
+    runs-on: [windows-2025]
+    timeout-minutes: 10
+    steps:
+      - run: echo b

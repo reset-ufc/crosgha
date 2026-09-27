@@ -1,0 +1,12 @@
+name: CI
+on: [push, pull_request]
+permissions: {}
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make test

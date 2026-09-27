@@ -1,0 +1,16 @@
+name: Obfuscation
+on: [push]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions//checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: obfuscation
+      - uses: actions/cache/save/../restore@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: obfuscation
+      - uses: github/codeql-action/./init@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: obfuscation
+      - run: echo ${{ 'hello' }} # expect: obfuscation
+      - run: echo ${{ github['event']['issue']['title'] }} # expect: obfuscation
+      - uses: github/codeql-action/init@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - uses: docker://ghcr.io/danger/danger-kotlin:1.2.0
+      - run: echo ${{ github.event.issue.number }} ${{ matrix['os'] }}

@@ -1,0 +1,23 @@
+name: Lint
+on:
+  pull_request:
+    branches: [main]
+permissions: {}
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: raven-actions/actionlint@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v2.0.1
+        with:
+          shellcheck: false
+          flags: -ignore SC2086
+      - name: reviewdog
+        uses: reviewdog/action-actionlint@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v1.65.2
+      - uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color
+      - run: echo done

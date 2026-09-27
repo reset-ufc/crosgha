@@ -1,0 +1,25 @@
+name: Script injection
+on: [issues, pull_request]
+permissions: {}
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "${{ github.event.issue.title }}" # expect: script-injection
+      - run: | # expect: script-injection
+          echo "branch ${{ github.head_ref }}"
+      - run: echo "${{ github.event.issue.number }}"
+      - env:
+          TITLE: ${{ github.event.issue.title }}
+        run: echo "$TITLE"
+      - uses: actions/github-script@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          script: | # expect: script-injection
+            console.log("${{ github.event.pull_request.body }}")
+      - run: echo "${{ github.event.commits[0].message }}" # expect: script-injection
+      - run: echo "${{ github.event.pull_request.head.repo.default_branch }}" # expect: script-injection
+      - run: echo "${{ github.sha }} ${{ github.ref }}"
+      - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          title: ${{ github.event.issue.title }}

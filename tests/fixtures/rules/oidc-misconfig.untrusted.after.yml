@@ -1,0 +1,11 @@
+name: OIDC on pull_request_target
+on: [pull_request_target]
+permissions: {}
+jobs:
+  deploy:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo deploy

@@ -1,0 +1,13 @@
+name: Environment file writes
+on:
+  pull_request_target:
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      NAME: value
+    steps:
+      - run: echo "$HOME/bin/tool"
+      - run: echo "out=1" >> "$GITHUB_OUTPUT"

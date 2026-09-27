@@ -1,12 +1,11 @@
 use crate::{
     fix::{self, FixOutcome},
-    policy::RulePolicy,
+    policy::Settings,
     rules::{self, Finding},
     workflow::Workflow,
 };
 
 pub struct Inspection {
-    pub jobs_start: (usize, usize),
     pub findings: Vec<Finding>,
     pub fix: Option<FixOutcome>,
 }
@@ -14,19 +13,15 @@ pub struct Inspection {
 pub fn inspect(
     source: String,
     apply_fixes: bool,
-    policy: RulePolicy,
+    settings: &Settings,
+    file: &str,
 ) -> Result<Inspection, String> {
     let workflow = Workflow::parse(source)?;
-    let jobs_start = workflow.jobs_start;
-    let findings = rules::detect_all(&workflow, policy)?;
+    let findings = rules::detect_all(&workflow, settings, file)?;
     let fix = if apply_fixes && !findings.is_empty() {
-        Some(fix::apply(workflow, &findings, policy)?)
+        Some(fix::apply(workflow, &findings, settings, file)?)
     } else {
         None
     };
-    Ok(Inspection {
-        jobs_start,
-        findings,
-        fix,
-    })
+    Ok(Inspection { findings, fix })
 }

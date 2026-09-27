@@ -1,7 +1,7 @@
 use yamlpatch::apply_yaml_patches;
 
 use crate::{
-    policy::RulePolicy,
+    policy::Settings,
     rules::{self, ChangeKind, Finding, ProposedFix},
     workflow::Workflow,
 };
@@ -15,22 +15,23 @@ pub struct FixOutcome {
 pub fn apply(
     mut current: Workflow,
     findings: &[Finding],
-    policy: RulePolicy,
+    settings: &Settings,
+    file: &str,
 ) -> Result<FixOutcome, String> {
     let mut fixed_count = 0;
     for finding in findings {
         let Some(proposal) = &finding.fix else {
             continue;
         };
-        let before = rules::detect_all(&current, policy)?;
+        let before = rules::detect_all(&current, settings, file)?;
         let patched = apply_yaml_patches(&current.document, std::slice::from_ref(&proposal.patch))
             .map_err(|error| error.to_string())?;
         let next = Workflow::parse(patched.source().to_owned())?;
-        validate_change(&current, &next, finding, proposal, &before, policy)?;
+        validate_change(&current, &next, finding, proposal, &before, settings, file)?;
         current = next;
         fixed_count += 1;
     }
-    let remaining = rules::detect_all(&current, policy)?;
+    let remaining = rules::detect_all(&current, settings, file)?;
     Ok(FixOutcome {
         source: current.document.source().to_owned(),
         fixed_count,
@@ -44,9 +45,10 @@ fn validate_change(
     target: &Finding,
     proposal: &ProposedFix,
     old_findings: &[Finding],
-    policy: RulePolicy,
+    settings: &Settings,
+    file: &str,
 ) -> Result<(), String> {
-    let new_findings = rules::detect_all(after, policy)?;
+    let new_findings = rules::detect_all(after, settings, file)?;
     if new_findings
         .iter()
         .any(|finding| same_target(finding, target))

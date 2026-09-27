@@ -4,7 +4,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_crosgha"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_crosgha"));
+    command.env_remove("GH_TOKEN").env_remove("GITHUB_TOKEN");
+    command
 }
 
 #[test]
@@ -35,9 +37,7 @@ fn scans_workflow_directory() {
         .expect("failed to run binary");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("YAML parsed; `on` and `jobs` found"));
-    assert!(stdout.contains("Checked 2 workflow file(s)"));
-    assert!(stdout.contains("0 finding(s)"));
+    assert_eq!(stdout, "Checked 2 workflow file(s); 0 finding(s).\n");
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn rejects_malformed_yaml() {
         .arg(fixture("malformed.yml"))
         .output()
         .expect("failed to run binary");
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("input is not valid YAML"));
     assert!(stderr.contains("malformed.yml"));
@@ -58,7 +58,7 @@ fn rejects_non_workflow_yaml() {
         .arg(fixture("missing-workflow-keys.yml"))
         .output()
         .expect("failed to run binary");
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("missing required top-level key `on`"));
     assert!(stderr.contains("missing-workflow-keys.yml"));
@@ -72,7 +72,7 @@ fn reports_checkout_credentials_across_jobs() {
         .expect("failed to run binary");
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(stdout.matches("persist-credentials").count(), 3);
+    assert_eq!(stdout.matches("persist-credentials [").count(), 3);
     assert!(stdout.contains("3 finding(s)"));
 }
 
@@ -128,7 +128,7 @@ fn fix_does_not_overwrite_invalid_workflow() {
     let after = fs::read(&path).unwrap();
     fs::remove_file(&path).unwrap();
 
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
     assert_eq!(before, after);
 }
 
@@ -193,224 +193,6 @@ fn failure_threshold_changes_exit_code_without_hiding_findings() {
 }
 
 #[test]
-fn reports_mutable_actions_workflows_and_images_without_guessing_pins() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "crosgha-references-{}-{unique}.yml",
-        std::process::id()
-    ));
-    let before = fs::read(fixture("mutable-references.before.yml")).unwrap();
-    fs::write(&path, &before).unwrap();
-
-    let default_scan = bin().arg(&path).output().unwrap();
-    assert!(default_scan.status.success());
-    assert!(
-        String::from_utf8(default_scan.stdout)
-            .unwrap()
-            .contains("0 finding(s)")
-    );
-
-    let scan = bin()
-        .arg("--require-immutable-references")
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert_eq!(scan.status.code(), Some(1));
-    let stdout = String::from_utf8(scan.stdout).unwrap();
-    assert_eq!(stdout.matches("mutable-action-reference").count(), 6);
-    assert!(stdout.contains("job `test`, service `database`"));
-    assert!(stdout.contains("job `reuse`"));
-
-    let fix = bin()
-        .args(["--require-immutable-references", "--fix"])
-        .arg(&path)
-        .output()
-        .unwrap();
-    let unchanged = fs::read(&path).unwrap();
-    fs::remove_file(&path).unwrap();
-    assert_eq!(fix.status.code(), Some(1));
-    assert_eq!(unchanged, before);
-    let fix_stdout = String::from_utf8(fix.stdout).unwrap();
-    assert!(fix_stdout.contains("Remaining 6 finding(s)"));
-    assert_eq!(fix_stdout.matches("mutable-action-reference").count(), 6);
-
-    let compliant = bin()
-        .arg("--require-immutable-references")
-        .arg(fixture("mutable-references.after.yml"))
-        .output()
-        .unwrap();
-    assert!(
-        compliant.status.success(),
-        "{}",
-        String::from_utf8_lossy(&compliant.stdout)
-    );
-}
-
-#[test]
-fn reports_executable_jobs_without_required_timeouts() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "crosgha-timeouts-{}-{unique}.yml",
-        std::process::id()
-    ));
-    let before = fs::read(fixture("job-timeouts.before.yml")).unwrap();
-    fs::write(&path, &before).unwrap();
-
-    let default_scan = bin().arg(&path).output().unwrap();
-    assert!(default_scan.status.success());
-    assert!(
-        String::from_utf8(default_scan.stdout)
-            .unwrap()
-            .contains("0 finding(s)")
-    );
-
-    let scan = bin()
-        .arg("--require-job-timeout")
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert_eq!(scan.status.code(), Some(1));
-    let stdout = String::from_utf8(scan.stdout).unwrap();
-    assert_eq!(stdout.matches("missing-job-timeout").count(), 2);
-    assert!(stdout.contains("job `build`"));
-    assert!(stdout.contains("job `deploy`"));
-
-    let fix = bin()
-        .args(["--require-job-timeout", "--fix"])
-        .arg(&path)
-        .output()
-        .unwrap();
-    let unchanged = fs::read(&path).unwrap();
-    fs::remove_file(&path).unwrap();
-    assert_eq!(fix.status.code(), Some(1));
-    assert_eq!(unchanged, before);
-    let fix_stdout = String::from_utf8(fix.stdout).unwrap();
-    assert!(fix_stdout.contains("Remaining 2 finding(s)"));
-    assert_eq!(fix_stdout.matches("missing-job-timeout").count(), 2);
-
-    let compliant = bin()
-        .arg("--require-job-timeout")
-        .arg(fixture("job-timeouts.after.yml"))
-        .output()
-        .unwrap();
-    assert!(
-        compliant.status.success(),
-        "{}",
-        String::from_utf8_lossy(&compliant.stdout)
-    );
-}
-
-#[test]
-fn reports_jobs_relying_on_default_token_permissions() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "crosgha-permissions-{}-{unique}.yml",
-        std::process::id()
-    ));
-    let before = fs::read(fixture("token-permissions.before.yml")).unwrap();
-    fs::write(&path, &before).unwrap();
-
-    let default_scan = bin().arg(&path).output().unwrap();
-    assert!(default_scan.status.success());
-
-    let scan = bin()
-        .arg("--require-explicit-token-permissions")
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert_eq!(scan.status.code(), Some(1));
-    let stdout = String::from_utf8(scan.stdout).unwrap();
-    assert_eq!(stdout.matches("implicit-token-permissions").count(), 2);
-    assert!(stdout.contains("job `build`"));
-    assert!(stdout.contains("job `reuse`"));
-
-    let fix = bin()
-        .args(["--require-explicit-token-permissions", "--fix"])
-        .arg(&path)
-        .output()
-        .unwrap();
-    let unchanged = fs::read(&path).unwrap();
-    fs::remove_file(&path).unwrap();
-    assert_eq!(fix.status.code(), Some(1));
-    assert_eq!(unchanged, before);
-    assert_eq!(
-        String::from_utf8(fix.stdout)
-            .unwrap()
-            .matches("implicit-token-permissions")
-            .count(),
-        2
-    );
-
-    let compliant = bin()
-        .arg("--require-explicit-token-permissions")
-        .arg(fixture("token-permissions.after.yml"))
-        .output()
-        .unwrap();
-    assert!(compliant.status.success());
-}
-
-#[test]
-fn reports_reusable_workflows_that_inherit_all_secrets() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "crosgha-secrets-{}-{unique}.yml",
-        std::process::id()
-    ));
-    let before = fs::read(fixture("inherited-secrets.before.yml")).unwrap();
-    fs::write(&path, &before).unwrap();
-
-    let default_scan = bin().arg(&path).output().unwrap();
-    assert!(default_scan.status.success());
-
-    let scan = bin()
-        .arg("--require-explicit-workflow-secrets")
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert_eq!(scan.status.code(), Some(1));
-    let stdout = String::from_utf8(scan.stdout).unwrap();
-    assert_eq!(stdout.matches("inherited-workflow-secrets").count(), 2);
-    assert!(stdout.contains("job `local`"));
-    assert!(stdout.contains("job `remote`"));
-
-    let fix = bin()
-        .args(["--require-explicit-workflow-secrets", "--fix"])
-        .arg(&path)
-        .output()
-        .unwrap();
-    let unchanged = fs::read(&path).unwrap();
-    fs::remove_file(&path).unwrap();
-    assert_eq!(fix.status.code(), Some(1));
-    assert_eq!(unchanged, before);
-    assert_eq!(
-        String::from_utf8(fix.stdout)
-            .unwrap()
-            .matches("inherited-workflow-secrets")
-            .count(),
-        2
-    );
-
-    let compliant = bin()
-        .arg("--require-explicit-workflow-secrets")
-        .arg(fixture("inherited-secrets.after.yml"))
-        .output()
-        .unwrap();
-    assert!(compliant.status.success());
-}
-
-#[test]
 fn fixes_checkout_while_reporting_a_detection_only_finding() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -420,14 +202,18 @@ fn fixes_checkout_while_reporting_a_detection_only_finding() {
         std::env::temp_dir().join(format!("crosgha-mixed-{}-{unique}.yml", std::process::id()));
     fs::copy(fixture("mixed-fixes.before.yml"), &path).unwrap();
 
+    let regular = bin().arg(&path).output().unwrap();
     let output = bin()
-        .args(["--require-immutable-references", "--fix"])
+        .args(["--persona", "pedantic", "--fix"])
         .arg(&path)
         .output()
         .unwrap();
     let actual = fs::read_to_string(&path).unwrap();
     fs::remove_file(&path).unwrap();
 
+    let regular = String::from_utf8(regular.stdout).unwrap();
+    assert!(regular.contains("persist-credentials ["));
+    assert!(!regular.contains("unpinned-action ["));
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         actual,
@@ -435,7 +221,251 @@ fn fixes_checkout_while_reporting_a_detection_only_finding() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Fixed 1 finding(s)"));
-    assert!(stdout.contains("Remaining 1 finding(s)"));
-    assert!(stdout.contains("mutable-action-reference"));
+    assert_eq!(stdout.matches("unpinned-action [").count(), 1);
     assert!(!stdout.contains("persist-credentials ["));
+}
+
+#[cfg(unix)]
+#[test]
+fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("crosgha-links-{}-{unique}", std::process::id()));
+    let scanned = root.join("workflows");
+    fs::create_dir_all(&scanned).unwrap();
+    let target = root.join("shared.yml");
+    fs::copy(fixture("checkout-credentials.before.yml"), &target).unwrap();
+    fs::copy(fixture("workflows/ci.yml"), scanned.join("ci.yml")).unwrap();
+    std::os::unix::fs::symlink(&target, scanned.join("linked.yml")).unwrap();
+    let before = fs::read(&target).unwrap();
+
+    let scan = bin().arg(&scanned).output().unwrap();
+    let fix = bin().arg("--fix").arg(&scanned).output().unwrap();
+    let after = fs::read(&target).unwrap();
+    fs::remove_dir_all(&root).unwrap();
+
+    assert_eq!(scan.status.code(), Some(1));
+    let stdout = String::from_utf8(scan.stdout).unwrap();
+    assert!(stdout.contains("Checked 2 workflow file(s); 3 finding(s)."));
+    assert!(stdout.contains("linked.yml"));
+    assert_eq!(fix.status.code(), Some(2));
+    assert!(
+        String::from_utf8(fix.stderr)
+            .unwrap()
+            .contains("refusing to replace a symbolic link")
+    );
+    assert_eq!(before, after);
+}
+
+#[test]
+fn inline_ignores_accept_crosgha_and_zizmor_rule_ids() {
+    let output = bin().arg(fixture("ignores.yml")).output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("persist-credentials ["), "{stdout}");
+    let injections: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("script-injection ["))
+        .collect();
+    assert_eq!(injections.len(), 2, "{stdout}");
+    assert!(injections[0].contains("ignores.yml:12:"));
+    assert!(injections[1].contains("ignores.yml:13:"));
+}
+
+#[test]
+fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
+    let scan = |repo: &str| {
+        let output = bin()
+            .args(["--persona", "auditor", "--offline", "--fail-on", "none"])
+            .arg(fixture(&format!("repos/{repo}/.github/workflows")))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    let insecure = scan("insecure");
+    let cooldown: Vec<&str> = insecure
+        .lines()
+        .filter(|line| line.starts_with("missing-release-cooldown ["))
+        .collect();
+    assert_eq!(cooldown.len(), 1, "{insecure}");
+    assert!(cooldown[0].contains("dependabot.yml:9:"), "{insecure}");
+    let tooling: Vec<&str> = insecure
+        .lines()
+        .filter(|line| line.starts_with("missing-security-tooling ["))
+        .collect();
+    assert_eq!(tooling.len(), 3, "{insecure}");
+    for tool in ["CodeQL", "dependency review", "OpenSSF Scorecard"] {
+        assert!(
+            tooling.iter().any(|line| line.contains(tool)),
+            "{tool}: {insecure}"
+        );
+    }
+
+    let hardened = scan("hardened");
+    assert!(
+        !hardened.contains("missing-release-cooldown ["),
+        "{hardened}"
+    );
+    assert!(
+        !hardened.contains("missing-security-tooling ["),
+        "{hardened}"
+    );
+}
+
+#[test]
+fn zizmor_config_is_discovered_and_honored() {
+    let workflows = fixture("repos/configured/.github/workflows");
+    let scan = |extra: &[&str]| {
+        let output = bin()
+            .args(["--persona", "pedantic", "--offline", "--fail-on", "none"])
+            .args(extra)
+            .arg(&workflows)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let lines_of = |stdout: &str, rule: &str| -> Vec<String> {
+        stdout
+            .lines()
+            .filter(|line| line.starts_with(&format!("{rule} [")))
+            .map(|line| {
+                line.split(".yml:")
+                    .nth(1)
+                    .unwrap()
+                    .split(':')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
+    };
+
+    let configured = scan(&[]);
+    assert_eq!(
+        lines_of(&configured, "script-injection"),
+        ["15"],
+        "{configured}"
+    );
+    assert!(
+        lines_of(&configured, "unpinned-action").is_empty(),
+        "{configured}"
+    );
+    assert!(
+        configured.contains("persist-credentials [persist-credentials:error]"),
+        "{configured}"
+    );
+
+    let unignored = scan(&["--no-ignores"]);
+    assert_eq!(
+        lines_of(&unignored, "script-injection"),
+        ["14", "15"],
+        "{unignored}"
+    );
+    assert!(
+        lines_of(&unignored, "unpinned-action").is_empty(),
+        "{unignored}"
+    );
+
+    let unconfigured = scan(&["--no-config"]);
+    assert_eq!(lines_of(&unconfigured, "script-injection"), ["14", "15"]);
+    assert_eq!(lines_of(&unconfigured, "unpinned-action"), ["11"]);
+    assert!(unconfigured.contains("persist-credentials [persist-credentials:warning]"));
+
+    let severe = scan(&["--no-config", "--min-severity", "high"]);
+    assert!(
+        severe
+            .lines()
+            .filter(|line| line.contains(".yml:"))
+            .all(|line| line.contains(":error]")),
+        "{severe}"
+    );
+    assert_eq!(lines_of(&severe, "script-injection"), ["14", "15"]);
+}
+
+#[test]
+fn migrate_replaces_other_scanners_with_the_crosgha_action() {
+    let action = format!("meiazero/crosgha@{}", "c".repeat(40));
+    for tool in ["zizmor", "actionlint"] {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("crosgha-migrate-{tool}-{unique}.yml"));
+        fs::copy(fixture(&format!("migrate/{tool}.before.yml")), &path).unwrap();
+
+        let output = bin()
+            .args([
+                "migrate",
+                "--from",
+                tool,
+                "--action",
+                &action,
+                "--action-version",
+                "v0.1.0",
+            ])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let migrated = fs::read_to_string(&path).unwrap();
+        let again = bin()
+            .args([
+                "migrate",
+                "--from",
+                tool,
+                "--action",
+                &action,
+                "--action-version",
+                "v0.1.0",
+            ])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let unchanged = fs::read_to_string(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert!(
+            output.status.success(),
+            "{tool}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            migrated,
+            fs::read_to_string(fixture(&format!("migrate/{tool}.after.yml"))).unwrap(),
+            "{tool}"
+        );
+        assert!(again.status.success());
+        assert_eq!(
+            migrated, unchanged,
+            "{tool}: a second migration must be a no-op"
+        );
+    }
+
+    let zizmor = bin()
+        .args([
+            "migrate",
+            "--from",
+            "zizmor",
+            "--action",
+            &action,
+            "--action-version",
+            "v0.1.0",
+        ])
+        .arg(fixture("migrate/zizmor.after.yml"))
+        .output()
+        .unwrap();
+    let notes = String::from_utf8(zizmor.stderr).unwrap();
+    assert!(notes.contains("zizmor.after.yml:21"), "{notes}");
+    assert!(notes.contains("runs zizmor from a shell"), "{notes}");
 }

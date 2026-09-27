@@ -1,8 +1,11 @@
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule};
-use crate::{policy::Severity, workflow::Workflow};
+use super::{Finding, Rule, common};
+use crate::{
+    policy::{Persona, Severity},
+    workflow::Workflow,
+};
 
 // GitHub recommends full-length commit SHAs for remote actions and reusable workflows:
 // https://docs.github.com/en/actions/reference/security/secure-use#using-third-party-actions
@@ -11,9 +14,11 @@ use crate::{policy::Severity, workflow::Workflow};
 // OCI registers SHA-256 and SHA-512 digest algorithms:
 // https://github.com/opencontainers/image-spec/blob/main/descriptor.md#registered-algorithms
 pub const RULE: Rule = Rule {
-    id: "mutable-action-reference",
-    tag: "supply-chain",
+    id: "unpinned-action",
+    tag: "unpinned-action",
     severity: Severity::Warning,
+    persona: Persona::Pedantic,
+    aliases: &["unpinned-uses", "unpinned-images"],
 };
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
@@ -79,21 +84,15 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 )?;
             }
         }
-
-        if let Some(steps) = job.get("steps").and_then(Value::as_sequence) {
-            for (index, step) in steps.iter().enumerate() {
-                let Some(uses) = step.get("uses").and_then(Value::as_str) else {
-                    continue;
-                };
+    }
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
+            if let Some(uses) = step.uses() {
                 check_action(
                     workflow,
                     &mut findings,
-                    job_route
-                        .clone()
-                        .with_key("steps")
-                        .with_key(index)
-                        .with_key("uses"),
-                    format!("job `{job_name}`, step {}", index + 1),
+                    step.key("uses"),
+                    step.location.clone(),
                     uses,
                 )?;
             }
@@ -179,16 +178,6 @@ fn push_finding(
     location: String,
     message: &'static str,
 ) -> Result<(), String> {
-    let feature = workflow
-        .document
-        .query_key_only(&route)
-        .map_err(|error| error.to_string())?;
-    findings.push(Finding {
-        rule: &RULE,
-        message,
-        location,
-        line: feature.location.point_span.0.0 + 1,
-        fix: None,
-    });
+    findings.push(common::finding(workflow, &RULE, route, location, message)?);
     Ok(())
 }

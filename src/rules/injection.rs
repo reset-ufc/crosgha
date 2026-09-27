@@ -1,0 +1,462 @@
+use std::collections::BTreeSet;
+
+use yaml_serde::Value;
+use yamlpath::Route;
+
+use super::{
+    Finding, Rule,
+    common::{self, EXTERNAL_TRIGGERS, PRIVILEGED_TRIGGERS},
+};
+use crate::{
+    policy::{Persona, Severity},
+    workflow::Workflow,
+};
+
+// GitHub: untrusted context values expanded into scripts are a script injection risk.
+// https://docs.github.com/en/actions/concepts/security/script-injections
+pub const SCRIPT_INJECTION: Rule = Rule {
+    id: "script-injection",
+    tag: "script-injection",
+    severity: Severity::Error,
+    persona: Persona::Regular,
+    aliases: &["template-injection"],
+};
+
+// zizmor `github-env` and CodeQL `actions/envvar-injection`: environment files written in
+// privileged runs, or with untrusted values, change later steps.
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-an-environment-variable
+pub const ENV_INJECTION: Rule = Rule {
+    id: "github-env-injection",
+    tag: "github-env-injection",
+    severity: Severity::Error,
+    persona: Persona::Regular,
+    aliases: &["github-env"],
+};
+
+// TaintAWI (arXiv 2605.07135) Prompt-to-Agent: untrusted event data reaches an agent prompt.
+pub const PROMPT_INJECTION: Rule = Rule {
+    id: "llm-prompt-injection",
+    tag: "llm-prompt-injection",
+    severity: Severity::Error,
+    persona: Persona::Regular,
+    aliases: &[],
+};
+
+// GitHub Security Lab "pwn request": privileged triggers that check out untrusted code.
+// https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
+pub const PWN_REQUEST: Rule = Rule {
+    id: "pwn-request",
+    tag: "pwn-request",
+    severity: Severity::Error,
+    persona: Persona::Regular,
+    aliases: &[],
+};
+
+// zizmor `dangerous-triggers`: triggers that run with base-repository privileges.
+pub const DANGEROUS_TRIGGER: Rule = Rule {
+    id: "dangerous-trigger",
+    tag: "dangerous-trigger",
+    severity: Severity::Warning,
+    persona: Persona::Pedantic,
+    aliases: &["dangerous-triggers"],
+};
+
+// actionlint `if-cond` constant conditions, zizmor `unsound-condition` and `bot-conditions`.
+// GitHub evaluates `if` as an expression only when `${{ }}` wraps the whole value:
+// https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+pub const UNSAFE_IF: Rule = Rule {
+    id: "unsafe-if-condition",
+    tag: "unsafe-if-condition",
+    severity: Severity::Warning,
+    persona: Persona::Regular,
+    aliases: &["bot-conditions", "unsound-condition", "if-cond"],
+};
+
+// CodeQL `actions/artifact-poisoning`: artifacts from another run extracted into the workspace.
+pub const ARTIFACT_POISONING: Rule = Rule {
+    id: "artifact-poisoning",
+    tag: "artifact-poisoning",
+    severity: Severity::Warning,
+    persona: Persona::Regular,
+    aliases: &[],
+};
+
+// GitHub dependency caching docs (write-capable `cache-mode` on low-trust triggers) and
+// zizmor `cache-poisoning` (caches restored into release builds).
+// https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#bypassing-the-default-untrusted-trigger-cache-restriction
+pub const CACHE_POISONING: Rule = Rule {
+    id: "cache-poisoning",
+    tag: "cache-poisoning",
+    severity: Severity::Warning,
+    persona: Persona::Regular,
+    aliases: &[],
+};
+
+// zizmor `obfuscation`: paths and expressions written to hide what they do.
+pub const OBFUSCATION: Rule = Rule {
+    id: "obfuscation",
+    tag: "obfuscation",
+    severity: Severity::Warning,
+    persona: Persona::Pedantic,
+    aliases: &[],
+};
+
+pub fn script_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let mut findings = Vec::new();
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
+            let mut sinks = Vec::new();
+            if let Some(script) = step.run() {
+                sinks.push((step.key("run"), script));
+            }
+            if step.uses_action("actions/github-script")
+                && let Some(script) = step.input_str("script")
+            {
+                sinks.push((step.key("with").with_key("script"), script));
+            }
+            for (route, script) in sinks {
+                if let Some(context) = common::untrusted_in_text(script).first() {
+                    findings.push(common::finding(
+                        workflow,
+                        &SCRIPT_INJECTION,
+                        route,
+                        step.location.clone(),
+                        format!("untrusted `{context}` expands into a script"),
+                    )?);
+                }
+            }
+        }
+    }
+    Ok(findings)
+}
+
+pub fn env_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let privileged = common::has_trigger(workflow, PRIVILEGED_TRIGGERS);
+    let mut findings = Vec::new();
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
+            let Some(script) = step.run() else { continue };
+            let unsafe_write = script.lines().any(|line| {
+                let writes = line.contains('>')
+                    && (line.contains("GITHUB_ENV") || line.contains("GITHUB_PATH"));
+                writes && (privileged || !common::untrusted_in_text(line).is_empty())
+            });
+            if unsafe_write {
+                findings.push(common::finding(
+                    workflow,
+                    &ENV_INJECTION,
+                    step.key("run"),
+                    step.location.clone(),
+                    "writes GITHUB_ENV or GITHUB_PATH from an untrusted context",
+                )?);
+            }
+        }
+    }
+    Ok(findings)
+}
+
+// ponytail: Known agent actions only; add a marketplace-category lookup when
+// new agent actions appear faster than this list is maintained.
+const AGENT_ACTIONS: &[&str] = &[
+    "anthropics/claude-code-action",
+    "anthropics/claude-code-base-action",
+    "openai/codex-action",
+    "google-github-actions/run-gemini-cli",
+    "actions/ai-inference",
+];
+
+pub fn prompt_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let external = common::has_trigger(workflow, EXTERNAL_TRIGGERS);
+    let mut findings = Vec::new();
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
+            if !AGENT_ACTIONS.iter().any(|action| step.uses_action(action)) {
+                continue;
+            }
+            let mut tainted = false;
+            if let Some(inputs) = step.value.get("with") {
+                common::strings(inputs, &Route::default(), &mut |_, text| {
+                    tainted |= !common::untrusted_in_text(text).is_empty();
+                });
+            }
+            if external || tainted {
+                findings.push(common::finding(
+                    workflow,
+                    &PROMPT_INJECTION,
+                    step.key("uses"),
+                    step.location.clone(),
+                    if tainted {
+                        "untrusted event data reaches an agent prompt"
+                    } else {
+                        "agent runs on an event that outsiders can trigger"
+                    },
+                )?);
+            }
+        }
+    }
+    Ok(findings)
+}
+
+const HEAD_REFS: &[&str] = &[
+    "github.event.pull_request.head.",
+    "github.head_ref",
+    "refs/pull/",
+    "github.event.workflow_run.head_",
+];
+
+pub fn pwn_request(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    if !common::has_trigger(workflow, PRIVILEGED_TRIGGERS) {
+        return Ok(Vec::new());
+    }
+    let mentions_head = |text: &str| HEAD_REFS.iter().any(|head| text.contains(head));
+    let mut findings = Vec::new();
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
+            let checkout = step
+                .uses()
+                .is_some_and(|uses| uses.to_ascii_lowercase().starts_with("actions/checkout@"))
+                && step.input_str("ref").is_some_and(mentions_head);
+            let fetch = step.run().is_some_and(|script| {
+                script.contains("gh pr checkout")
+                    || (script.contains("git fetch") && script.contains("pull/"))
+                    || (script.contains("git checkout") && mentions_head(script))
+            });
+            if checkout || fetch {
+                findings.push(common::finding(
+                    workflow,
+                    &PWN_REQUEST,
+                    step.anchor(),
+                    step.location.clone(),
+                    "privileged trigger checks out untrusted pull request code",
+                )?);
+            }
+        }
+    }
+    Ok(findings)
+}
+
+pub fn dangerous_trigger(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    common::triggers(workflow)
+        .into_iter()
+        .filter(|trigger| PRIVILEGED_TRIGGERS.contains(&trigger.name))
+        .map(|trigger| {
+            common::finding(
+                workflow,
+                &DANGEROUS_TRIGGER,
+                trigger.route,
+                "workflow",
+                format!("`{}` runs with base repository privileges", trigger.name),
+            )
+        })
+        .collect()
+}
+
+pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let mut conditions = Vec::new();
+    for job in common::jobs(workflow) {
+        if let Some(condition) = job.get("if") {
+            conditions.push((job.route.with_key("if"), job.location(), condition));
+        }
+        for step in common::steps(&job) {
+            if let Some(condition) = step.value.get("if") {
+                conditions.push((step.key("if"), step.location.clone(), condition));
+            }
+        }
+    }
+    let mut findings = Vec::new();
+    for (route, location, condition) in conditions {
+        let problem = match condition {
+            Value::Bool(value) => Some(format!("condition is always {value}")),
+            Value::String(text) if text.contains("${{") && !single_expression(text) => {
+                Some("text around `${{ }}` makes the condition always true".to_owned())
+            }
+            Value::String(text)
+                if (text.contains("github.actor") || text.contains("github.triggering_actor"))
+                    && text.contains("[bot]") =>
+            {
+                Some("actor name checks can be spoofed by a bot-triggered event".to_owned())
+            }
+            _ => None,
+        };
+        if let Some(message) = problem {
+            findings.push(common::finding(
+                workflow, &UNSAFE_IF, route, location, message,
+            )?);
+        }
+    }
+    Ok(findings)
+}
+
+fn single_expression(text: &str) -> bool {
+    text.starts_with("${{") && text.ends_with("}}") && text.matches("${{").count() == 1
+}
+
+pub fn artifact_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    if !common::has_trigger(workflow, &["workflow_run"]) {
+        return Ok(Vec::new());
+    }
+    let mut findings = Vec::new();
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
+            let cross_run = (step.uses_action("actions/download-artifact")
+                && step.input("run-id").is_some())
+                || step.uses_action("dawidd6/action-download-artifact");
+            let outside_workspace = step.input_str("path").is_some_and(|path| {
+                let path = path.replace(' ', "");
+                path.starts_with("${{runner.temp}}") || path.starts_with("/tmp")
+            });
+            if cross_run && !outside_workspace {
+                findings.push(common::finding(
+                    workflow,
+                    &ARTIFACT_POISONING,
+                    step.key("uses"),
+                    step.location.clone(),
+                    "artifact from another run is extracted into the workspace",
+                )?);
+            }
+        }
+    }
+    Ok(findings)
+}
+
+/// Triggers that may write caches in the default branch scope; `pull_request` caches are
+/// scoped to the merge ref. `workflow_call` inherits its caller's trust.
+const CACHE_TRUSTED_TRIGGERS: &[&str] = &[
+    "push",
+    "workflow_dispatch",
+    "repository_dispatch",
+    "delete",
+    "registry_package",
+    "page_build",
+    "schedule",
+    "pull_request",
+    "workflow_call",
+];
+
+pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let triggers = common::triggers(workflow);
+    let mut findings = Vec::new();
+
+    let low_trust = triggers
+        .iter()
+        .any(|trigger| !CACHE_TRUSTED_TRIGGERS.contains(&trigger.name));
+    if low_trust {
+        let mut scopes = vec![(Route::default(), "workflow".to_owned(), &workflow.value)];
+        for job in common::jobs(workflow) {
+            scopes.push((job.route.clone(), job.location(), job.value));
+        }
+        for (route, location, scope) in scopes {
+            if let Some(mode @ ("write" | "write-only")) =
+                scope.get("cache-mode").and_then(Value::as_str)
+            {
+                findings.push(common::finding(
+                    workflow,
+                    &CACHE_POISONING,
+                    route.with_key("cache-mode"),
+                    location,
+                    format!("`cache-mode: {mode}` lets a low-trust trigger write caches"),
+                )?);
+            }
+        }
+    }
+
+    let release = triggers.iter().any(|trigger| {
+        trigger.name == "release"
+            || (trigger.name == "push"
+                && trigger
+                    .config
+                    .is_some_and(|config| config.get("tags").is_some()))
+    });
+    if release {
+        for job in common::jobs(workflow) {
+            for step in common::steps(&job) {
+                if uses_cache(&step) {
+                    findings.push(common::finding(
+                        workflow,
+                        &CACHE_POISONING,
+                        step.key("uses"),
+                        step.location.clone(),
+                        "release build restores a cache that other runs can write",
+                    )?);
+                }
+            }
+        }
+    }
+    Ok(findings)
+}
+
+fn uses_cache(step: &common::Step) -> bool {
+    let Some(uses) = step.uses() else {
+        return false;
+    };
+    let name = uses.split('@').next().unwrap_or("").to_ascii_lowercase();
+    let cache_input = step.input("cache");
+    let disabled = |value: Option<&Value>| {
+        matches!(value, Some(Value::Bool(false)))
+            || value
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.is_empty() || text == "false")
+    };
+    match name.as_str() {
+        "actions/cache" | "actions/cache/restore" => true,
+        // setup-go caches by default since v4: https://github.com/actions/setup-go#caching-dependency-files-and-build-outputs
+        "actions/setup-go" => !disabled(cache_input),
+        "actions/setup-node"
+        | "actions/setup-python"
+        | "actions/setup-java"
+        | "actions/setup-dotnet" => cache_input.is_some() && !disabled(cache_input),
+        _ => false,
+    }
+}
+
+pub fn obfuscation(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let mut findings = Vec::new();
+    for (route, location, uses) in common::all_uses(workflow) {
+        let name = uses.rsplit_once('@').map_or(uses, |(name, _)| name);
+        let odd_path = name.contains("//")
+            || name
+                .split('/')
+                .any(|segment| segment == "." || segment == "..")
+            || name.ends_with('/');
+        let local_or_image = ["./", "$/", "docker://"]
+            .iter()
+            .any(|prefix| uses.starts_with(prefix));
+        if odd_path && !local_or_image {
+            findings.push(common::finding(
+                workflow,
+                &OBFUSCATION,
+                route,
+                location,
+                "`uses` path contains redundant segments",
+            )?);
+        }
+    }
+
+    let mut routes = BTreeSet::new();
+    let mut flagged = Vec::new();
+    common::strings(&workflow.value, &Route::default(), &mut |route, text| {
+        let obfuscated = common::expressions(text)
+            .into_iter()
+            .any(|expression| is_string_literal(expression) || expression.contains("github["));
+        if obfuscated && routes.insert(format!("{route:?}")) {
+            flagged.push(route.clone());
+        }
+    });
+    for route in flagged {
+        findings.push(common::finding(
+            workflow,
+            &OBFUSCATION,
+            route,
+            "workflow",
+            "expression hides a literal or a context path",
+        )?);
+    }
+    Ok(findings)
+}
+
+fn is_string_literal(expression: &str) -> bool {
+    expression.len() >= 2
+        && expression.starts_with('\'')
+        && expression.ends_with('\'')
+        && !expression[1..expression.len() - 1].contains('\'')
+}

@@ -1,0 +1,29 @@
+name: Unpinned packages
+on: [push]
+permissions: {}
+jobs:
+  tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: pip install requests==2.32.3
+      - run: python -m pip install black==24.8.0
+      - run: |
+          pip install -r requirements.txt
+          npm install -g typescript@5.6.2
+      - run: npm install -g @scope/tool@1.2.3
+      - run: go install golang.org/x/tools/cmd/goimports@v0.24.0
+      - run: go install golang.org/x/tools/cmd/stringer@v0.24.0
+      - run: cargo install cargo-deny@0.16.1 --locked
+      - run: cargo install cargo-deny --version 0.16.1 --locked
+      - run: cargo install --path .
+      - run: gem install bundler:2.5.0
+      - run: gem install bundler -v 2.5.0
+      - run: pipx install ruff==0.6.9
+      - run: pip install .
+      - run: pip install -e .[dev]
+      - run: npm install
+      - run: npm ci
+      - parallel:
+          - run: npm install eslint@9.9.0
+          - run: npm install eslint@9.9.0

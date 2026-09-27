@@ -2,15 +2,20 @@ use yaml_serde::{Mapping, Value};
 use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{ChangeKind, Finding, ProposedFix, Rule};
-use crate::{policy::Severity, workflow::Workflow};
+use super::{ChangeKind, Finding, ProposedFix, Rule, common};
+use crate::{
+    policy::{Persona, Severity},
+    workflow::Workflow,
+};
 
 // actions/checkout documents the true default and the false opt-out:
 // https://github.com/actions/checkout/blob/main/README.md#usage
 pub const RULE: Rule = Rule {
     id: "persist-credentials",
-    tag: "permissions-secrets",
+    tag: "persist-credentials",
     severity: Severity::Warning,
+    persona: Persona::Regular,
+    aliases: &["artipacked"],
 };
 
 enum NeededChange {
@@ -20,29 +25,18 @@ enum NeededChange {
 }
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let Some(jobs) = workflow.value.get("jobs").and_then(Value::as_mapping) else {
-        return Ok(Vec::new());
-    };
     let mut findings = Vec::new();
-
-    for (name, job) in jobs {
-        let Some(job_name) = name.as_str() else {
-            continue;
-        };
-        let Some(steps) = job.get("steps").and_then(Value::as_sequence) else {
-            continue;
-        };
-        for (index, step) in steps.iter().enumerate() {
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
             // ponytail: Handle literal first-party checkout refs and credential inputs;
             // add expression analysis when their runtime values can be proven.
-            let Some(uses) = step.get("uses").and_then(Value::as_str) else {
-                continue;
-            };
-            if !uses.starts_with("actions/checkout@") {
+            if !step
+                .uses()
+                .is_some_and(|uses| uses.starts_with("actions/checkout@"))
+            {
                 continue;
             }
-
-            let change = match step.get("with") {
+            let change = match step.value.get("with") {
                 None => Some(NeededChange::AddWith),
                 Some(Value::Mapping(inputs)) => match inputs.get("persist-credentials") {
                     None => Some(NeededChange::AddInput),
@@ -55,27 +49,17 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 _ => None,
             };
             let Some(change) = change else { continue };
-
-            let step_route = Route::default()
-                .with_key("jobs")
-                .with_key(job_name.to_owned())
-                .with_key("steps")
-                .with_key(index);
-            let uses_feature = workflow
-                .document
-                .query_key_only(&step_route.with_key("uses"))
-                .map_err(|error| error.to_string())?;
-            let fix = propose_fix(step_route, change);
-            findings.push(Finding {
-                rule: &RULE,
-                message: "checkout retains credentials for later steps",
-                location: format!("job `{job_name}`, step {}", index + 1),
-                line: uses_feature.location.point_span.0.0 + 1,
-                fix: Some(fix),
-            });
+            let mut finding = common::finding(
+                workflow,
+                &RULE,
+                step.key("uses"),
+                step.location.clone(),
+                "checkout retains credentials for later steps",
+            )?;
+            finding.fix = Some(propose_fix(step.route.clone(), change));
+            findings.push(finding);
         }
     }
-
     Ok(findings)
 }
 

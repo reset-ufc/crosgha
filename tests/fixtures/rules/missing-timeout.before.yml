@@ -2,7 +2,7 @@ name: Job timeouts
 on: [push]
 permissions: { contents: read }
 jobs:
-  build:
+  build: # expect: missing-timeout
     runs-on: [self-hosted, linux]
     steps:
       - run: cargo build --release
@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - run: cargo fmt --check
-  deploy:
+  deploy: # expect: missing-timeout
     runs-on: ubuntu-22.04
     environment: staging
     steps:

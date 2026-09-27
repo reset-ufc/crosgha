@@ -1,0 +1,9 @@
+rules:
+  template-injection:
+    ignore:
+      - ci.yml:14
+  unpinned-uses:
+    disable: true
+  artipacked:
+    remap:
+      severity: high

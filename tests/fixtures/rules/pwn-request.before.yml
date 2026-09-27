@@ -1,0 +1,21 @@
+name: Privileged PR build
+on:
+  pull_request_target:
+    types: [opened]
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: pwn-request
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+      - run: gh pr checkout ${{ github.event.pull_request.number }} # expect: pwn-request
+      - run: | # expect: pwn-request
+          git fetch origin pull/${{ github.event.number }}/head:pr
+          git checkout pr

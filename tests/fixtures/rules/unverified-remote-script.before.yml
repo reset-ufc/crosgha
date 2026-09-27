@@ -1,0 +1,16 @@
+name: Remote scripts
+on: [push]
+permissions: {}
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: curl -fsSL https://example.com/install.sh | sh # expect: unverified-remote-script
+      - run: | # expect: unverified-remote-script
+          echo "installing"
+          wget -qO- https://example.com/setup | sudo -E bash -s -- --yes
+      - run: bash <(curl -s https://example.com/x.sh) # expect: unverified-remote-script
+      - run: sh -c "$(curl -fsSL https://example.com/y.sh)" # expect: unverified-remote-script
+      - run: curl -fsSL https://example.com/tool.tgz -o tool.tgz && sha256sum -c tool.tgz.sha256
+      - run: curl -s https://api.example.com/status | jq .

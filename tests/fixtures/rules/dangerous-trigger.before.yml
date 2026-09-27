@@ -1,0 +1,14 @@
+name: Triggers
+on:
+  push:
+    branches: [main]
+  pull_request_target: # expect: dangerous-trigger
+  workflow_run: # expect: dangerous-trigger
+    workflows: [CI]
+permissions: {}
+jobs:
+  noop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo ok

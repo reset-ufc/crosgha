@@ -1,0 +1,59 @@
+name: Complexity
+on: [push]
+permissions: {}
+jobs:
+  long: # expect: complex-job
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo step 0
+      - run: echo step 1
+      - run: echo step 2
+      - run: echo step 3
+      - run: echo step 4
+      - run: echo step 5
+      - run: echo step 6
+      - run: echo step 7
+      - run: echo step 8
+      - run: echo step 9
+      - run: echo step 10
+      - run: echo step 11
+      - run: echo step 12
+      - run: echo step 13
+      - run: echo step 14
+      - run: echo step 15
+      - run: echo step 16
+      - run: echo step 17
+      - run: echo step 18
+      - run: echo step 19
+      - run: echo step 20
+  script:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: | # expect: complex-job
+          echo line 0
+          echo line 1
+          echo line 2
+          echo line 3
+          echo line 4
+          echo line 5
+          echo line 6
+          echo line 7
+          echo line 8
+          echo line 9
+          echo line 10
+          echo line 11
+          echo line 12
+          echo line 13
+          echo line 14
+          echo line 15
+          echo line 16
+          echo line 17
+          echo line 18
+          echo line 19
+          echo line 20
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'bot' || github.run_attempt > 1 # expect: complex-job
+        run: echo conditional
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: echo simple

@@ -1,0 +1,23 @@
+name: Script injection
+on: [issues, pull_request]
+permissions: {}
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: echo "$ISSUE_TITLE"
+      - env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "branch $HEAD_REF"
+      - run: echo "${{ github.event.issue.number }}"
+      - uses: actions/github-script@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        with:
+          script: |
+            console.log(process.env.BODY)
+      - run: echo "${{ github.sha }} ${{ github.ref }}"

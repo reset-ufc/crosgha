@@ -1,7 +1,7 @@
 name: Token permissions
 on: [push]
 jobs:
-  build:
+  build: # expect: missing-permissions-block
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
@@ -13,5 +13,5 @@ jobs:
       contents: write
     steps:
       - run: echo 'Publish fixture'
-  reuse:
+  reuse: # expect: missing-permissions-block
     uses: ./.github/workflows/reusable.yml

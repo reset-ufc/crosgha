@@ -1,0 +1,9 @@
+name: Triggers
+on: [push, pull_request_target] # expect: dangerous-trigger
+permissions: {}
+jobs:
+  noop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo ok
