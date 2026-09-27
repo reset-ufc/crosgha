@@ -21,3 +21,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: make nightly
+  fork-flag-guarded:
+    if: ${{ !github.event.repository.fork }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  full-name-guarded:
+    if: github.event.repository.full_name == 'example/project'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly

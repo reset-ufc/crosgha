@@ -199,6 +199,15 @@ pub fn broad_trigger(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         .collect()
 }
 
+// Scheduled runs carry the repository object in `github.event` since
+// https://github.blog/changelog/2022-09-27-github-actions-additional-information-available-in-github-event-payload-for-scheduled-workflow-runs/
+const FORK_GUARDS: &[&str] = &[
+    "github.repository",
+    "github.event.repository.fork",
+    "github.event.repository.full_name",
+    "github.event.repository.owner",
+];
+
 pub fn fork_guard(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     if !common::has_trigger(workflow, &["schedule"]) {
         return Ok(Vec::new());
@@ -208,7 +217,7 @@ pub fn fork_guard(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         .filter(|job| {
             !job.get("if")
                 .and_then(Value::as_str)
-                .is_some_and(|condition| condition.contains("github.repository"))
+                .is_some_and(|condition| FORK_GUARDS.iter().any(|guard| condition.contains(guard)))
         })
         .map(|job| {
             common::finding(
