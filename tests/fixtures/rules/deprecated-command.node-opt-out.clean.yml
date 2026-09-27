@@ -1,0 +1,12 @@
+name: Legacy action
+on: [push]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: example/node24-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - run: echo "$NODE_VERSION"
+        env:
+          NODE_VERSION: '24'

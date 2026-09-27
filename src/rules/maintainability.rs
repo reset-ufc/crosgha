@@ -109,9 +109,11 @@ pub const READABILITY: Rule = Rule {
 // GitHub disabled `set-env`/`add-path` and deprecated `set-output`/`save-state`:
 // https://github.blog/changelog/2020-10-01-github-actions-deprecating-set-env-and-add-path-commands/
 // https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+// GitHub removed the `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` opt-out along with Node 20:
+// https://github.blog/changelog/2026-09-23-node-20-is-no-longer-available-in-github-actions/
 pub const DEPRECATED: Rule = Rule {
     id: "deprecated-command",
-    summary: "Deprecated workflow commands must be replaced by environment files.",
+    summary: "Deprecated workflow commands and removed opt-out variables must not be used.",
     tag: "deprecated-command/feature",
     severity: Severity::Warning,
     persona: Persona::Regular,
@@ -403,6 +405,17 @@ pub fn readability(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 
 const DEPRECATED_COMMANDS: &[&str] = &["::set-output", "::save-state", "::set-env", "::add-path"];
 
+const OPT_OUTS: &[(&str, &str)] = &[
+    (
+        "ACTIONS_ALLOW_UNSECURE_COMMANDS",
+        "re-enables the disabled `set-env` and `add-path` commands",
+    ),
+    (
+        "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION",
+        "the Node 20 opt-out was removed; update the action to one that runs on Node 24",
+    ),
+];
+
 pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     let mut scopes = vec![(Route::default(), "workflow".to_owned(), &workflow.value)];
@@ -426,20 +439,16 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     for (route, location, scope) in scopes {
-        if scope
-            .get("env")
-            .and_then(|env| env.get("ACTIONS_ALLOW_UNSECURE_COMMANDS"))
-            .is_some()
-        {
-            findings.push(common::finding(
-                workflow,
-                &DEPRECATED,
-                route
-                    .with_key("env")
-                    .with_key("ACTIONS_ALLOW_UNSECURE_COMMANDS"),
-                location,
-                "re-enables the disabled `set-env` and `add-path` commands",
-            )?);
+        for (variable, message) in OPT_OUTS {
+            if scope.get("env").and_then(|env| env.get(variable)).is_some() {
+                findings.push(common::finding(
+                    workflow,
+                    &DEPRECATED,
+                    route.with_key("env").with_key(*variable),
+                    location.clone(),
+                    *message,
+                )?);
+            }
         }
     }
     Ok(findings)
