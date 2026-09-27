@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0](https://github.com/meiazero/crosgha/compare/v0.6.0...v0.7.0) (2026-09-27)
+
+
+### Added
+
+* add a pre-push hook and flag features GitHub removed ([c631212](https://github.com/meiazero/crosgha/commit/c6312120c77e3784a3704e9201522e92e50e9d8c))
+* **cli:** add hook subcommand to install a pre-push scan ([2e1536d](https://github.com/meiazero/crosgha/commit/2e1536dba80737fb7a7a0fd052e69310b51e7e2d))
+* **rules:** catch workflow validation errors in schema-validity ([8f47f04](https://github.com/meiazero/crosgha/commit/8f47f047fec1f5aa9dbf2780c16074953a1f7a92))
+* **rules:** flag retired runners and shut-down action versions ([b8d40ba](https://github.com/meiazero/crosgha/commit/b8d40ba97fd908b5779ef81392756203a38e95f3))
+
 ## [0.6.0](https://github.com/meiazero/crosgha/compare/v0.5.0...v0.6.0) (2026-09-27)
 
 
