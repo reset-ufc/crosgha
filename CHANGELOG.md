@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0](https://github.com/meiazero/crosgha/compare/v0.7.1...v0.8.0) (2026-09-27)
+
+
+### Added
+
+* report parse failures in JSON and SARIF and scope github.com checks to github.com ([507a9d4](https://github.com/meiazero/crosgha/commit/507a9d42d2bb4f725b2aecf65c4519d9704c65c5))
+
+
+### Fixed
+
+* **hook:** refuse a foreign pre-push hook that cannot be read ([16b1464](https://github.com/meiazero/crosgha/commit/16b14646c3785ecf53068b5084731ab657d87726))
+* review follow-ups for the hook, removed-feature, and the restructured docs ([c3cd531](https://github.com/meiazero/crosgha/commit/c3cd5318180faa12b9a78b5cbb4221de26893edb))
+* **rules:** resolve matrix runners and skip self-hosted labels in removed-feature ([9488b38](https://github.com/meiazero/crosgha/commit/9488b38e0937c234894f90e135d6a2c919de8fa4))
+
+
+### Documentation
+
+* drop the duplicated PR-mode sections and the stale parse-error claim ([909e3b3](https://github.com/meiazero/crosgha/commit/909e3b3caabea38854c2981b57d331a04db96f43))
+
 ## [0.7.1](https://github.com/meiazero/crosgha/compare/v0.7.0...v0.7.1) (2026-09-27)
 
 
