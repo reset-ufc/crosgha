@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/meiazero/crosgha/compare/v0.4.0...v0.5.0) (2026-09-27)
+
+
+### Added
+
+* add retired-runtime for actions on retired node runtimes ([e55ba5d](https://github.com/meiazero/crosgha/commit/e55ba5d811ed6f04b4e747f18e58c385374966ae))
+
 ## [0.4.0](https://github.com/meiazero/crosgha/compare/v0.3.0...v0.4.0) (2026-09-27)
 
 
