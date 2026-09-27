@@ -6,6 +6,7 @@ mod engine;
 mod filesystem;
 mod fix;
 mod github;
+mod hook;
 mod migrate;
 mod policy;
 mod report;

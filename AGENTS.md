@@ -81,6 +81,7 @@ src/policy.rs               Personas, severity, settings, and failure threshold
 src/config.rs               crosgha.yml / zizmor.yml discovery and rule settings
 src/github.rs               Cached read-only GitHub REST client for online rules
 src/migrate.rs              `migrate --from zizmor|actionlint` step rewrites
+src/hook.rs                 `hook install|uninstall`: the git pre-push hook
 action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs
 docs/ARCHITECTURE.md        Module interfaces and Action flow

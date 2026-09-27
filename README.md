@@ -32,6 +32,7 @@ cargo build --release
 ./target/release/crosgha --list-rules
 ./target/release/crosgha --list-rules -f json          # catalog with summaries and equivalents
 ./target/release/crosgha migrate --from zizmor            # swap zizmor-action for the crosgha Action
+./target/release/crosgha hook install -- --offline        # scan before every git push
 ```
 
 Each `PATH` may be a workflow file, a directory (scanned recursively), or a repository root, which
@@ -87,6 +88,16 @@ Rules marked `online` below query the GitHub API. They run when a token is avail
 finding appears, and only the intended YAML node changed. Today only `persist-credentials` has a
 fix. Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger
 filter needs project context.
+
+### Pre-push hook
+
+`crosgha hook install` writes a git `pre-push` hook in the current repository, in the directory
+git resolves for hooks (so `core.hooksPath` is respected). Arguments after `--` are validated and
+passed to every scan, e.g. `crosgha hook install -- --offline --persona pedantic`; re-running
+`install` replaces them. The hook runs `crosgha` from `PATH` at the repository root and blocks the
+push on findings, telling you to run `crosgha --fix`; it never edits files itself. It scans the
+working tree, so uncommitted edits count. `crosgha hook uninstall` removes it. Both refuse to touch
+a `pre-push` hook that crosgha did not write.
 
 ### Output
 

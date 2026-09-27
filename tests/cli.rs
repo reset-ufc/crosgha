@@ -952,3 +952,196 @@ fn repository_roots_and_several_inputs_are_collected_like_zizmor() {
             .contains("Checked 3 workflow file(s)")
     );
 }
+
+/// A throwaway repository whose git ignores the user's global and system config (hooksPath, signing).
+fn git_repo(name: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("crosgha-hook-{name}-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "-q", "--bare", "remote.git"]);
+    git(&root, &["init", "-q", "work"]);
+    root.join("work")
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let bin_dir = PathBuf::from(env!("CARGO_BIN_EXE_crosgha"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let path = std::env::join_paths(
+        std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .env("PATH", path)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .output()
+        .unwrap()
+}
+
+fn combined(output: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+#[test]
+fn pre_push_hook_blocks_smelly_workflows_until_they_are_fixed() {
+    let work = git_repo("push");
+    // Spaces and quotes in the scanned path prove the stored arguments survive shell quoting.
+    let flows = work.join("ci flows");
+    fs::create_dir_all(&flows).unwrap();
+    fs::copy(
+        fixture("checkout-credentials.before.yml"),
+        flows.join("it's.yml"),
+    )
+    .unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-qm", "ci"]);
+    fs::create_dir_all(work.join("src")).unwrap();
+
+    let install = bin()
+        .current_dir(work.join("src"))
+        .args(["hook", "install", "--", "--offline", "ci flows"])
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{}", combined(&install));
+    let hook = work.join(".git/hooks/pre-push");
+    assert!(
+        combined(&install).contains("pre-push"),
+        "{}",
+        combined(&install)
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_ne!(fs::metadata(&hook).unwrap().permissions().mode() & 0o111, 0);
+    }
+
+    let remote = work.parent().unwrap().join("remote.git");
+    let remote_url = remote.to_str().unwrap();
+    let blocked = git(
+        &work.join("src"),
+        &["push", remote_url, "HEAD:refs/heads/main"],
+    );
+    assert!(!blocked.status.success(), "{}", combined(&blocked));
+    let report = combined(&blocked);
+    assert!(report.contains("persist-credentials ["), "{report}");
+    assert!(report.contains("crosgha --fix"), "{report}");
+    assert!(
+        !git(&remote, &["rev-parse", "--verify", "-q", "main"])
+            .status
+            .success()
+    );
+
+    // Without crosgha on PATH the hook fails closed instead of letting the push through.
+    let missing = Command::new("git")
+        .current_dir(&work)
+        .args(["push", remote_url, "HEAD:refs/heads/main"])
+        .env("PATH", "/usr/bin:/bin")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(
+        combined(&missing).contains("crosgha is not on PATH"),
+        "{}",
+        combined(&missing)
+    );
+
+    let fixed = bin()
+        .current_dir(&work)
+        .args(["--offline", "--fix", "ci flows"])
+        .output()
+        .unwrap();
+    assert!(fixed.status.success(), "{}", combined(&fixed));
+    git(&work, &["commit", "-qam", "fix"]);
+    let pushed = git(&work, &["push", remote_url, "HEAD:refs/heads/main"]);
+    assert!(pushed.status.success(), "{}", combined(&pushed));
+    assert!(
+        git(&remote, &["rev-parse", "--verify", "-q", "main"])
+            .status
+            .success()
+    );
+
+    let uninstall = bin()
+        .current_dir(&work)
+        .args(["hook", "uninstall"])
+        .output()
+        .unwrap();
+    assert!(uninstall.status.success(), "{}", combined(&uninstall));
+    assert!(!hook.exists());
+    fs::remove_dir_all(work.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn hook_install_follows_hooks_path_and_never_touches_foreign_hooks() {
+    let work = git_repo("foreign");
+    git(&work, &["config", "core.hooksPath", ".githooks"]);
+    fs::create_dir_all(work.join(".githooks")).unwrap();
+    let foreign = work.join(".githooks/pre-push");
+    fs::write(&foreign, "#!/bin/sh\nmake check\n").unwrap();
+
+    for command in [&["hook", "install"][..], &["hook", "uninstall"][..]] {
+        let refused = bin().current_dir(&work).args(command).output().unwrap();
+        assert_eq!(refused.status.code(), Some(2), "{}", combined(&refused));
+        assert!(
+            combined(&refused).contains(".githooks/pre-push"),
+            "{}",
+            combined(&refused)
+        );
+        assert_eq!(
+            fs::read_to_string(&foreign).unwrap(),
+            "#!/bin/sh\nmake check\n"
+        );
+    }
+    assert!(!work.join(".git/hooks/pre-push").exists());
+
+    let typo = bin()
+        .current_dir(&work)
+        .args(["hook", "install", "--", "--persona", "paranoid"])
+        .output()
+        .unwrap();
+    assert_eq!(typo.status.code(), Some(2), "{}", combined(&typo));
+    assert!(combined(&typo).contains("paranoid"), "{}", combined(&typo));
+
+    fs::remove_file(&foreign).unwrap();
+    for persona in ["pedantic", "auditor"] {
+        let installed = bin()
+            .current_dir(&work)
+            .args(["hook", "install", "--", "--persona", persona])
+            .output()
+            .unwrap();
+        assert!(installed.status.success(), "{}", combined(&installed));
+    }
+    let hook = fs::read_to_string(&foreign).unwrap();
+    assert!(
+        hook.contains("'auditor'") && !hook.contains("pedantic"),
+        "{hook}"
+    );
+
+    let outside = std::env::temp_dir();
+    let no_repo = bin()
+        .current_dir(&outside)
+        .env("GIT_CEILING_DIRECTORIES", &outside)
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+    assert_eq!(no_repo.status.code(), Some(2), "{}", combined(&no_repo));
+    fs::remove_dir_all(work.parent().unwrap()).unwrap();
+}
