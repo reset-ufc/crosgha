@@ -387,6 +387,24 @@ pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 )?);
             }
         }
+        // Without an explicit cap on the caller, a called workflow may request `write`:
+        // https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#cache-access-in-reusable-workflows
+        // Only outsider triggers count; maintainer-only ones such as `release` would be noise.
+        if common::has_trigger(workflow, EXTERNAL_TRIGGERS)
+            && workflow.value.get("cache-mode").is_none()
+        {
+            for job in common::jobs(workflow) {
+                if job.get("uses").is_some() && job.get("cache-mode").is_none() {
+                    findings.push(common::finding(
+                        workflow,
+                        &CACHE_POISONING,
+                        job.route.with_key("uses"),
+                        job.location(),
+                        "called workflow can request cache writes on a low-trust trigger; set `cache-mode: read`",
+                    )?);
+                }
+            }
+        }
     }
 
     let release = triggers.iter().any(|trigger| {
