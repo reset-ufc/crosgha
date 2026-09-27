@@ -1,0 +1,36 @@
+name: Permissions
+on: [push]
+permissions:
+  contents: read
+  pull-request: write # expect: schema-validity
+jobs:
+  label:
+    permissions:
+      issues: write
+      models: read
+      id_token: write # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo label
+  report:
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      code-quality: write
+      vulnerability-alerts: read
+      security-event: write # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo report
+  everything:
+    permissions: read-all
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo read
+  release:
+    permissions:
+      content: write # expect: schema-validity
+    uses: ./.github/workflows/release.yml

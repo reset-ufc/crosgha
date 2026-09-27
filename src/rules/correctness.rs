@@ -99,6 +99,31 @@ const STEP_KEYS: &[&str] = &[
     "parallel",
 ];
 
+/// `GITHUB_TOKEN` scopes from the workflow syntax reference, plus `models`
+/// (https://github.blog/ai-and-ml/generative-ai/automate-your-project-with-github-models-in-actions/)
+/// and `repository-projects`, which the current reference dropped without a documented removal
+/// (https://github.blog/changelog/2021-04-20-github-actions-control-permissions-for-github_token/).
+const PERMISSION_SCOPES: &[&str] = &[
+    "actions",
+    "artifact-metadata",
+    "attestations",
+    "checks",
+    "code-quality",
+    "contents",
+    "deployments",
+    "discussions",
+    "id-token",
+    "issues",
+    "models",
+    "packages",
+    "pages",
+    "pull-requests",
+    "repository-projects",
+    "security-events",
+    "statuses",
+    "vulnerability-alerts",
+];
+
 /// A step does exactly one of these.
 const STEP_ACTIONS: &[&str] = &["uses", "run", "parallel", "wait", "wait-all", "cancel"];
 
@@ -126,7 +151,9 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             format!("unknown workflow key `{key}`"),
         ));
     }
+    let mut scopes = vec![(Route::default(), "workflow".to_owned(), &workflow.value)];
     for job in common::jobs(workflow) {
+        scopes.push((job.route.clone(), job.location(), job.value));
         for (route, key) in unknown_keys(job.value, JOB_KEYS, &job.route) {
             problems.push((route, job.location(), format!("unknown job key `{key}`")));
         }
@@ -157,6 +184,19 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                         .to_owned(),
                 ));
             }
+        }
+    }
+    for (route, location, scope) in scopes {
+        let Some(permissions) = scope.get("permissions") else {
+            continue;
+        };
+        let route = route.with_key("permissions");
+        for (route, key) in unknown_keys(permissions, PERMISSION_SCOPES, &route) {
+            problems.push((
+                route,
+                location.clone(),
+                format!("unknown permission `{key}`"),
+            ));
         }
     }
     problems

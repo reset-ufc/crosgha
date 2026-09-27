@@ -1,0 +1,37 @@
+name: Permissions
+on: [push]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  label:
+    permissions:
+      issues: write
+      models: read
+      id-token: write
+      repository-projects: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo label
+  report:
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      code-quality: write
+      vulnerability-alerts: read
+      security-events: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo report
+  everything:
+    permissions: {}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo none
+  release:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
