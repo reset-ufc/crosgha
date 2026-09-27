@@ -1,0 +1,17 @@
+name: Legacy action
+on: [push]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true # expect: deprecated-command
+    steps:
+      - uses: example/node16-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - uses: example/node20-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        env:
+          ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true' # expect: deprecated-command
+      - run: echo "$NODE_VERSION"
+        env:
+          NODE_VERSION: '24'
