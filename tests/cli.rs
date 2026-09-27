@@ -1130,7 +1130,8 @@ fn hook_install_follows_hooks_path_and_never_touches_foreign_hooks() {
     git(&work, &["config", "core.hooksPath", ".githooks"]);
     fs::create_dir_all(work.join(".githooks")).unwrap();
     let foreign = work.join(".githooks/pre-push");
-    fs::write(&foreign, "#!/bin/sh\nmake check\n").unwrap();
+    // Not valid UTF-8: a hook we cannot even read as text is still someone else's.
+    fs::write(&foreign, b"#!/bin/sh\nmake check # \xff\n").unwrap();
 
     for command in [&["hook", "install"][..], &["hook", "uninstall"][..]] {
         let refused = bin().current_dir(&work).args(command).output().unwrap();
@@ -1141,11 +1142,21 @@ fn hook_install_follows_hooks_path_and_never_touches_foreign_hooks() {
             combined(&refused)
         );
         assert_eq!(
-            fs::read_to_string(&foreign).unwrap(),
-            "#!/bin/sh\nmake check\n"
+            fs::read(&foreign).unwrap(),
+            b"#!/bin/sh\nmake check # \xff\n"
         );
     }
     assert!(!work.join(".git/hooks/pre-push").exists());
+
+    fs::remove_file(&foreign).unwrap();
+    std::os::unix::fs::symlink("/nonexistent/pre-push", &foreign).unwrap();
+    let dangling = bin()
+        .current_dir(&work)
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+    assert_eq!(dangling.status.code(), Some(2), "{}", combined(&dangling));
+    assert!(fs::symlink_metadata(&foreign).unwrap().is_symlink());
 
     let typo = bin()
         .current_dir(&work)

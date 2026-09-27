@@ -43,7 +43,7 @@ exit "$status"
 /// Removes the pre-push hook if crosgha installed it; `None` when there was none.
 pub fn uninstall() -> Result<Option<PathBuf>, String> {
     let hook = hook_path()?;
-    if !hook.exists() {
+    if fs::symlink_metadata(&hook).is_err() {
         return Ok(None);
     }
     refuse_foreign(&hook)?;
@@ -52,12 +52,20 @@ pub fn uninstall() -> Result<Option<PathBuf>, String> {
 }
 
 fn refuse_foreign(hook: &std::path::Path) -> Result<(), String> {
+    // Anything that exists but cannot be read as our script (non-UTF-8, a directory,
+    // unreadable, a dangling symlink) is someone else's hook too.
     match fs::read_to_string(hook) {
-        Ok(script) if !script.contains(MARKER) => Err(format!(
+        Ok(script) if script.contains(MARKER) => Ok(()),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && fs::symlink_metadata(hook).is_err() =>
+        {
+            Ok(())
+        }
+        _ => Err(format!(
             "{} exists and was not installed by crosgha; add `crosgha` to it by hand",
             hook.display()
         )),
-        _ => Ok(()),
     }
 }
 
