@@ -66,5 +66,25 @@
       "ghsa_id": "GHSA-0000-1111-2222"
     }
   ],
-  "/advisories?ecosystem=actions&affects=example/vulnerable@2": []
+  "/advisories?ecosystem=actions&affects=example/vulnerable@2": [],
+  "/repos/actions/checkout/compare/main...4444444444444444444444444444444444444444": {
+    "status": "identical"
+  },
+  "/repos/actions/checkout/compare/main...5555555555555555555555555555555555555555": {
+    "status": "ahead"
+  },
+  "/repos/example/workflows": {
+    "default_branch": "trunk",
+    "archived": false
+  },
+  "/repos/example/workflows/compare/trunk...8888888888888888888888888888888888888888": {
+    "status": "diverged"
+  },
+  "/repos/example/workflows/compare/trunk...9999999999999999999999999999999999999999": {
+    "status": "behind"
+  },
+  "/repos/example/archived-workflows": {
+    "default_branch": "main",
+    "archived": true
+  }
 }

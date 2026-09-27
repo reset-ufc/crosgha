@@ -9,8 +9,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/cache/save@v4
-      - uses: github/codeql-action/init@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      - uses: github/codeql-action/analyze@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - uses: github/codeql-action/init@v3 # expect: unpinned-action
+      - uses: github/codeql-action/analyze@v3 # expect: unpinned-action
       - uses: example/trusted@main
-      - uses: other/thing@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - uses: other/thing@v1 # expect: unpinned-action
+      - uses: other/pinned@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

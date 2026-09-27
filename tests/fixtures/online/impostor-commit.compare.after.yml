@@ -1,0 +1,25 @@
+name: Online
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@4444444444444444444444444444444444444444 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@5555555555555555555555555555555555555555 # expect: impostor-commit
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@6666666666666666666666666666666666666666 # expect: impostor-commit
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: example/unknown@7777777777777777777777777777777777777777
+  release:
+    uses: example/workflows/.github/workflows/release.yml@8888888888888888888888888888888888888888 # expect: impostor-commit

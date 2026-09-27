@@ -9,4 +9,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@1111111111111111111111111111111111111111 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@2222222222222222222222222222222222222222 # expect: impostor-commit
+        with:
+          persist-credentials: false
       - uses: actions/checkout@3333333333333333333333333333333333333333
+        with:
+          persist-credentials: false

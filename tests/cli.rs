@@ -265,8 +265,10 @@ fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
         .lines()
         .filter(|line| line.starts_with("missing-release-cooldown ["))
         .collect();
-    assert_eq!(cooldown.len(), 1, "{insecure}");
+    // Line 13 sets only `semver-major-days`, so minor and patch updates still land at once.
+    assert_eq!(cooldown.len(), 2, "{insecure}");
     assert!(cooldown[0].contains("dependabot.yml:9:"), "{insecure}");
+    assert!(cooldown[1].contains("dependabot.yml:13:"), "{insecure}");
     let tooling: Vec<&str> = insecure
         .lines()
         .filter(|line| line.starts_with("missing-security-tooling ["))

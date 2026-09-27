@@ -1,0 +1,21 @@
+name: Cache
+on: [push]
+permissions: {}
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-go@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          go-version-file: go.mod
+          cache: true
+  java:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-java@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven

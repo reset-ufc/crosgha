@@ -1,0 +1,22 @@
+name: Monitoring
+on: [push]
+permissions: {}
+jobs:
+  late:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: step-security/harden-runner@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+  mixed-case:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: Step-Security/Harden-Runner@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          egress-policy: block
+      - run: make build

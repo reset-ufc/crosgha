@@ -1,7 +1,8 @@
 //! Data-driven checks for every rule. Each `<rule>.before.yml` fixture marks the lines that
-//! must be reported with `# expect: <rule>`; every other line is a negative case. The matching
-//! `.after.yml` is the corrected workflow and must be clean. Online rules run against a local
-//! server that replays `tests/fixtures/online/api.json`.
+//! must be reported with `# expect: <rule>`; every other line is a negative case. `.after.yml`
+//! is the exact `--fix` output (absent when `--fix` changes nothing; regenerate with
+//! `CROSGHA_BLESS=1 cargo test --test rules`), and the hand-written `.clean.yml` must not be
+//! reported. Online rules run against a local server that replays `tests/fixtures/online/api.json`.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -152,6 +153,7 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         let copy = std::env::temp_dir().join(format!("crosgha-{}-{name}", std::process::id()));
         fs::copy(&path, &copy).unwrap();
         scan(&copy, true, api, config);
+        let fixed_source = fs::read_to_string(&copy).unwrap();
         let fixed = reported_lines(&copy, rule, api, config).len();
         fs::remove_file(&copy).unwrap();
         if fixed != 0 && fixed != expected.len() {
@@ -161,15 +163,38 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
             ));
         }
 
+        // `.after.yml` records what `--fix` really writes, so it is compared byte for byte and
+        // only exists when `--fix` changes the file.
         let after = path.with_file_name(format!("{stem}.after.yml"));
-        if !after.exists() {
-            failures.push(format!("{stem}.after.yml is missing"));
+        if std::env::var_os("CROSGHA_BLESS").is_some() {
+            if fixed_source == source {
+                let _ = fs::remove_file(&after);
+            } else {
+                fs::write(&after, &fixed_source).unwrap();
+            }
+        }
+        let recorded = fs::read_to_string(&after).unwrap_or_else(|_| source.clone());
+        if fixed_source != recorded {
+            failures.push(format!(
+                "{name}: --fix output differs from {}; review, then rerun with CROSGHA_BLESS=1",
+                if after.exists() {
+                    format!("{stem}.after.yml")
+                } else {
+                    format!("{name} (no .after.yml)")
+                }
+            ));
+        }
+
+        // `.clean.yml` applies the recommended remediation by hand and must not be reported.
+        let clean = path.with_file_name(format!("{stem}.clean.yml"));
+        if !clean.exists() {
+            failures.push(format!("{stem}.clean.yml is missing"));
             continue;
         }
-        let remaining = reported_lines(&after, rule, api, config);
+        let remaining = reported_lines(&clean, rule, api, config);
         if !remaining.is_empty() {
             failures.push(format!(
-                "{stem}.after.yml still reports lines {remaining:?}"
+                "{stem}.clean.yml still reports lines {remaining:?}"
             ));
         }
     }
@@ -212,7 +237,7 @@ fn online_rules_stay_silent_offline() {
 
 #[test]
 fn repository_settings_are_read_for_the_named_repository() {
-    let workflow = fixtures().join("online/archived-action.after.yml");
+    let workflow = fixtures().join("online/archived-action.clean.yml");
     let api = fake_github();
     let output = bin()
         .env_remove("GH_TOKEN")

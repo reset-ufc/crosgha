@@ -59,11 +59,13 @@ It is listed in `.git/info/exclude` and never committed.
 5. No tautological tests (confirming what the code already says) and no tests that only
    detect whether code changed.
 6. Bug fixes get a regression test only when existing behavior tests leave a real gap.
-7. Every rule ships with before/after YAML fixtures. Workflow rules live in `tests/fixtures/rules/`,
+7. Every rule ships with YAML fixtures. Workflow rules live in `tests/fixtures/rules/`,
    online rules live in `tests/fixtures/online/`, and repository rules have a named test in
-   `tests/cli.rs` or `tests/rules.rs`. `tests/rules.rs` checks them against `# expect: <rule>`
-   markers and fails when a registered rule has no fixture. A fixable rule also asserts its exact
-   fixed output.
+   `tests/cli.rs` or `tests/rules.rs`. `tests/rules.rs` checks each `.before.yml` against its
+   `# expect: <rule>` markers and fails when a registered rule has no fixture. The hand-written
+   `.clean.yml` applies the remediation and must not be reported. `.after.yml` is never written by
+   hand: it is the exact `--fix` output, regenerated with `CROSGHA_BLESS=1 cargo test --test rules`
+   and reviewed in the diff; it is absent when `--fix` leaves the file unchanged.
 
 ## Layout
 

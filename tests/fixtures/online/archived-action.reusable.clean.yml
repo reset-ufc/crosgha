@@ -1,0 +1,14 @@
+name: Online
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  release:
+    uses: example/workflows/.github/workflows/release.yml@9999999999999999999999999999999999999999
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: example/unknown@v1
+      - uses: actions/checkout@v4

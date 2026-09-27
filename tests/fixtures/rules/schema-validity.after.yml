@@ -1,15 +1,21 @@
 name: Schema
 on: [push]
 permissions: {}
+permisions: read-all # expect: schema-validity
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    timeout: 10 # expect: schema-validity
     steps:
-      - name: Checkout
+      - name: Both # expect: schema-validity
         uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: echo both
+        with:
+          persist-credentials: false
+      - name: Neither # expect: schema-validity
       - run: echo ok
-        working-directory: src
+        working-dir: src # expect: schema-validity
       - parallel:
           - run: echo one
           - run: echo two
@@ -17,3 +23,7 @@ jobs:
         id: sleeper
         background: true
       - wait: [sleeper]
+  orphan: # expect: schema-validity
+    timeout-minutes: 10
+    steps:
+      - run: echo orphan

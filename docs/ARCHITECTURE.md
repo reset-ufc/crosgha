@@ -138,7 +138,7 @@ validated and then refused until its repository operations have end-to-end fixtu
 
 | Test file | What it runs |
 |---|---|
-| `tests/rules.rs` | Scans every `tests/fixtures/rules/<rule>[.<variant>].before.yml` at the `auditor` persona. Findings of the rule must match the `# expect: <rule>` markers exactly, `--fix` must remove all or none of them, and the `.after.yml` must be clean. |
+| `tests/rules.rs` | Scans every `tests/fixtures/rules/<rule>[.<variant>].before.yml` at the `auditor` persona. Findings of the rule must match the `# expect: <rule>` markers exactly, `--fix` must remove all or none of them and write exactly `.after.yml` (or nothing when that file is absent; `CROSGHA_BLESS=1` regenerates it), and the hand-written `.clean.yml` must not be reported. |
 | `tests/rules.rs` (online) | Runs the online fixtures against a local server that replays `tests/fixtures/online/api.json` and rejects wrong tokens. |
 | `tests/rules.rs` (coverage) | Fails if any registered rule lacks a fixture. |
 | `tests/cli.rs` | The binary end to end: fixes, exit codes, symlinks, ignores, config discovery, repository rules, report formats, and `migrate`. |

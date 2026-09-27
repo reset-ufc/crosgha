@@ -10,3 +10,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  - package-ecosystem: npm # expect: missing-release-cooldown
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      semver-major-days: 30

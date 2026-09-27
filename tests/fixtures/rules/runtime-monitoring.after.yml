@@ -2,7 +2,14 @@ name: Monitoring
 on: [push]
 permissions: {}
 jobs:
-  build:
+  build: # expect: runtime-monitoring
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+  hardened:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -10,5 +17,7 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
   reuse:
     uses: ./.github/workflows/reusable.yml

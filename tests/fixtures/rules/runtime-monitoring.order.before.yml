@@ -1,0 +1,28 @@
+name: Monitoring
+on: [push]
+permissions: {}
+jobs:
+  late: # expect: runtime-monitoring
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+      - uses: step-security/harden-runner@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          egress-policy: audit
+  mixed-case:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: Step-Security/Harden-Runner@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          egress-policy: block
+      - run: make build
+  local-monitor: # expect: runtime-monitoring
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: ./.github/actions/harden-runner
+      - run: make build

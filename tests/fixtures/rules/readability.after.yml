@@ -1,5 +1,4 @@
-name: Tests
-on: [push]
+on: [push] # expect: readability
 permissions: {}
 jobs:
   test:
@@ -7,5 +6,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      - name: Test
-        run: make test
+        with:
+          persist-credentials: false
+      - run: make test # expect: readability
+      - name: Lint
+        run: make lint

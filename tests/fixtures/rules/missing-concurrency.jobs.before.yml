@@ -1,0 +1,20 @@
+name: CI
+on: # expect: missing-concurrency
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: lint-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - run: make lint
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make test
