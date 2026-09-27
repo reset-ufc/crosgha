@@ -189,7 +189,7 @@ fn action_installs_the_verified_release_and_reports_sarif() {
     );
     assert!(run.summary.contains("crosgha"), "{}", run.summary);
     assert!(
-        run.summary.contains("script-injection ["),
+        run.summary.contains("[script-injection]"),
         "{}",
         run.summary
     );

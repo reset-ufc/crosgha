@@ -12,6 +12,17 @@ fn bin() -> Command {
     command
 }
 
+/// `(header, path:line:col)` of each `rule` diagnostic in a text report.
+fn diagnostics<'a>(report: &'a str, rule: &str) -> Vec<(&'a str, &'a str)> {
+    let header = format!("[{rule}]: ");
+    let lines: Vec<&str> = report.lines().collect();
+    lines
+        .windows(2)
+        .filter(|pair| pair[0].contains(&header))
+        .map(|pair| (pair[0], pair[1].trim_start().trim_start_matches("--> ")))
+        .collect()
+}
+
 #[test]
 fn prints_version() {
     let output = bin()
@@ -40,7 +51,7 @@ fn scans_workflow_directory() {
         .expect("failed to run binary");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(stdout, "Checked 2 workflow file(s); 0 finding(s).\n");
+    assert_eq!(stdout, "✓ Checked 2 workflow files: no findings.\n");
 }
 
 #[test]
@@ -75,8 +86,8 @@ fn reports_checkout_credentials_across_jobs() {
         .expect("failed to run binary");
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(stdout.matches("persist-credentials [").count(), 3);
-    assert!(stdout.contains("3 finding(s)"));
+    assert_eq!(stdout.matches("[persist-credentials]").count(), 3);
+    assert!(stdout.contains("3 findings"));
 }
 
 #[test]
@@ -104,7 +115,7 @@ fn fixes_checkout_credentials_without_changing_other_nodes() {
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .contains("Fixed 3 finding(s)")
+            .contains("Fixed 3 findings")
     );
 
     let checked = bin()
@@ -159,7 +170,7 @@ fn invalid_workflow_does_not_hide_findings_in_the_others() {
     assert!(String::from_utf8_lossy(&report.stderr).contains("broken.yml"));
     let stdout = String::from_utf8(report.stdout).unwrap();
     assert_eq!(
-        stdout.matches("persist-credentials [").count(),
+        stdout.matches("[persist-credentials]").count(),
         3,
         "{stdout}"
     );
@@ -197,7 +208,7 @@ fn invalid_workflow_does_not_hide_findings_in_the_others() {
     assert_eq!(before, after);
     let stdout = String::from_utf8(fix.stdout).unwrap();
     assert_eq!(
-        stdout.matches("persist-credentials [").count(),
+        stdout.matches("[persist-credentials]").count(),
         3,
         "{stdout}"
     );
@@ -216,7 +227,7 @@ fn failure_threshold_changes_exit_code_without_hiding_findings() {
     assert!(
         String::from_utf8(error_only.stdout)
             .unwrap()
-            .contains("3 finding(s)")
+            .contains("3 findings")
     );
 
     let warning = bin()
@@ -228,7 +239,7 @@ fn failure_threshold_changes_exit_code_without_hiding_findings() {
     assert!(
         String::from_utf8(warning.stdout)
             .unwrap()
-            .contains("3 finding(s)")
+            .contains("3 findings")
     );
 }
 
@@ -252,17 +263,17 @@ fn fixes_checkout_while_reporting_a_detection_only_finding() {
     fs::remove_file(&path).unwrap();
 
     let regular = String::from_utf8(regular.stdout).unwrap();
-    assert!(regular.contains("persist-credentials ["));
-    assert!(!regular.contains("unpinned-action ["));
+    assert!(regular.contains("[persist-credentials]"));
+    assert!(!regular.contains("[unpinned-action]"));
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         actual,
         fs::read_to_string(fixture("mixed-fixes.after.yml")).unwrap()
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Fixed 1 finding(s)"));
-    assert_eq!(stdout.matches("unpinned-action [").count(), 1);
-    assert!(!stdout.contains("persist-credentials ["));
+    assert!(stdout.contains("Fixed 1 finding in"));
+    assert_eq!(stdout.matches("[unpinned-action]").count(), 1);
+    assert!(!stdout.contains("[persist-credentials]"));
 }
 
 #[cfg(unix)]
@@ -288,7 +299,7 @@ fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {
 
     assert_eq!(scan.status.code(), Some(1));
     let stdout = String::from_utf8(scan.stdout).unwrap();
-    assert!(stdout.contains("Checked 2 workflow file(s); 3 finding(s)."));
+    assert!(stdout.contains("Checked 2 workflow files: 3 findings"));
     assert!(stdout.contains("linked.yml"));
     assert_eq!(fix.status.code(), Some(2));
     assert!(
@@ -303,14 +314,11 @@ fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {
 fn inline_ignores_accept_crosgha_and_zizmor_rule_ids() {
     let output = bin().arg(fixture("ignores.yml")).output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(!stdout.contains("persist-credentials ["), "{stdout}");
-    let injections: Vec<&str> = stdout
-        .lines()
-        .filter(|line| line.starts_with("script-injection ["))
-        .collect();
+    assert!(!stdout.contains("[persist-credentials]"), "{stdout}");
+    let injections = diagnostics(&stdout, "script-injection");
     assert_eq!(injections.len(), 2, "{stdout}");
-    assert!(injections[0].contains("ignores.yml:12:"));
-    assert!(injections[1].contains("ignores.yml:13:"));
+    assert!(injections[0].1.contains("ignores.yml:12:"));
+    assert!(injections[1].1.contains("ignores.yml:13:"));
 }
 
 #[test]
@@ -330,22 +338,16 @@ fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
     };
 
     let insecure = scan("insecure");
-    let cooldown: Vec<&str> = insecure
-        .lines()
-        .filter(|line| line.starts_with("missing-release-cooldown ["))
-        .collect();
+    let cooldown = diagnostics(&insecure, "missing-release-cooldown");
     // Line 13 sets only `semver-major-days`, so other updates keep Dependabot's 3-day default.
     assert_eq!(cooldown.len(), 2, "{insecure}");
-    assert!(cooldown[0].contains("dependabot.yml:9:"), "{insecure}");
-    assert!(cooldown[1].contains("dependabot.yml:13:"), "{insecure}");
-    let tooling: Vec<&str> = insecure
-        .lines()
-        .filter(|line| line.starts_with("missing-security-tooling ["))
-        .collect();
+    assert!(cooldown[0].1.contains("dependabot.yml:9:"), "{insecure}");
+    assert!(cooldown[1].1.contains("dependabot.yml:13:"), "{insecure}");
+    let tooling = diagnostics(&insecure, "missing-security-tooling");
     assert_eq!(tooling.len(), 3, "{insecure}");
     for tool in ["CodeQL", "dependency review", "OpenSSF Scorecard"] {
         assert!(
-            tooling.iter().any(|line| line.contains(tool)),
+            tooling.iter().any(|(header, _)| header.contains(tool)),
             "{tool}: {insecure}"
         );
     }
@@ -365,15 +367,15 @@ fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
         .output()
         .unwrap();
     let relaxed = String::from_utf8(output.stdout).unwrap();
-    assert!(!relaxed.contains("missing-release-cooldown ["), "{relaxed}");
+    assert!(!relaxed.contains("[missing-release-cooldown]"), "{relaxed}");
 
     let hardened = scan("hardened");
     assert!(
-        !hardened.contains("missing-release-cooldown ["),
+        !hardened.contains("[missing-release-cooldown]"),
         "{hardened}"
     );
     assert!(
-        !hardened.contains("missing-security-tooling ["),
+        !hardened.contains("[missing-security-tooling]"),
         "{hardened}"
     );
 }
@@ -391,12 +393,11 @@ fn repository_rules_flag_retired_node_runtimes() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let mut retired: Vec<String> = stdout
-        .lines()
-        .filter(|line| line.starts_with("retired-runtime ["))
-        .map(|line| {
-            let location = line.split("repos/runtime/").nth(1).unwrap();
-            location.split(": ").next().unwrap().to_owned()
+    let mut retired: Vec<String> = diagnostics(&stdout, "retired-runtime")
+        .into_iter()
+        .map(|(_, at)| {
+            let location = at.split("repos/runtime/").nth(1).unwrap();
+            location.rsplit_once(':').unwrap().0.to_owned()
         })
         .collect();
     retired.sort();
@@ -472,11 +473,10 @@ fn zizmor_config_is_discovered_and_honored() {
         String::from_utf8(output.stdout).unwrap()
     };
     let lines_of = |stdout: &str, rule: &str| -> Vec<String> {
-        stdout
-            .lines()
-            .filter(|line| line.starts_with(&format!("{rule} [")))
-            .map(|line| {
-                line.split(".yml:")
+        diagnostics(stdout, rule)
+            .into_iter()
+            .map(|(_, at)| {
+                at.split(".yml:")
                     .nth(1)
                     .unwrap()
                     .split(':')
@@ -498,7 +498,7 @@ fn zizmor_config_is_discovered_and_honored() {
         "{configured}"
     );
     assert!(
-        configured.contains("persist-credentials [persist-credentials:error]"),
+        configured.contains("error[persist-credentials]"),
         "{configured}"
     );
 
@@ -516,14 +516,11 @@ fn zizmor_config_is_discovered_and_honored() {
     let unconfigured = scan(&["--no-config"]);
     assert_eq!(lines_of(&unconfigured, "script-injection"), ["14", "15"]);
     assert_eq!(lines_of(&unconfigured, "unpinned-action"), ["11"]);
-    assert!(unconfigured.contains("persist-credentials [persist-credentials:warning]"));
+    assert!(unconfigured.contains("warning[persist-credentials]"));
 
     let severe = scan(&["--no-config", "--min-severity", "high"]);
     assert!(
-        severe
-            .lines()
-            .filter(|line| line.contains(".yml:"))
-            .all(|line| line.contains(":error]")),
+        !severe.contains("warning[") && !severe.contains("note["),
         "{severe}"
     );
     assert_eq!(lines_of(&severe, "script-injection"), ["14", "15"]);
@@ -596,17 +593,20 @@ fn report_names_the_equivalent_rule_in_other_tools() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let line = |rule: &str| {
-        stdout
-            .lines()
-            .find(|line| line.starts_with(&format!("{rule} [")))
-            .unwrap_or_else(|| panic!("no {rule}: {stdout}"))
-            .to_owned()
+    let diagnostic = |rule: &str| {
+        let start = stdout
+            .find(&format!("[{rule}]: "))
+            .unwrap_or_else(|| panic!("no {rule}: {stdout}"));
+        stdout[start..].split("\n\n").next().unwrap().to_owned()
     };
     assert!(
-        line("script-injection").ends_with(" (zizmor: template-injection; actionlint: expression)")
+        diagnostic("script-injection")
+            .contains("= note: same as zizmor: template-injection; actionlint: expression")
     );
-    assert!(line("unpinned-action").ends_with(" (zizmor: unpinned-uses, unpinned-images)"));
+    assert!(
+        diagnostic("unpinned-action")
+            .contains("= note: same as zizmor: unpinned-uses, unpinned-images")
+    );
 }
 
 #[test]
@@ -624,11 +624,10 @@ fn cooldown_days_follow_the_configured_minimum() {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
-        let lines: Vec<String> = stdout
-            .lines()
-            .filter(|line| line.starts_with("missing-release-cooldown ["))
-            .map(|line| {
-                line.split("dependabot.yml:")
+        let lines: Vec<String> = diagnostics(&stdout, "missing-release-cooldown")
+            .into_iter()
+            .map(|(_, at)| {
+                at.split("dependabot.yml:")
                     .nth(1)
                     .unwrap()
                     .split(':')
@@ -662,21 +661,16 @@ fn dependabot_config_input_is_audited_not_parsed_as_a_workflow() {
 
     // Config is discovered next to the file: `.github/crosgha.yml` raises the minimum to 12 days.
     let alone = scan(std::slice::from_ref(&dependabot));
-    let cooldown: Vec<&str> = alone
-        .lines()
-        .filter(|line| line.starts_with("missing-release-cooldown ["))
-        .collect();
+    let cooldown = diagnostics(&alone, "missing-release-cooldown");
     assert_eq!(cooldown.len(), 2, "{alone}");
-    assert!(cooldown[0].contains("dependabot.yml:3:"), "{alone}");
-    assert!(cooldown[1].contains("dependabot.yml:9:"), "{alone}");
+    assert!(cooldown[0].1.contains("dependabot.yml:3:"), "{alone}");
+    assert!(cooldown[1].1.contains("dependabot.yml:9:"), "{alone}");
     // A lone Dependabot file says nothing about the repository's workflows.
-    assert!(!alone.contains("missing-security-tooling ["), "{alone}");
+    assert!(!alone.contains("[missing-security-tooling]"), "{alone}");
 
     let both = scan(&[fixture("repos/cooldown/.github/workflows"), dependabot]);
     assert_eq!(
-        both.lines()
-            .filter(|line| line.starts_with("missing-release-cooldown ["))
-            .count(),
+        diagnostics(&both, "missing-release-cooldown").len(),
         2,
         "{both}"
     );
@@ -700,7 +694,7 @@ fn no_path_the_repository_root_and_github_dir_scan_the_same_workflows() {
         String::from_utf8(output.stdout).unwrap().replace("./", "")
     };
     let default = scan(&[]);
-    assert!(default.contains("Checked 1 workflow file(s)"), "{default}");
+    assert!(default.contains("Checked 1 workflow file:"), "{default}");
     assert!(default.contains(".github/dependabot.yml:3:"), "{default}");
     for paths in [&["."][..], &[".github"], &[".github/workflows"]] {
         assert_eq!(scan(paths), default, "{paths:?}");
@@ -833,7 +827,14 @@ fn every_format_reports_the_findings_of_the_text_report() {
         String::from_utf8(output.stdout).unwrap()
     };
     let text = scan("text");
-    let count = text.lines().filter(|line| line.contains(" [")).count();
+    let count = text
+        .lines()
+        .filter(|line| {
+            ["error[", "warning[", "note["]
+                .iter()
+                .any(|level| line.starts_with(level))
+        })
+        .count();
     assert!(count >= 3, "{text}");
 
     let json: serde_json::Value = serde_json::from_str(&scan("json")).unwrap();
@@ -943,7 +944,7 @@ fn github_actions_runs_default_to_annotations_unless_a_format_is_given() {
     );
     assert!(annotations.contains("::error file=.github/workflows/ci.yml,line=14,"));
     serde_json::from_str::<serde_json::Value>(&scan(&["-f", "json"])).unwrap();
-    assert!(scan(&["--format", "plain"]).contains("script-injection ["));
+    assert!(scan(&["--format", "plain"]).contains("[script-injection]"));
 }
 
 #[test]
@@ -1015,11 +1016,10 @@ fn zizmor_ids_for_part_of_a_rule_only_touch_that_part() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     let lines = |rule: &str| -> Vec<String> {
-        stdout
-            .lines()
-            .filter(|line| line.starts_with(&format!("{rule} [")))
-            .map(|line| {
-                line.split("ci.yml:")
+        diagnostics(&stdout, rule)
+            .into_iter()
+            .map(|(_, at)| {
+                at.split("ci.yml:")
                     .nth(1)
                     .unwrap()
                     .split(':')
@@ -1103,8 +1103,8 @@ fn repository_roots_and_several_inputs_are_collected_like_zizmor() {
         String::from_utf8_lossy(&root.stderr)
     );
     let stdout = String::from_utf8(root.stdout).unwrap();
-    assert!(stdout.contains("Checked 1 workflow file(s)"), "{stdout}");
-    assert!(stdout.contains("missing-release-cooldown ["), "{stdout}");
+    assert!(stdout.contains("Checked 1 workflow file:"), "{stdout}");
+    assert!(stdout.contains("[missing-release-cooldown]"), "{stdout}");
 
     let several = bin()
         .args(["--offline", "--fail-on", "none"])
@@ -1120,7 +1120,7 @@ fn repository_roots_and_several_inputs_are_collected_like_zizmor() {
     assert!(
         String::from_utf8(several.stdout)
             .unwrap()
-            .contains("Checked 3 workflow file(s)")
+            .contains("Checked 3 workflow files")
     );
 }
 
@@ -1212,7 +1212,7 @@ fn pre_push_hook_blocks_smelly_workflows_until_they_are_fixed() {
     );
     assert!(!blocked.status.success(), "{}", combined(&blocked));
     let report = combined(&blocked);
-    assert!(report.contains("persist-credentials ["), "{report}");
+    assert!(report.contains("[persist-credentials]"), "{report}");
     assert!(report.contains("crosgha --fix"), "{report}");
     assert!(
         !git(&remote, &["rev-parse", "--verify", "-q", "main"])
@@ -1327,4 +1327,47 @@ fn hook_install_follows_hooks_path_and_never_touches_foreign_hooks() {
         .unwrap();
     assert_eq!(no_repo.status.code(), Some(2), "{}", combined(&no_repo));
     fs::remove_dir_all(work.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn text_report_points_at_the_source_and_colors_only_on_request() {
+    let scan = |extra: &[&str]| {
+        let output = bin()
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE")
+            .args(extra)
+            .arg(fixture("checkout-credentials.before.yml"))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let piped = scan(&[]);
+    assert!(!piped.contains('\x1b'), "{piped}");
+    let lines: Vec<&str> = piped.lines().collect();
+    let header = lines
+        .iter()
+        .position(|line| line.starts_with("warning[persist-credentials]: "))
+        .unwrap();
+    assert!(lines[header + 1].ends_with("checkout-credentials.before.yml:9:9"));
+    let (source, carets) = (lines[header + 3], lines[header + 4]);
+    assert!(
+        source.ends_with(
+            "- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0"
+        )
+    );
+    assert_eq!(carets.find('^'), source.find("uses"), "{piped}");
+    assert!(carets.ends_with("^^^^ job `test`, step 1"), "{piped}");
+    assert!(piped.contains("Checked 1 workflow file: 3 findings (3 warnings).\n"));
+    assert!(
+        piped.ends_with("3 findings have a fix: rerun with --fix.\n"),
+        "{piped}"
+    );
+
+    let colored = scan(&["--color", "always"]);
+    assert!(
+        colored.contains("\x1b[1m\x1b[33mwarning[persist-credentials]"),
+        "{colored}"
+    );
+    assert_eq!(anstream::adapter::strip_str(&colored).to_string(), piped);
 }

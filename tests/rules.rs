@@ -71,7 +71,8 @@ fn scan(path: &Path, fix: bool, api: Option<&str>, config: Option<&Path>) -> Out
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .args(["--persona", "auditor", "--fail-on", "none"])
-        .args(fix.then_some("--fix"));
+        .args(fix.then_some("--fix"))
+        .args(["--format", "json"]);
     match config {
         Some(config) => command.arg("--config").arg(config),
         None => command.arg("--no-config"),
@@ -109,15 +110,13 @@ fn reported_lines(
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let anchor = format!(" {}:", path.display());
-    stdout
-        .lines()
-        .filter(|line| line.split_whitespace().next() == Some(rule))
-        .map(|line| {
-            let after = &line[line.find(&anchor).unwrap() + anchor.len()..];
-            after[..after.find(':').unwrap()].parse().unwrap()
-        })
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["rule"] == rule)
+        .map(|finding| finding["line"].as_u64().unwrap() as usize)
         .collect()
 }
 
@@ -262,7 +261,7 @@ fn repository_settings_are_read_for_the_named_repository() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let settings: Vec<&str> = stdout
         .lines()
-        .filter(|line| line.starts_with("repo-org-settings ["))
+        .filter(|line| line.contains("[repo-org-settings]: "))
         .collect();
     assert_eq!(settings.len(), 2, "{stdout}");
     assert!(
@@ -315,7 +314,7 @@ fn every_registered_rule_has_a_fixture() {
                 "online" => fixtures()
                     .join(format!("online/{rule}.before.yml"))
                     .exists(),
-                _ => tests.contains(&format!("\"{rule} [\"")),
+                _ => tests.contains(&format!("\"{rule}\"")) || tests.contains(&format!("[{rule}]")),
             };
             (!covered).then(|| format!("{rule} ({scope})"))
         })

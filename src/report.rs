@@ -1,17 +1,22 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::{Display, Write},
+    path::{Path, PathBuf},
+};
 
+use anstyle::{AnsiColor, Style};
 use clap::ValueEnum;
 
 use serde_json::{Value, json};
 
 use crate::{
     engine::Inspection,
+    policy::Severity,
     rules::{self, Finding, Located, Rule},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Format {
-    /// Human-readable lines; `plain` is zizmor's name for it.
+    /// Diagnostics with source snippets for people; `plain` is zizmor's name for it.
     #[value(alias = "plain")]
     Text,
     Json,
@@ -30,7 +35,7 @@ pub fn render(
     fix: bool,
 ) -> String {
     match format {
-        Format::Text => text(files, repository, fix),
+        Format::Text => text(files, repository, errors, fix),
         Format::Json => json(files, repository, errors, fix),
         Format::Sarif => sarif(files, repository, errors, fix),
         Format::Github => github(files, repository, fix),
@@ -50,29 +55,28 @@ pub struct FileError {
     pub message: String,
 }
 
-fn text(files: &[FileReport], repository: &[Located], fix: bool) -> String {
+/// rustc-style diagnostics with the offending source line, then a summary. The styles are
+/// ANSI codes that `anstream` strips unless stdout is a color terminal.
+fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix: bool) -> String {
     let mut output = String::new();
-    let append_repository = |output: &mut String| {
-        for located in repository {
-            append_findings(
-                output,
-                &located.path,
-                std::slice::from_ref(&located.finding),
-            );
+    let mut shown = Vec::new();
+    for (path, source, findings) in workflows(files, fix) {
+        for finding in findings {
+            diagnostic(&mut output, path, Some(source), finding);
+            shown.push(finding);
         }
-    };
+    }
+    for located in repository {
+        let source = std::fs::read_to_string(&located.path).ok();
+        diagnostic(
+            &mut output,
+            &located.path,
+            source.as_deref(),
+            &located.finding,
+        );
+        shown.push(&located.finding);
+    }
     if fix {
-        let fixed: usize = files
-            .iter()
-            .filter_map(|file| file.inspection.fix.as_ref())
-            .map(|outcome| outcome.fixed_count)
-            .sum();
-        let remaining = repository.len()
-            + files
-                .iter()
-                .filter_map(|file| file.inspection.fix.as_ref())
-                .map(|outcome| outcome.remaining.len())
-                .sum::<usize>();
         let changed = files
             .iter()
             .filter(|file| {
@@ -83,61 +87,186 @@ fn text(files: &[FileReport], repository: &[Located], fix: bool) -> String {
             })
             .count();
         output.push_str(&format!(
-            "Fixed {fixed} finding(s) in {changed} workflow file(s).\n"
+            "{SUCCESS}Fixed{SUCCESS:#} {} in {}.\n",
+            count(fixed(files), "finding"),
+            count(changed, "workflow file")
         ));
-        if remaining > 0 {
-            output.push_str(&format!("Remaining {remaining} finding(s).\n"));
-            for file in files {
-                if let Some(outcome) = &file.inspection.fix {
-                    append_findings(&mut output, &file.path, &outcome.remaining);
-                }
-            }
-            append_repository(&mut output);
+        if !shown.is_empty() {
+            output.push_str(&format!(
+                "Remaining: {}{}.\n",
+                count(shown.len(), "finding"),
+                breakdown(&shown)
+            ));
         }
         return output;
     }
-
-    let findings = repository.len()
-        + files
-            .iter()
-            .map(|file| file.inspection.findings.len())
-            .sum::<usize>();
-    for file in files {
-        append_findings(&mut output, &file.path, &file.inspection.findings);
+    let mut checked = count(files.len(), "workflow file");
+    if !errors.is_empty() {
+        let level = style(Severity::Error);
+        checked.push_str(&format!(" ({level}{} failed{level:#})", errors.len()));
     }
-    append_repository(&mut output);
+    if shown.is_empty() {
+        let mark = match errors.is_empty() {
+            true => format!("{SUCCESS}✓{SUCCESS:#} "),
+            false => String::new(),
+        };
+        output.push_str(&format!("{mark}Checked {checked}: no findings.\n"));
+        return output;
+    }
     output.push_str(&format!(
-        "Checked {} workflow file(s); {findings} finding(s).\n",
-        files.len()
+        "Checked {checked}: {}{}.\n",
+        count(shown.len(), "finding"),
+        breakdown(&shown)
     ));
+    let fixable = shown.iter().filter(|finding| finding.fix.is_some()).count();
+    if fixable > 0 {
+        output.push_str(&format!(
+            "{} a fix: rerun with {BOLD}--fix{BOLD:#}.\n",
+            match fixable {
+                1 => "1 finding has".to_owned(),
+                _ => format!("{fixable} findings have"),
+            }
+        ));
+    }
     output
 }
 
-fn append_findings(
-    output: &mut String,
-    path: &std::path::Path,
-    findings: &[crate::rules::Finding],
-) {
-    for finding in findings {
-        output.push_str(&format!(
-            "{} [{}:{}] {}:{}: {}: {}{}\n",
-            finding.rule.id,
-            finding.rule.tag,
-            finding.severity.as_str(),
-            path.display(),
-            finding.line,
-            finding.location,
-            finding.message,
-            finding.rule.equivalents_suffix()
-        ));
+const BOLD: Style = Style::new().bold();
+const GUTTER: Style = AnsiColor::Blue.on_default().bold();
+const SUCCESS: Style = AnsiColor::Green.on_default().bold();
+
+fn style(severity: Severity) -> Style {
+    match severity {
+        Severity::Error => AnsiColor::Red.on_default().bold(),
+        Severity::Warning => AnsiColor::Yellow.on_default().bold(),
+        Severity::Note => AnsiColor::Cyan.on_default().bold(),
     }
 }
 
+/// `3 findings`, `1 workflow file`.
+fn count(n: usize, noun: &str) -> String {
+    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+}
+
+/// ` (1 error, 2 notes)`, colored by severity, skipping severities without findings.
+fn breakdown(findings: &[&Finding]) -> String {
+    let parts: Vec<String> = [Severity::Error, Severity::Warning, Severity::Note]
+        .into_iter()
+        .filter_map(|severity| {
+            let n = findings
+                .iter()
+                .filter(|finding| finding.severity == severity)
+                .count();
+            let level = style(severity);
+            (n > 0).then(|| format!("{level}{}{level:#}", count(n, severity.as_str())))
+        })
+        .collect();
+    format!(" ({})", parts.join(", "))
+}
+
+fn diagnostic(output: &mut String, path: &Path, source: Option<&str>, finding: &Finding) {
+    let level = style(finding.severity);
+    let _ = writeln!(
+        output,
+        "{level}{}[{}]{level:#}{BOLD}: {}{BOLD:#}",
+        finding.severity.as_str(),
+        finding.rule.id,
+        finding.message
+    );
+    let text = source.and_then(|source| source.lines().nth(finding.line.checked_sub(1)?));
+    let number = finding.line.to_string();
+    let pad = " ".repeat(number.len());
+    match (finding.line, text) {
+        (0, _) => {
+            let _ = writeln!(output, "{pad}{GUTTER}-->{GUTTER:#} {}", path.display());
+        }
+        _ => {
+            let _ = writeln!(
+                output,
+                "{pad}{GUTTER}-->{GUTTER:#} {}:{}:{}",
+                path.display(),
+                finding.line,
+                finding.column
+            );
+        }
+    }
+    if let Some(text) = text {
+        // Columns are byte offsets; a span past the line's end (a multi-line node) stops there.
+        let start = finding.column.saturating_sub(1).min(text.len());
+        let end = match finding.end_line == finding.line {
+            true => finding.end_column.saturating_sub(1).min(text.len()),
+            false => text.trim_end().len(),
+        };
+        // ponytail: one space per char, so wide (CJK) characters misalign the carets; use
+        // unicode-width if that shows up in real workflows.
+        let indent: String = text
+            .get(..start)
+            .unwrap_or_default()
+            .chars()
+            .map(|c| if c == '\t' { '\t' } else { ' ' })
+            .collect();
+        let carets = "^".repeat(
+            text.get(start..end)
+                .map_or(0, |span| span.chars().count())
+                .max(1),
+        );
+        let _ = writeln!(output, "{pad} {GUTTER}|{GUTTER:#}");
+        let _ = writeln!(output, "{GUTTER}{number} |{GUTTER:#} {text}");
+        let _ = writeln!(
+            output,
+            "{pad} {GUTTER}|{GUTTER:#} {indent}{level}{carets} {}{level:#}",
+            finding.location
+        );
+        let _ = writeln!(output, "{pad} {GUTTER}|{GUTTER:#}");
+    } else {
+        let _ = writeln!(
+            output,
+            "{pad} {GUTTER}={GUTTER:#} {BOLD}at{BOLD:#}: {}",
+            finding.location
+        );
+    }
+    let _ = writeln!(
+        output,
+        "{pad} {GUTTER}={GUTTER:#} {BOLD}help{BOLD:#}: {}",
+        finding.rule.summary
+    );
+    let equivalents = finding.rule.equivalents_suffix();
+    let mut notes = Vec::new();
+    if finding.rule.tag != finding.rule.id {
+        notes.push(format!("taxonomy tag `{}`", finding.rule.tag));
+    }
+    if let Some(named) = equivalents
+        .strip_prefix(" (")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        notes.push(format!("same as {named}"));
+    }
+    if !notes.is_empty() {
+        let _ = writeln!(
+            output,
+            "{pad} {GUTTER}={GUTTER:#} {BOLD}note{BOLD:#}: {}",
+            notes.join("; ")
+        );
+    }
+    output.push('\n');
+}
+
 pub fn rules() -> String {
-    crate::rules::all()
+    let catalog: Vec<(&Rule, &str)> = crate::rules::all().collect();
+    let width = |field: fn(&Rule) -> &str| {
+        catalog
+            .iter()
+            .map(|(rule, _)| field(rule).len())
+            .max()
+            .unwrap_or_default()
+    };
+    let (id, tag) = (width(|rule| rule.id), width(|rule| rule.tag));
+    catalog
+        .iter()
         .map(|(rule, scope)| {
+            let level = style(rule.severity);
             format!(
-                "{} {} {} {} {scope}\n",
+                "{BOLD}{:id$}{BOLD:#}  {:tag$}  {level}{:7}{level:#}  {:8}  {scope}\n",
                 rule.id,
                 rule.tag,
                 rule.severity.as_str(),
@@ -145,6 +274,22 @@ pub fn rules() -> String {
             )
         })
         .collect()
+}
+
+/// `error: message` on stderr, styled like the report.
+pub fn error(message: impl Display) {
+    let level = style(Severity::Error);
+    anstream::eprintln!("{level}error{level:#}: {message}");
+}
+
+pub fn warning(message: impl Display) {
+    let level = style(Severity::Warning);
+    anstream::eprintln!("{level}warning{level:#}: {message}");
+}
+
+pub fn note(message: impl Display) {
+    let level = style(Severity::Note);
+    anstream::eprintln!("{level}note{level:#}: {message}");
 }
 
 /// The `--list-rules` catalog with the fields SARIF rule descriptors carry.
@@ -170,31 +315,40 @@ pub fn rules_json() -> String {
     format!("{report:#}\n")
 }
 
+/// Each workflow's reported findings with the source their lines point into: what remains in the
+/// fixed source after `--fix`, or everything found in the original.
+fn workflows(files: &[FileReport], fix: bool) -> impl Iterator<Item = (&Path, &str, &[Finding])> {
+    files
+        .iter()
+        .filter_map(move |file| match (&file.inspection.fix, fix) {
+            (Some(outcome), true) => Some((
+                file.path.as_path(),
+                outcome.source.as_str(),
+                &outcome.remaining[..],
+            )),
+            (None, true) => None,
+            (_, false) => Some((
+                file.path.as_path(),
+                file.inspection.source.as_str(),
+                &file.inspection.findings[..],
+            )),
+        })
+}
+
 /// Every reported finding with its path: what remains after `--fix`, or everything found.
 fn reported<'a>(
     files: &'a [FileReport],
     repository: &'a [Located],
     fix: bool,
 ) -> Vec<(&'a Path, &'a Finding)> {
-    let mut found = Vec::new();
-    for file in files {
-        let findings = match (&file.inspection.fix, fix) {
-            (Some(outcome), true) => &outcome.remaining,
-            (None, true) => &[][..],
-            (_, false) => &file.inspection.findings,
-        };
-        found.extend(
-            findings
+    workflows(files, fix)
+        .flat_map(|(path, _, findings)| findings.iter().map(move |finding| (path, finding)))
+        .chain(
+            repository
                 .iter()
-                .map(|finding| (file.path.as_path(), finding)),
-        );
-    }
-    found.extend(
-        repository
-            .iter()
-            .map(|located| (located.path.as_path(), &located.finding)),
-    );
-    found
+                .map(|located| (located.path.as_path(), &located.finding)),
+        )
+        .collect()
 }
 
 fn fixed(files: &[FileReport]) -> usize {
