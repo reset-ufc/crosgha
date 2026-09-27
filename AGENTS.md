@@ -1,13 +1,18 @@
 # crosgha
 
-Rust CLI that detects smells in GitHub Actions workflows and fixes them deterministically, preserving comments and
-formatting. The CLI recursively scans workflows, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
-48 rules cover every tag of the curated taxonomy: 39 per workflow, 4 per repository, and 5 that query the GitHub API.
-Only `persist-credentials` and `removed-feature` (setup-java distributions) have verified fixes so far. Personas, ignore comments, `zizmor.yml` (including per-rule
-options), and `crosgha migrate` follow zizmor so users can switch tools without rewriting configuration; reports name
-the equivalent zizmor or actionlint rule. Output is text, JSON, SARIF, GitHub annotations (the default under `GITHUB_ACTIONS=true`), or brief agent lines. The Action runs in report mode with a sha256-verified release
-binary; PR and auto-merge modes are still pending.
-`crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
+Rust CLI and composite GitHub Action that detect smells in GitHub Actions workflows and fix them deterministically,
+preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
+
+- **Scan:** recursively finds workflows, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
+- **Rules:** 48 cover every tag of the curated taxonomy: 39 per workflow, 4 per repository, and 5 that query the
+  GitHub API.
+- **Fixes:** only `persist-credentials` and `removed-feature` (setup-java distributions) have verified fixes so far.
+- **zizmor compatibility:** personas, ignore comments, `zizmor.yml` (including per-rule options), and
+  `crosgha migrate` follow zizmor so users can switch tools without rewriting configuration. Reports name the
+  equivalent zizmor or actionlint rule.
+- **Output:** text, JSON, SARIF, GitHub annotations (the default under `GITHUB_ACTIONS=true`), or brief agent lines.
+- **Entry points:** the CLI, `crosgha hook install` (git pre-push hook), and the Action in report mode with a
+  sha256-verified release binary. PR and auto-merge modes are still pending (`ROADMAP.md`).
 
 This repo is published on its own. When it is checked out inside the research workspace, `CLAUDE.workspace.md` is a
 local-only symlink to the workspace guide, which covers the tool map, curated smell taxonomy, and reproduction harness.
@@ -73,10 +78,11 @@ It is listed in `.git/info/exclude` and never committed.
 src/main.rs                 CLI entry point
 src/cli.rs                  CLI options, orchestration, exit status
 src/workflow.rs             YAML parsing and workflow validation
+src/engine.rs               Per-file inspection: parse, run rules, prepare the fix
 src/rules/                  Rules by dimension, shared traversal (common.rs), repository and online rules
 src/fix.rs                  Shared fix validation
 src/filesystem.rs           Workflow discovery and verified writes
-src/report.rs               Text output, rule catalog, and planned JSON/SARIF formats
+src/report.rs               Text, JSON, SARIF, annotation, and agent output; rule catalog
 src/policy.rs               Personas, severity, settings, and failure threshold
 src/config.rs               crosgha.yml / zizmor.yml discovery and rule settings
 src/github.rs               Cached read-only GitHub REST client for online rules
@@ -94,7 +100,7 @@ tests/fixtures/             rules/, online/ (+ api.json), repos/, migrate/, and 
 release-please-config.json  release PR + changelog config (manifest: .release-please-manifest.json)
 dist-workspace.toml         cargo-dist target: x86_64-unknown-linux-gnu only
 mise.toml                   Rust version (the only pin; used locally and in CI)
-ROADMAP.md                  plans: GitHub Action packaging (composite, SHA-verified binary, SARIF)
+ROADMAP.md                  shipped vs. next; PR and auto-merge mode design
 ```
 
 ## Hosting
