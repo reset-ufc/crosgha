@@ -1,7 +1,7 @@
-//! `crosgha migrate --from <tool>`: moves a repository from zizmor or actionlint to crosgha, the
-//! way `@oxlint/migrate` moves ESLint users over. It rewrites the tool's Action steps, turns
-//! shell steps that only install and run the tool into crosgha Action steps, and writes a
-//! `crosgha.yml` from the tool's config. The tool's own config file is left in place.
+//! `crosgha migrate --from <tool>`: moves a repository from zizmor or actionlint to crosgha.
+//! It rewrites the tool's Action steps, turns shell steps that only install and run the tool into
+//! crosgha Action steps, and writes a `crosgha.yml` from the tool's config. The tool's own config
+//! file is left in place.
 
 use std::{
     fs,

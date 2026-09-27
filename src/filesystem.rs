@@ -7,8 +7,13 @@ use std::{
 
 pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mut workflows = Vec::new();
-    // A repository root is scanned through its workflows, as zizmor collects `.` inputs.
-    let workflows_dir = path.join(".github/workflows");
+    // A repository root or its `.github` is scanned through its workflows, as zizmor collects
+    // `.` inputs; `.github` also holds YAML that is not a workflow.
+    let workflows_dir = if is_github_dir(path) {
+        path.join("workflows")
+    } else {
+        path.join(".github/workflows")
+    };
     let path = if workflows_dir.is_dir() {
         workflows_dir.as_path()
     } else {
@@ -66,6 +71,14 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+/// A Dependabot config shares the `.yml` extension but is not a workflow.
+pub fn is_dependabot(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .file_name()
+            .is_some_and(|name| name == "dependabot.yml" || name == "dependabot.yaml")
+}
+
 fn is_yaml_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|extension| extension.to_str()),
@@ -119,6 +132,9 @@ pub fn github_dir(scanned: &Path) -> Option<PathBuf> {
     if !scanned.is_dir() {
         return None;
     }
+    if is_github_dir(scanned) {
+        return Some(scanned.to_path_buf());
+    }
     let parent = scanned.parent().filter(|parent| {
         scanned.file_name().is_some_and(|name| name == "workflows")
             && parent.file_name().is_some_and(|name| name == ".github")
@@ -126,4 +142,8 @@ pub fn github_dir(scanned: &Path) -> Option<PathBuf> {
     parent
         .map(Path::to_path_buf)
         .or_else(|| Some(scanned.join(".github")).filter(|github| github.is_dir()))
+}
+
+fn is_github_dir(path: &Path) -> bool {
+    path.is_dir() && path.file_name().is_some_and(|name| name == ".github")
 }

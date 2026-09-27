@@ -51,8 +51,10 @@ crosgha --sarif-file results.sarif .      # text on stdout, SARIF on disk
 crosgha --list-rules                      # add -f json for summaries and equivalents
 ```
 
-Each `PATH` may be a workflow file, a directory (scanned recursively), or a repository root, which is scanned through
-its `.github/workflows` as zizmor does with `.`. Symlinked files are scanned but never rewritten.
+Each `PATH` may be a workflow file, a directory (scanned recursively), a repository root, or its `.github`; the last
+two are scanned through `.github/workflows` as zizmor does with `.`. Without a `PATH`, crosgha scans
+`.github/workflows`. A `dependabot.yml` path gets only the Dependabot cooldown check. Symlinked files are scanned but
+never rewritten.
 
 ## GitHub Action
 
