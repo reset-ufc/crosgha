@@ -1,0 +1,6 @@
+name: Legacy
+description: Local action outside .github on Node 12.
+runs:
+  using: node12
+  main: index.js
+  post: cleanup.js

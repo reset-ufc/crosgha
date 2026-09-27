@@ -349,6 +349,40 @@ fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
 }
 
 #[test]
+fn repository_rules_flag_retired_node_runtimes() {
+    let output = bin()
+        .args(["--offline", "--fail-on", "none"])
+        .arg(fixture("repos/runtime/.github/workflows"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let mut retired: Vec<String> = stdout
+        .lines()
+        .filter(|line| line.starts_with("retired-runtime ["))
+        .map(|line| {
+            let location = line.split("repos/runtime/").nth(1).unwrap();
+            location.split(": ").next().unwrap().to_owned()
+        })
+        .collect();
+    retired.sort();
+    // node24 and composite actions pass; a reused action is reported once, a missing one not at all.
+    assert_eq!(
+        retired,
+        [
+            ".github/actions/old/action.yml:4",
+            "action.yml:4",
+            "tools/legacy/action.yaml:4",
+        ],
+        "{stdout}"
+    );
+}
+
+#[test]
 fn zizmor_config_is_discovered_and_honored() {
     let workflows = fixture("repos/configured/.github/workflows");
     let scan = |extra: &[&str]| {
