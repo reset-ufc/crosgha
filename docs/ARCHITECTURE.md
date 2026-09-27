@@ -10,7 +10,7 @@ contain a second detector or fixer.
 | Rule modules | 46 rules covering every taxonomy tag: 38 per workflow, 3 per repository, 5 online. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
 | Fix validation | Runnable for add and replace proposals; only `persist-credentials` proposes a fix. |
-| Reports | Text, versioned JSON, SARIF 2.1.0, and GitHub annotations from the same findings; `--sarif-file` adds SARIF to any format. |
+| Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
 | Composite Action | Report mode works: zizmor-action's inputs, a sha256-verified release binary, SARIF upload, job summary, then `fail-on`. |
 | PR and auto-merge | Mode contract and guards exist; repository operations are pending. |
 
@@ -40,7 +40,7 @@ The stages have these interfaces:
 | `github` | API path | Cached read-only GitHub REST responses for online rules. |
 | `engine` | Source and scan/fix mode | Findings and a prepared fix result. This is the main in-memory analysis interface. |
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. |
-| `report` | Per-file and repository findings | Text, JSON, SARIF, and annotation renderings of the same findings, plus the rule catalog. |
+| `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. |
 | `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
 | `migrate` | Workflows and the tool to replace | Rewrites zizmor or actionlint Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
 | `cli` | Command-line options | Preflight, output, exit policy, and the decision to persist verified fixes. |
@@ -92,7 +92,7 @@ and verify its intended node changes remains detection-only.
 
 ## Reports and exit policy
 
-Text (`plain` in zizmor's terms), JSON, and SARIF render the same findings; no format runs its
+Text (`plain` in zizmor's terms), JSON, SARIF, GitHub annotations, and agent lines render the same findings; no format runs its
 own detection. JSON is versioned (`version: 1`) with a `summary` and one object per finding,
 including its span and equivalents. SARIF follows GitHub's
 [SARIF support](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support):
