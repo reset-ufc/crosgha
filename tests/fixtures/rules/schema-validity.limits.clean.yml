@@ -1,0 +1,47 @@
+name: Limits
+on:
+  workflow_dispatch:
+    inputs:
+      input1: { type: string }
+      input2: { type: string }
+      input3: { type: string }
+      input4: { type: string }
+      input5: { type: string }
+      input6: { type: string }
+      input7: { type: string }
+      input8: { type: string }
+      input9: { type: string }
+      input10: { type: string }
+      input11: { type: string }
+      input12: { type: string }
+      input13: { type: string }
+      input14: { type: string }
+      input15: { type: string }
+      input16: { type: string }
+      input17: { type: string }
+      input18: { type: string }
+      input19: { type: string }
+      input20: { type: string }
+      input21: { type: string }
+      input22: { type: string }
+      input23: { type: string }
+      input24: { type: string }
+      input25: { type: string }
+permissions: {}
+concurrency:
+  group: deploy
+  queue: max
+  cancel-in-progress: false
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    cache-mode: read
+    concurrency: { group: call, queue: max }
+  gated:
+    env:
+      HAS_TOKEN: ${{ secrets.DEPLOY_KEY != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - if: env.HAS_TOKEN == 'true'
+        run: echo token

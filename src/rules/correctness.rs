@@ -124,6 +124,23 @@ const PERMISSION_SCOPES: &[&str] = &[
     "vulnerability-alerts",
 ];
 
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/reusable-workflows
+const CALLER_KEYS: &[&str] = &[
+    "name",
+    "uses",
+    "with",
+    "secrets",
+    "strategy",
+    "needs",
+    "if",
+    "concurrency",
+    "permissions",
+    "cache-mode",
+];
+
+/// "The maximum number of top-level properties for `inputs` is 25."
+const MAX_DISPATCH_INPUTS: usize = 25;
+
 /// A step does exactly one of these.
 const STEP_ACTIONS: &[&str] = &["uses", "run", "parallel", "wait", "wait-all", "cancel"];
 
@@ -157,6 +174,39 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         for (route, key) in unknown_keys(job.value, JOB_KEYS, &job.route) {
             problems.push((route, job.location(), format!("unknown job key `{key}`")));
         }
+        if job.get("uses").is_some() {
+            for (route, key) in unknown_keys(job.value, CALLER_KEYS, &job.route)
+                .into_iter()
+                .filter(|(_, key)| JOB_KEYS.contains(key))
+            {
+                problems.push((
+                    route,
+                    job.location(),
+                    format!("a job that calls a reusable workflow cannot set `{key}`"),
+                ));
+            }
+        }
+        // The context availability table lists no `secrets` for `jobs.<id>.if` or `steps.if`:
+        // https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+        let conditions = std::iter::once((job.route.clone(), job.location(), job.value)).chain(
+            common::steps(&job)
+                .into_iter()
+                .map(|step| (step.route.clone(), step.location.clone(), step.value)),
+        );
+        for (route, location, value) in conditions {
+            if value
+                .get("if")
+                .and_then(Value::as_str)
+                .is_some_and(references_secrets)
+            {
+                problems.push((
+                    route.with_key("if"),
+                    location,
+                    "`if` cannot read `secrets`; set an `env` value from the secret and test that"
+                        .to_owned(),
+                ));
+            }
+        }
         if job.get("runs-on").is_none() && job.get("uses").is_none() {
             problems.push((
                 job.route.clone(),
@@ -186,6 +236,43 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             }
         }
     }
+    for trigger in common::triggers(workflow) {
+        let inputs = trigger
+            .config
+            .and_then(|config| config.get("inputs"))
+            .and_then(Value::as_mapping);
+        if trigger.name == "workflow_dispatch"
+            && let Some(inputs) = inputs
+            && inputs.len() > MAX_DISPATCH_INPUTS
+        {
+            problems.push((
+                trigger.route.with_key("inputs"),
+                "workflow".to_owned(),
+                format!(
+                    "`workflow_dispatch` allows at most {MAX_DISPATCH_INPUTS} inputs, found {}",
+                    inputs.len()
+                ),
+            ));
+        }
+    }
+    for (route, location, scope) in &scopes {
+        // "The combination of `queue: max` and `cancel-in-progress: true` is not allowed."
+        let Some(concurrency) = scope.get("concurrency") else {
+            continue;
+        };
+        if concurrency.get("queue").and_then(Value::as_str) == Some("max")
+            && concurrency
+                .get("cancel-in-progress")
+                .and_then(Value::as_bool)
+                == Some(true)
+        {
+            problems.push((
+                route.with_key("concurrency"),
+                location.clone(),
+                "`queue: max` cannot be combined with `cancel-in-progress: true`".to_owned(),
+            ));
+        }
+    }
     for (route, location, scope) in scopes {
         let Some(permissions) = scope.get("permissions") else {
             continue;
@@ -205,6 +292,21 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             common::finding(workflow, &SCHEMA, route, location, message)
         })
         .collect()
+}
+
+/// Whether an `if` expression reads the `secrets` context outside a string literal.
+fn references_secrets(condition: &str) -> bool {
+    let code: String = condition
+        .split('\'')
+        .step_by(2)
+        .collect::<Vec<_>>()
+        .join(" ");
+    code.match_indices("secrets").any(|(at, _)| {
+        let before = code[..at].bytes().next_back();
+        let after = code[at + "secrets".len()..].bytes().next();
+        !before.is_some_and(|byte| byte.is_ascii_alphanumeric() || b"_-.".contains(&byte))
+            && matches!(after, Some(b'.' | b'['))
+    })
 }
 
 const ENV_FILES: &[&str] = &[
