@@ -20,7 +20,8 @@ fn temp_dir(label: &str) -> PathBuf {
     dir
 }
 
-/// A release directory for `version` with the archive and its `.sha256`, optionally tampered.
+/// A release directory for `version` with the archive and the release-wide `sha256.sum`, optionally
+/// tampered.
 fn release(version: &str, tamper: bool) -> PathBuf {
     let root = temp_dir("release");
     let staging = root.join("crosgha-x86_64-unknown-linux-gnu");
@@ -49,9 +50,11 @@ fn release(version: &str, tamper: bool) -> PathBuf {
         .unwrap()
         .to_owned();
     let hash = if tamper { "0".repeat(64) } else { hash };
+    // Other targets' lines come first, so the entry point must pick its own asset's line.
+    let other = "1".repeat(64);
     fs::write(
-        tag.join(format!("{ASSET}.sha256")),
-        format!("{hash} *{ASSET}\n"),
+        tag.join("sha256.sum"),
+        format!("{other}  crosgha-aarch64-apple-darwin.tar.xz\n{hash}  {ASSET}\n"),
     )
     .unwrap();
     root

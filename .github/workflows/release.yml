@@ -301,10 +301,12 @@ jobs:
           pattern: artifacts-*
           path: artifacts
           merge-multiple: true
+      # The manifests are dist's internal state; sha256.sum is the release's only checksum asset
+      # (dist-workspace.toml sets checksum = "false").
       - name: Cleanup
         run: |
-          # Remove the granular manifests
-          rm -f artifacts/*-dist-manifest.json
+          rm -f artifacts/*dist-manifest.json
+          cd artifacts && sha256sum -- * > sha256.sum
       - name: Create GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"

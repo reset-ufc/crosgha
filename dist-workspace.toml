@@ -19,3 +19,7 @@ create-release = false
 # installed from its release asset by sha256, minimal per-job permissions,
 # timeouts, concurrency, workflow_dispatch only).
 allow-dirty = ["ci"]
+# One archive plus a single sha256.sum (written by release.yml):
+# GitHub already attaches the source archives and shows each asset's digest.
+source-tarball = false
+checksum = "false"

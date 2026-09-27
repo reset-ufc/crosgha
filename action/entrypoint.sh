@@ -88,9 +88,11 @@ download() {
         || fail "cannot download $1 for crosgha v$version"
 }
 download "$asset"
-download "$asset.sha256"
-expected="$(awk '{print $1}' "$install_dir/$asset.sha256")"
-(cd "$install_dir" && printf '%s  %s\n' "$expected" "$asset" | sha256sum --check --status -) \
+download sha256.sum
+# Releases up to v0.9.0 write `*name` (binary mode). A missing line leaves sha256sum with no
+# input, which fails like a mismatch.
+(cd "$install_dir" && awk -v asset="$asset" '$2 == asset || $2 == "*" asset' sha256.sum \
+    | sha256sum --check --status -) \
     || fail "checksum mismatch for $asset; refusing to run it"
 tar -xJf "$install_dir/$asset" -C "$install_dir"
 crosgha="$install_dir/crosgha-x86_64-unknown-linux-gnu/crosgha"
