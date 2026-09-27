@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/meiazero/crosgha/compare/v0.9.0...v0.10.0) (2026-09-27)
+
+
+### Added
+
+* **install:** add a curl | sh installer for the release binary ([34a3197](https://github.com/meiazero/crosgha/commit/34a3197beae98ed8c8aad37f3afece1d052680d5))
+* **install:** add a curl | sh installer for the release binary ([4f90273](https://github.com/meiazero/crosgha/commit/4f90273b8fb7cd6905c59b0a04faf87899448133))
+
 ## [0.9.0](https://github.com/meiazero/crosgha/compare/v0.8.1...v0.9.0) (2026-09-27)
 
 
