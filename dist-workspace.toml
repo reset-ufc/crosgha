@@ -15,6 +15,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 # creates a draft release, then dispatches this release CI.
 dispatch-releases = true
 create-release = false
-# release.yml is hand-hardened after `dist generate` (SHA-pinned actions,
-# minimal per-job permissions, timeouts, concurrency).
+# release.yml is hand-hardened after `dist generate` (SHA-pinned actions, dist
+# installed from its release asset by sha256, minimal per-job permissions,
+# timeouts, concurrency, workflow_dispatch only).
 allow-dirty = ["ci"]
