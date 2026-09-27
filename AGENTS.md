@@ -2,8 +2,8 @@
 
 Rust CLI that detects smells in GitHub Actions workflows and fixes them deterministically, preserving comments and
 formatting. The CLI recursively scans workflows, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
-47 rules cover every tag of the curated taxonomy: 38 per workflow, 4 per repository, and 5 that query the GitHub API.
-Only `persist-credentials` has a verified fix so far. Personas, ignore comments, `zizmor.yml` (including per-rule
+48 rules cover every tag of the curated taxonomy: 39 per workflow, 4 per repository, and 5 that query the GitHub API.
+Only `persist-credentials` and `removed-feature` (setup-java distributions) have verified fixes so far. Personas, ignore comments, `zizmor.yml` (including per-rule
 options), and `crosgha migrate` follow zizmor so users can switch tools without rewriting configuration; reports name
 the equivalent zizmor or actionlint rule. Output is text, JSON, SARIF, GitHub annotations (the default under `GITHUB_ACTIONS=true`), or brief agent lines. The Action runs in report mode with a sha256-verified release
 binary; PR and auto-merge modes are still pending.
@@ -81,6 +81,7 @@ src/policy.rs               Personas, severity, settings, and failure threshold
 src/config.rs               crosgha.yml / zizmor.yml discovery and rule settings
 src/github.rs               Cached read-only GitHub REST client for online rules
 src/migrate.rs              `migrate --from zizmor|actionlint` step rewrites
+src/hook.rs                 `hook install|uninstall`: the git pre-push hook
 action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs
 docs/ARCHITECTURE.md        Module interfaces and Action flow

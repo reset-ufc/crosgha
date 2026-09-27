@@ -7,9 +7,9 @@ contain a second detector or fixer.
 | Area | Current state |
 |---|---|
 | CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
-| Rule modules | 47 rules covering every taxonomy tag: 38 per workflow, 4 per repository, 5 online. |
+| Rule modules | 48 rules covering every taxonomy tag: 39 per workflow, 4 per repository, 5 online. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
-| Fix validation | Runnable for add and replace proposals; only `persist-credentials` proposes a fix. |
+| Fix validation | Runnable for add and replace proposals; `persist-credentials` and `removed-feature` propose fixes. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
 | Composite Action | Report mode works: zizmor-action's inputs, a sha256-verified release binary, SARIF upload, job summary, then `fail-on`. |
 | PR and auto-merge | Mode contract and guards exist; repository operations are pending. |
@@ -43,6 +43,7 @@ The stages have these interfaces:
 | `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. |
 | `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
 | `migrate` | Workflows and the tool to replace | Rewrites zizmor or actionlint Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
+| `hook` | Current git repository | Writes or removes the `pre-push` hook that runs the CLI; never touches a hook it did not write. |
 | `cli` | Command-line options | Preflight, output, exit policy, and the decision to persist verified fixes. |
 
 `src/main.rs` only enters the CLI. The library modules hold the behavior so

@@ -1,0 +1,53 @@
+name: Limits
+on:
+  workflow_dispatch:
+    inputs: # expect: schema-validity
+      input1: { type: string }
+      input2: { type: string }
+      input3: { type: string }
+      input4: { type: string }
+      input5: { type: string }
+      input6: { type: string }
+      input7: { type: string }
+      input8: { type: string }
+      input9: { type: string }
+      input10: { type: string }
+      input11: { type: string }
+      input12: { type: string }
+      input13: { type: string }
+      input14: { type: string }
+      input15: { type: string }
+      input16: { type: string }
+      input17: { type: string }
+      input18: { type: string }
+      input19: { type: string }
+      input20: { type: string }
+      input21: { type: string }
+      input22: { type: string }
+      input23: { type: string }
+      input24: { type: string }
+      input25: { type: string }
+      input26: { type: string }
+permissions: {}
+concurrency: # expect: schema-validity
+  group: deploy
+  queue: max
+  cancel-in-progress: true
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    runs-on: ubuntu-24.04 # expect: schema-validity
+    timeout-minutes: 10 # expect: schema-validity
+    cache-mode: read
+    concurrency: { group: call, queue: max }
+  gated:
+    if: secrets.DEPLOY_KEY != '' # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - if: ${{ secrets['TOKEN'] }} # expect: schema-validity
+        run: echo token
+      - if: env.HAS_TOKEN == 'true' && contains('secrets.X', 'x')
+        run: echo env
+      - if: mysecrets.value
+        run: echo lookalike

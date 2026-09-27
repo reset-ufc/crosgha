@@ -1,7 +1,8 @@
 use yaml_serde::{Mapping, Value};
+use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{Finding, Rule, common};
+use super::{ChangeKind, Finding, ProposedFix, Rule, common, online, runner};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -111,6 +112,18 @@ pub const READABILITY: Rule = Rule {
 // https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
 // GitHub removed the `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` opt-out along with Node 20:
 // https://github.blog/changelog/2026-09-23-node-20-is-no-longer-available-in-github-actions/
+// Hosted runner images, action versions, and action inputs that GitHub or the action removed, so the
+// job no longer runs. Sources are next to each list below.
+pub const REMOVED: Rule = Rule {
+    id: "removed-feature",
+    summary: "Retired runner images, shut-down action versions, and removed action inputs must not be used.",
+    tag: "deprecated-command/feature",
+    severity: Severity::Error,
+    persona: Persona::Regular,
+    equivalents: &[],
+    configurable: false,
+};
+
 pub const DEPRECATED: Rule = Rule {
     id: "deprecated-command",
     summary: "Deprecated workflow commands and removed opt-out variables must not be used.",
@@ -448,6 +461,123 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     location.clone(),
                     *message,
                 )?);
+            }
+        }
+    }
+    Ok(findings)
+}
+
+/// Hosted images and the date GitHub fully retired them:
+/// https://github.com/actions/runner-images/issues/6002 (ubuntu-18.04)
+/// https://github.blog/changelog/2025-01-15-github-actions-ubuntu-20-runner-image-brownout-dates-and-other-breaking-changes/
+/// https://github.blog/changelog/2025-04-15-upcoming-breaking-changes-and-releases-for-github-actions/ (windows-2019)
+/// https://github.blog/changelog/2025-07-11-upcoming-changes-to-macos-hosted-runners-macos-latest-migration-and-xcode-support-policy-updates/
+// ponytail: a fixed list with no runtime lookup; add each image when GitHub retires it.
+const RETIRED_RUNNERS: &[(&str, &str)] = &[
+    ("ubuntu-18.04", "2023-04-03"),
+    ("ubuntu-20.04", "2025-04-15"),
+    ("windows-2019", "2025-06-30"),
+    ("macos-13", "2025-12-04"),
+];
+
+/// Why an action version no longer runs, from its `major.minor` numbers.
+fn shut_down(action: &str, version: &[u64]) -> Option<&'static str> {
+    match (action, version) {
+        // https://github.blog/changelog/2024-04-16-deprecation-notice-v3-of-the-artifact-actions/
+        ("actions/upload-artifact" | "actions/download-artifact", [major, ..]) if *major <= 3 => {
+            Some("artifact actions v3 and older stopped working on 2025-01-30; use v4 or later")
+        }
+        // https://github.com/actions/cache/blob/main/README.md: "upgrade to the recommended
+        // versions `v4.2.0` or `v3.4.0`", else "workflow runs ... will fail".
+        ("actions/cache", [major, ..]) if *major <= 2 => Some(
+            "actions/cache below v3.4.0 fails since the cache service moved; use v4.2.0 or later",
+        ),
+        ("actions/cache", [3, minor, ..]) if *minor < 4 => Some(
+            "actions/cache below v3.4.0 fails since the cache service moved; use v4.2.0 or later",
+        ),
+        ("actions/cache", [4, minor, ..]) if *minor < 2 => Some(
+            "actions/cache below v4.2.0 fails since the cache service moved; use v4.2.0 or later",
+        ),
+        _ => None,
+    }
+}
+
+/// setup-java v6 removed the AdoptOpenJDK distributions: "Use `temurin` instead of `adopt` or
+/// `adopt-hotspot`, and `semeru` instead of `adopt-openj9`."
+/// https://github.com/actions/setup-java/blob/main/README.md
+const ADOPT_SUCCESSORS: &[(&str, &str)] = &[
+    ("adopt", "temurin"),
+    ("adopt-hotspot", "temurin"),
+    ("adopt-openj9", "semeru"),
+];
+
+pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let mut findings = Vec::new();
+    for job in common::jobs(workflow) {
+        let retired = job.get("runs-on").and_then(|runs_on| {
+            runner::labels(runs_on)
+                .into_iter()
+                .find_map(|label| RETIRED_RUNNERS.iter().find(|(name, _)| *name == label))
+        });
+        if let Some((label, date)) = retired {
+            findings.push(common::finding(
+                workflow,
+                &REMOVED,
+                job.route.with_key("runs-on"),
+                job.location(),
+                format!("the `{label}` hosted runner image was retired on {date}"),
+            )?);
+        }
+        for step in common::steps(&job) {
+            let Some(action) = step.uses().and_then(common::parse_uses) else {
+                continue;
+            };
+            let Some(version) = online::ref_version(workflow, &step.key("uses"), action.git_ref)
+            else {
+                continue;
+            };
+            let version = online::numbers(&version);
+            let name = format!("{}/{}", action.owner, action.repo);
+            if let Some(reason) = shut_down(&name, &version) {
+                findings.push(common::finding(
+                    workflow,
+                    &REMOVED,
+                    step.key("uses"),
+                    step.location.clone(),
+                    reason,
+                )?);
+            }
+            let successor = step
+                .value
+                .get("with")
+                .and_then(|with| with.get("distribution"))
+                .and_then(Value::as_str)
+                .and_then(|distribution| {
+                    ADOPT_SUCCESSORS
+                        .iter()
+                        .find(|(adopt, _)| *adopt == distribution)
+                });
+            if name == "actions/setup-java"
+                && version.first().is_some_and(|major| *major >= 6)
+                && let Some((adopt, successor)) = successor
+            {
+                let input = step.key("with").with_key("distribution");
+                let mut finding = common::finding(
+                    workflow,
+                    &REMOVED,
+                    step.key("uses"),
+                    step.location.clone(),
+                    format!("setup-java v6 removed the `{adopt}` distribution; use `{successor}`"),
+                )?;
+                finding.fix = Some(ProposedFix {
+                    patch: Patch {
+                        route: input.clone(),
+                        operation: Op::Replace(Value::String((*successor).to_owned())),
+                    },
+                    changed_route: input,
+                    change: ChangeKind::Replace,
+                });
+                findings.push(finding);
             }
         }
     }

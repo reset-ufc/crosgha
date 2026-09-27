@@ -1,0 +1,45 @@
+name: Retired
+on: [push]
+permissions: {}
+jobs:
+  linux:
+    runs-on: ubuntu-20.04 # expect: removed-feature
+    timeout-minutes: 10
+    steps:
+      - uses: actions/upload-artifact@v3 # expect: removed-feature
+        with: { name: dist, path: dist }
+      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2 # expect: removed-feature
+      - uses: actions/cache@v2 # expect: removed-feature
+        with: { path: ~/.cargo, key: cargo }
+      - uses: actions/cache@v3.3.1 # expect: removed-feature
+        with: { path: ~/.npm, key: npm }
+      - uses: actions/cache@v4.1.2 # expect: removed-feature
+        with: { path: ~/.m2, key: m2 }
+      - uses: actions/cache@v3
+        with: { path: ~/.gradle, key: gradle }
+      - uses: actions/cache@v4.2.0
+        with: { path: ~/.ivy2, key: ivy }
+  matrix:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2019]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - run: echo matrix
+  windows:
+    runs-on: [windows-2019] # expect: removed-feature
+    timeout-minutes: 10
+    steps:
+      - run: echo windows
+  mac:
+    runs-on: { group: builders, labels: [macos-13] } # expect: removed-feature
+    timeout-minutes: 10
+    steps:
+      - run: echo mac
+  old:
+    runs-on: ubuntu-18.04 # expect: removed-feature
+    timeout-minutes: 10
+    steps:
+      - run: echo old

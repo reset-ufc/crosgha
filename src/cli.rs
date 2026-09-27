@@ -2,7 +2,7 @@ use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
-use crate::{config, engine, filesystem, github::GitHub, migrate, policy, report, rules};
+use crate::{config, engine, filesystem, github::GitHub, hook, migrate, policy, report, rules};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -107,6 +107,22 @@ enum Commands {
         #[arg(value_name = "PATH", default_value = ".github/workflows")]
         path: PathBuf,
     },
+    /// Install or remove a git pre-push hook that scans the workflows before every push.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum HookAction {
+    /// Write the pre-push hook; arguments after `--` are passed to every scan.
+    Install {
+        #[arg(last = true, value_name = "SCAN_ARGS")]
+        args: Vec<String>,
+    },
+    /// Remove the pre-push hook if crosgha installed it.
+    Uninstall,
 }
 
 pub fn run() -> ExitCode {
@@ -119,6 +135,9 @@ pub fn run() -> ExitCode {
     }) = &args.command
     {
         return run_migrate(*from, action.clone().zip(action_version.clone()), path);
+    }
+    if let Some(Commands::Hook { action }) = &args.command {
+        return run_hook(action);
     }
     if args.list_rules {
         match args.format {
@@ -300,6 +319,34 @@ fn api_url(host: &str) -> String {
         "https://api.github.com".to_owned()
     } else {
         format!("https://{host}/api/v3")
+    }
+}
+
+fn run_hook(action: &HookAction) -> ExitCode {
+    let result = match action {
+        HookAction::Install { args } => {
+            // A typo stored in the hook would block every later push.
+            match Args::try_parse_from(
+                std::iter::once("crosgha").chain(args.iter().map(String::as_str)),
+            ) {
+                Err(error) => Err(error.to_string()),
+                Ok(_) => hook::install(args).map(|hook| format!("Installed {}.", hook.display())),
+            }
+        }
+        HookAction::Uninstall => hook::uninstall().map(|removed| match removed {
+            Some(hook) => format!("Removed {}.", hook.display()),
+            None => "No pre-push hook to remove.".to_owned(),
+        }),
+    };
+    match result {
+        Ok(message) => {
+            println!("{message}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::from(2)
+        }
     }
 }
 
