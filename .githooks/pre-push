@@ -15,6 +15,6 @@ echo "pre-push: cargo test"
 cargo test
 
 echo "pre-push: crosgha dogfood"
-cargo run -- --require-immutable-references --require-job-timeout --require-explicit-token-permissions --require-explicit-workflow-secrets .github/workflows
+cargo run -- --offline --persona pedantic .github/workflows
 
 echo "pre-push: all checks passed"
