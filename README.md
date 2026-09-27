@@ -3,7 +3,7 @@
 aCtions Repair Of miSconfigured GitHub Actions: a Rust CLI and GitHub Action that detects smells in GitHub Actions
 workflows and fixes them deterministically, preserving comments and formatting.
 
-- 47 rules cover every tag of a curated smell taxonomy: 39 check workflow files, 3 check the repository, and 5 query
+- 48 rules cover every tag of a curated smell taxonomy: 39 check workflow files, 4 check the repository, and 5 query
   the GitHub API.
 - It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
   actionlint rule in every finding, so switching tools does not mean rewriting configuration.
@@ -204,6 +204,7 @@ token, pass the reference yourself with `--action owner/repo@<sha> --action-vers
 | `archived-action` | `untrusted-3rd-party-action` | warning | regular | online | zizmor: `archived-uses` |  |
 | `missing-release-cooldown` | `missing-release-cooldown` | note | pedantic | repository | zizmor: `dependabot-cooldown` | yes |
 | `missing-security-tooling` | `missing-security-tooling` | note | auditor | repository |  |  |
+| `retired-runtime` | `deprecated-command/feature` | warning | regular | repository |  |  |
 | `repo-org-settings` | `repo-org-settings` | warning | pedantic | repository |  |  |
 
 Rule concepts cite their primary sources in `src/rules/`. The module layout is in

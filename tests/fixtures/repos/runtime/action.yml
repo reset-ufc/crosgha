@@ -1,0 +1,5 @@
+name: Published action
+description: A JavaScript action this repository publishes.
+runs:
+  using: 'node20'
+  main: dist/index.js

@@ -216,6 +216,7 @@ const ONLINE: &[(&Rule, OnlineDetect)] = &[
 const REPOSITORY: &[(&Rule, RepositoryDetect)] = &[
     (&repository::COOLDOWN, repository::cooldown),
     (&repository::TOOLING, repository::tooling),
+    (&repository::RUNTIME, repository::runtime),
 ];
 
 /// Every rule with the scope it reads: one workflow, the repository, or the GitHub API.

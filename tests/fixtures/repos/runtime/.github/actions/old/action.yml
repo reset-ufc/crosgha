@@ -1,0 +1,5 @@
+name: Old
+description: Local action still on Node 16.
+runs:
+  using: node16
+  main: index.js

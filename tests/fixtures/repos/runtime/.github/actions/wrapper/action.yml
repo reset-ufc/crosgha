@@ -1,0 +1,7 @@
+name: Wrapper
+description: Composite action.
+runs:
+  using: composite
+  steps:
+    - run: echo wrap
+      shell: bash
