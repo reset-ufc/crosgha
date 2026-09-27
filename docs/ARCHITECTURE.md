@@ -6,23 +6,25 @@ contain a second detector or fixer.
 
 | Area | Current state |
 |---|---|
-| CLI pipeline | Structured and runnable, including `fail-on` exit policy. |
-| Rule modules | Five implemented rules; shared finding and fix proposal types. |
-| Fix validation | Runnable for add and replace proposals. |
+| CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
+| Rule modules | 45 rules covering every taxonomy tag: 37 per workflow, 3 per repository, 5 online. |
+| Config and ignores | `crosgha.yml` or `zizmor.yml`, and inline `crosgha:` or `zizmor:` ignore comments. |
+| Fix validation | Runnable for add and replace proposals; only `persist-credentials` proposes a fix. |
 | Reports | Text works; JSON and SARIF fail explicitly. |
-| Composite Action | Inputs, outputs, and input guard exist; execution stops before installation. |
+| Composite Action | Accepts zizmor-action's inputs plus fix inputs, validates them, and stops before installation. |
 | PR and auto-merge | Mode contract and guards exist; repository operations are pending. |
 
 ## Execution path
 
 ```text
 CLI / future Action
-    -> discover workflow files
+    -> discover workflow files and the config
     -> parse and validate each workflow
-    -> run registered rules
-    -> collect findings and optional fix proposals
+    -> run the rules enabled by persona and config (online rules only with a token)
+    -> drop ignored findings, remap severities, apply --min-severity
     -> validate every proposed patch
     -> write verified files when --fix is requested
+    -> run repository rules for the .github directory next to the scanned workflows
     -> render the report and choose an exit status
 ```
 
@@ -30,13 +32,17 @@ The stages have these interfaces:
 
 | Module | Input | Output and responsibility |
 |---|---|---|
-| `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, file contents, and per-file verified writes. |
-| `workflow` | YAML source | A `yamlpath::Document`, semantic YAML value, and the validated `on`/`jobs` structure. Parsing errors stop that file. |
-| `rules` | Parsed workflow | Findings with rule ID, curated tag, location, message, and an optional fix proposal. Rules do not write files. |
+| `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, file contents, the owning `.github` directory, and per-file verified writes. |
+| `workflow` | YAML source | A `yamlpath::Document` and semantic YAML value; `parse` also validates the `on`/`jobs` structure. Any parse error stops the run with status 2 before any write. |
+| `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, and severity remaps, using zizmor's schema and discovery order. |
+| `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
+| `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, expressions, untrusted contexts, and `uses` refs. |
+| `github` | API path | Cached read-only GitHub REST responses for online rules. |
 | `engine` | Source and scan/fix mode | Findings and a prepared fix result. This is the main in-memory analysis interface. |
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. |
-| `report` | Per-file inspection results | Text now; JSON and SARIF share this result model when implemented. |
-| `policy` | Finding severity and `fail-on` setting | Whether reported findings make the command fail. |
+| `report` | Per-file and repository findings | Text now; JSON and SARIF share this result model when implemented. |
+| `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
+| `migrate` | Workflows and the tool to replace | Rewrites zizmor or actionlint Action steps to the crosgha Action; every file is rewritten in memory and re-parsed before any is written. |
 | `cli` | Command-line options | Preflight, output, exit policy, and the decision to persist verified fixes. |
 
 `src/main.rs` only enters the CLI. The library modules hold the behavior so
@@ -44,29 +50,32 @@ additional entry points can reuse the same analysis path.
 
 ## Rule contract
 
-Each implemented rule belongs in `src/rules/` and uses a stable rule ID and a
-tag from the curated smell taxonomy. A detector reads a parsed workflow and
-returns findings. A finding can have no fix when the change is not safe to
-choose automatically. A fix proposal supplies a `yamlpatch` operation, the
-route it may change, and whether it adds or replaces that node. The shared
-fix module applies and validates proposals. Rule concepts cite primary
-sources in the rule code. `persist-credentials` has a verified fix.
-`mutable-action-reference`, `missing-job-timeout`, `implicit-token-permissions`,
-and `inherited-workflow-secrets` are opt-in, detection-only policy checks. Other
-taxonomy tags are not registered until their detection semantics are specified
-and tested.
+Each rule lives in `src/rules/` and declares:
+- `id`: stable, and the name used in ignores and the config.
+- `tag`: one from the curated smell taxonomy (`TAXONOMY` in the workspace's `build_matrix.py`).
+- `severity`: a SARIF level.
+- `persona`: the lowest persona that runs it.
+- `aliases`: the IDs zizmor or actionlint use for the same concept.
 
-Rules are invoked from `rules::detect_all`. This explicit dispatch keeps one
-analysis path without a trait or registry framework. The CLI passes the same
-rule policy through initial detection, fix validation, and final detection.
-Add a rule there when its before/after workflow fixtures and binary-level test
-exist. Detection-only rules leave source unchanged under `--fix` and remain
-visible in the report.
+Aliases let existing ignore comments and `zizmor.yml` entries keep working after a switch. The
+concept and primary source are cited above each rule. Rules come in three shapes, dispatched from
+explicit tables in `rules/mod.rs`:
+
+| Shape | Signature | Registered in |
+|---|---|---|
+| Workflow | `fn(&Workflow) -> Vec<Finding>` | `REGISTRY` |
+| Online | `fn(&Workflow, &GitHub) -> Vec<Finding>` | `ONLINE`; runs only with a token |
+| Repository | `fn(&Path) -> Vec<Located>` for the `.github` directory | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
+
+A finding can have no fix when the change is not safe to choose automatically. A fix proposal
+supplies a `yamlpatch` operation, the route it may change, and whether it adds or replaces that
+node. The shared fix module applies and validates proposals. Detection-only rules leave source
+unchanged under `--fix` and remain visible in the report.
 
 ## Fix safety
 
 1. Parse the patched YAML and validate its workflow structure.
-2. Run every implemented rule again. The target must disappear; no new
+2. Run every enabled rule again. The target must disappear; no new
    finding may appear.
 3. Reconstruct the original source by reversing the declared node change.
    The result must match the original bytes, including comments and spacing.
@@ -80,43 +89,50 @@ and verify its intended node changes remains detection-only.
 
 ## Reports and exit policy
 
-Text is the current working format. `--format json` and `--format sarif` are
-reserved and fail before scanning or writing. Both will render the same
-per-file findings used by text; they must not run separate detectors. A future
-SARIF renderer must include stable rule IDs and source locations. GitHub's
+Text is the current working format (`plain` is accepted as zizmor's name for it).
+`--format json` and `--format sarif` are reserved and fail before scanning or writing.
+Both will render the same findings used by text; they must not run separate detectors.
+A future SARIF renderer must include stable rule IDs and source locations. GitHub's
 [SARIF support](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support)
-uses `note`, `warning`, and `error` rule levels. `crosgha` assigns a level per
-implemented rule and uses it for `--fail-on`. `any` is the default and `none` disables
-failure on findings. `--fix` evaluates any remaining findings after fixes.
-Input and unsupported-format errors exit with status 2.
+uses `note`, `warning`, and `error` rule levels; zizmor's severities map onto them
+(`informational`/`low` → `note`, `medium` → `warning`, `high` → `error`).
+`any` is the default `--fail-on`, and `none` disables failure on findings. `--fix` evaluates
+the findings that remain after fixes.
+
+Input, parse, config, API, write, and unsupported-format errors exit with status 2. Exit codes
+deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only for non-zero.
 
 ## GitHub Action path
 
 The composite Action in [ROADMAP.md](../ROADMAP.md) is a distribution layer
-over this CLI. Its intended sequence is:
+over this CLI. Its inputs are a superset of `zizmorcore/zizmor-action`'s, so
+`crosgha migrate --from zizmor` swaps only the `uses:` line. Its intended sequence is:
 
-1. Validate Linux runner, mode, token requirements, and incompatible inputs.
+1. Validate Linux runner, persona, severities, modes, token requirements, and
+   incompatible inputs.
 2. Resolve the release version associated with the action revision. Download
    the matching Linux asset and verify its release `.sha256` before execution.
 3. Run the CLI once and produce findings, job summary, and SARIF output.
-4. Optionally upload SARIF using a SHA-pinned upload action; the caller grants
-   `security-events: write` only when upload is enabled.
-5. In requested PR mode, run verified fixes, create a branch and PR with the
-   supplied GitHub App token or fine-grained PAT, and list each rule/fix.
-   Auto-merge is a separate explicit opt-in and requires the checks described
-   in the roadmap. The Action never merges directly.
+4. With `advanced-security: true`, upload SARIF using a SHA-pinned upload
+   action; the caller grants `security-events: write`.
+5. In requested PR mode, run verified fixes, then create a branch and a PR with
+   the supplied `fix-token` (GitHub App token or fine-grained PAT) that lists
+   each rule and fix. Auto-merge is a separate explicit opt-in and requires the
+   checks described in the roadmap. The Action never merges directly.
 
-The root `action.yml` records the planned inputs and outputs. Its entry point
-currently validates Linux and mode requirements, then fails explicitly before
-any download, upload, or repository write. The Action is a scaffold until the
-SARIF renderer and release-version resolution are implemented
-and exercised end to end. Report mode is the first Action slice; PR and
-auto-merge modes build on it.
+The root `action.yml` records these inputs and outputs. Its entry point currently validates them,
+then fails explicitly before any download, upload, or repository write. The Action stays a
+scaffold until the SARIF renderer and release-version resolution are implemented and exercised
+end to end. Report mode is the first Action slice; PR and auto-merge modes build on it.
 
 ## Verification surface
 
-`tests/cli.rs` runs the built binary against reproducible workflow fixtures.
-Each implemented rule needs a before/after YAML pair and an exact fixed-output
-assertion. The pre-push hook runs formatting, Clippy, and the tests. Once the
-rule set is stable enough, CI and the hook can scan this repository's own
-workflows as described in the roadmap.
+| Test file | What it runs |
+|---|---|
+| `tests/rules.rs` | Scans every `tests/fixtures/rules/<rule>[.<variant>].before.yml` at the `auditor` persona. Findings of the rule must match the `# expect: <rule>` markers exactly, `--fix` must remove all or none of them, and the `.after.yml` must be clean. |
+| `tests/rules.rs` (online) | Runs the online fixtures against a local server that replays `tests/fixtures/online/api.json` and rejects wrong tokens. |
+| `tests/rules.rs` (coverage) | Fails if any registered rule lacks a fixture. |
+| `tests/cli.rs` | The binary end to end: fixes, exit codes, symlinks, ignores, config discovery, repository rules, and `migrate`. |
+
+The pre-push hook and CI run formatting, Clippy, the tests, and crosgha itself on
+`.github/workflows` at the `pedantic` persona in offline mode.

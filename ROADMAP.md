@@ -1,11 +1,11 @@
 # Roadmap
 
 The GitHub Action and SARIF integration below are planned. `action.yml` now
-records the Action inputs and outputs, and its entry point validates runner and mode inputs
-before failing explicitly; it does not install or run the binary yet. The CLI
-pipeline is organized in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); it scans
-workflows, implements the `persist-credentials` finding and verified fix, and
-offers four opt-in detection-only policy checks.
+records the Action inputs and outputs, and its entry point validates them before
+failing explicitly; it does not install or run the binary yet. The CLI pipeline is
+organized in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). It runs 45 rules that cover
+the whole taxonomy, with a verified fix for `persist-credentials`, zizmor-compatible
+personas, ignores, and config, and `migrate --from zizmor|actionlint`.
 
 ## Distribution
 
@@ -21,15 +21,14 @@ Goal: run crosgha on a repository's `.github/workflows/` inside CI and report th
    - Planned: download the release asset for the requested version.
    - Planned: verify the asset against the release's `.sha256` before running.
    - A composite action avoids the Node runtime deprecations that JavaScript actions go through.
-2. **Inputs:**
+2. **Inputs:** a superset of `zizmorcore/zizmor-action`, so `crosgha migrate --from zizmor` only swaps the `uses:` line.
+   - Shared with zizmor-action: `inputs`, `collect`, `online-audits`, `persona`, `min-severity`, `min-confidence`, `token`, `advanced-security`, `color`, `annotations`, `config`, `fail-on-no-inputs`.
    - `version`: defaults to the version the action ref was released with, never "latest".
-   - `path`: defaults to `.github/workflows`.
-   - `format`: `sarif` | `json` | `text`.
-   - `fail-on`: severity threshold.
+   - crosgha only: `fail-on`, `fix`, `fix-token`, `dangerously-auto-merge`.
 3. **Outputs:**
-   - SARIF file path (the `sarif-file` output).
+   - SARIF file path (`output-file`, zizmor-action's name).
    - Findings count.
-   - Optional upload through `github/codeql-action/upload-sarif`, pinned by SHA, with `security-events: write` requested only by the caller's job.
+   - With `advanced-security: true`, upload through `github/codeql-action/upload-sarif`, pinned by SHA, with `security-events: write` requested only by the caller's job.
 4. **Runners:** Linux only, matching the binary. On macOS and Windows runners the action fails fast with a clear message. An `aarch64-unknown-linux-gnu` or musl build is added only when an ARM runner user needs it.
 5. **Dogfood:** our own CI uses the action at the current commit (`uses: ./`) on our own workflows.
 6. **Versioning:**
@@ -45,8 +44,8 @@ Decisions (2026-09-25):
   | Mode | Inputs | What happens | Token |
   |---|---|---|---|
   | Report (default) | `fix: none` | Findings as SARIF, job summary, and `findings` output; nothing is changed | default `GITHUB_TOKEN` (`contents: read`, + `security-events: write` for SARIF upload) |
-  | Pull request | `fix: pull-request`, `token` | Runs `crosgha --fix`, commits to `crosgha/fix-<run_id>`, and opens a PR listing each fix and its rule. **A human reviews and merges.** | GitHub App or fine-grained PAT with Contents, Pull requests, and Workflows: write (see below) |
-  | Auto-merge (opt-in, at user's risk) | `fix: pull-request`, `token`, `dangerously-auto-merge: true` | Same PR, then enables GitHub auto-merge, so it merges itself once all required reviews and status checks pass | same as Pull request |
+  | Pull request | `fix: pull-request`, `fix-token` | Runs `crosgha --fix`, commits to `crosgha/fix-<run_id>`, and opens a PR listing each fix and its rule. **A human reviews and merges.** | GitHub App or fine-grained PAT with Contents, Pull requests, and Workflows: write (see below) |
+  | Auto-merge (opt-in, at user's risk) | `fix: pull-request`, `fix-token`, `dangerously-auto-merge: true` | Same PR, then enables GitHub auto-merge, so it merges itself once all required reviews and status checks pass | same as Pull request |
 
   Auto-merge rules (verified against the [GitHub auto-merge docs](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request), 2026-09-25):
   - Auto-merge "must be enabled for the repository".
@@ -72,13 +71,15 @@ Every fix crosgha makes touches `.github/workflows/`, and the default token cann
 - **Recommended token:** a GitHub App installation token minted in the caller's job, with `actions/create-github-app-token` pinned by SHA. App permissions: Contents: write, Pull requests: write, Workflows: write.
 - **Fallback token:** a fine-grained PAT with the same three permissions.
 - The repo setting "Allow GitHub Actions to create and approve pull requests" applies only to `GITHUB_TOKEN`, so PR mode does not need it.
-- The action fails fast, with a message linking to this section, when `fix: pull-request` is set without `token`, or when `dangerously-auto-merge` is set without `fix: pull-request`.
+- The action fails fast, with a message linking to this section, when `fix: pull-request` is set without `fix-token`, or when `dangerously-auto-merge` is set without `fix: pull-request`. `token` stays the online-rules token (default `github.token`), as in zizmor-action.
 
 ## Tool
 
 Detection and deterministic fixing of the curated smell taxonomy. The taxonomy and rule concepts are in the research workspace (`CLAUDE.workspace.md` → `../smell-matrix.md`).
-Rules enter the shared detection and fix path only when their semantics,
-primary-source citation, and before/after fixture are ready. JSON/SARIF
-renderers and verified release installation are the next prerequisites for the
-report-only Action mode. PR and auto-merge modes follow the verified report
-and fix paths.
+Every taxonomy tag now has a rule with a primary-source citation and before/after fixtures. Next:
+1. JSON/SARIF renderers and verified release installation: the prerequisites for the report-only Action mode.
+2. More verified fixes. Candidates whose change needs no project context: `deprecated-command` (environment files), `unsafe-if-condition` (unwrap `${{ }}`), `embedded-script-lint` (quote the path).
+3. Per-rule `rules.<id>.config` from zizmor.yml, such as allow/deny lists for `unpinned-action`.
+4. More `migrate --from` sources (poutine, ghalint, octoscan) once their Action steps are catalogued.
+
+PR and auto-merge modes follow the verified report and fix paths.

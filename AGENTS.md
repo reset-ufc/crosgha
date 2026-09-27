@@ -2,9 +2,10 @@
 
 Rust CLI that detects smells in GitHub Actions workflows and fixes them deterministically, preserving comments and
 formatting. The CLI recursively scans workflows, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
-The first rule detects and fixes checkout steps that retain credentials. Four opt-in rules detect mutable references,
-missing job timeouts, implicit token permissions, and inherited reusable-workflow secrets without guessing fixes.
-JSON/SARIF output and release-backed Action execution are still pending.
+45 rules cover every tag of the curated taxonomy: 37 per workflow, 3 per repository, and 5 that query the GitHub API.
+Only `persist-credentials` has a verified fix so far. Personas, ignore comments, `zizmor.yml`, and `crosgha migrate`
+follow zizmor so users can switch tools without rewriting configuration. JSON/SARIF output and release-backed Action
+execution are still pending.
 `crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
 
 This repo is published on its own. When it is checked out inside the research workspace, `CLAUDE.workspace.md` is a
@@ -17,28 +18,17 @@ It is listed in `.git/info/exclude` and never committed.
 |---|---|
 | One-time hook setup after cloning | `make setup` (sets `core.hooksPath=.githooks`) |
 | Build / run | `cargo build --release` · `cargo run` |
-| Everything the pre-push hook checks | `.githooks/pre-push` (fmt, clippy `-D warnings`, tests, dogfood) |
+| Everything the pre-push hook checks | `.githooks/pre-push` or `make check` (fmt, clippy `-D warnings`, tests, dogfood) |
+| Rule catalog (id, tag, severity, persona, scope) | `cargo run -- --list-rules` |
 | Release plan preview (offline) | `.tools/bin/dist plan` |
 
 ## Rules
-
-## Tests
-
-1. Never write unit tests after writing the code.
-2. End-to-end (E2E) tests are the main way to test; use them to check that complex
-   features work. Each E2E test produces an artifact that can be checked and reproduced.
-3. For complex features, use realistic E2E scenarios of medium or high complexity, not
-   only the simplest successful case.
-4. Testing a system in isolation: first list every way it could fail, then write the code.
-5. No tautological tests (confirming what the code already says) and no tests that only
-   detect whether code changed.
-6. Bug fixes get a regression test only when existing behavior tests leave a real gap.
 
 1. **Independence.** Allowed dependencies are infrastructure crates only, pinned exactly:
    - `github-actions-models`, `yamlpath`, `yamlpatch`, `github-actions-expressions` at `=1.30.1`
    - generic crates such as clap and serde
 
-   Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: crosgha checks our own workflows in CI and the pre-push hook.
+   Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: crosgha checks our own workflows in CI and the pre-push hook. Compatibility is allowed: reading another tool's config format, accepting its rule IDs as aliases, and rewriting its Action step in `migrate`. Running or porting its detection logic is not.
 2. **Fix validation is ours.** A fix is accepted only when all three hold:
    - the patched file re-parses
    - the targeted smell is gone and no new smell appeared
@@ -54,9 +44,25 @@ It is listed in `.git/info/exclude` and never committed.
    - `concurrency` in CI
    - `persist-credentials: false`
 
-   `.githooks/pre-push` and CI run crosgha on `.github/workflows` with all four opt-in policies enabled. Accepted exceptions need a written reason in a comment next to the exception.
-5. **Toolchain.** Rust is pinned only in `mise.toml` (1.97), matching the workspace. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
-6. **Tests.** Every rule ships with before/after YAML fixtures and a test asserting the exact fixed output. `tests/cli.rs` runs the real binary end to end.
+   `.githooks/pre-push` and CI run crosgha on `.github/workflows` with `--offline --persona pedantic`. Accepted exceptions need a written reason in a comment next to the exception.
+5. **Toolchain.** The Rust toolchain is pinned only in `mise.toml` (1.97), matching the workspace; `rust-version` in `Cargo.toml` declares the same minimum. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
+
+## Tests
+
+1. Never write unit tests after writing the code.
+2. End-to-end (E2E) tests are the main way to test; use them to check that complex
+   features work. Each E2E test produces an artifact that can be checked and reproduced.
+3. For complex features, use realistic E2E scenarios of medium or high complexity, not
+   only the simplest successful case.
+4. Testing a system in isolation: first list every way it could fail, then write the code.
+5. No tautological tests (confirming what the code already says) and no tests that only
+   detect whether code changed.
+6. Bug fixes get a regression test only when existing behavior tests leave a real gap.
+7. Every rule ships with before/after YAML fixtures. Workflow rules live in `tests/fixtures/rules/`,
+   online rules live in `tests/fixtures/online/`, and repository rules have a named test in
+   `tests/cli.rs` or `tests/rules.rs`. `tests/rules.rs` checks them against `# expect: <rule>`
+   markers and fails when a registered rule has no fixture. A fixable rule also asserts its exact
+   fixed output.
 
 ## Layout
 
@@ -64,16 +70,20 @@ It is listed in `.git/info/exclude` and never committed.
 src/main.rs                 CLI entry point
 src/cli.rs                  CLI options, orchestration, exit status
 src/workflow.rs             YAML parsing and workflow validation
-src/rules/                  Rule detection and fix proposals
+src/rules/                  Rules by dimension, shared traversal (common.rs), repository and online rules
 src/fix.rs                  Shared fix validation
 src/filesystem.rs           Workflow discovery and verified writes
-src/report.rs               Text output and planned JSON/SARIF formats
-src/policy.rs               Severity and failure threshold
+src/report.rs               Text output, rule catalog, and planned JSON/SARIF formats
+src/policy.rs               Personas, severity, settings, and failure threshold
+src/config.rs               crosgha.yml / zizmor.yml discovery and rule settings
+src/github.rs               Cached read-only GitHub REST client for online rules
+src/migrate.rs              `migrate --from zizmor|actionlint` step rewrites
 action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action input guard; execution scaffold
 docs/ARCHITECTURE.md        Module interfaces and Action flow
 tests/cli.rs                end-to-end tests of the built binary
-tests/fixtures/              workflow inputs for CLI checks
+tests/rules.rs              fixture-driven rule checks, fake GitHub API server
+tests/fixtures/             rules/, online/ (+ api.json), repos/, migrate/, and CLI inputs
 .githooks/                  commit-msg (Conventional Commits), pre-push (full check)
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)
 release-please-config.json  release PR + changelog config (manifest: .release-please-manifest.json)
