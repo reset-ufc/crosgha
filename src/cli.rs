@@ -3,7 +3,7 @@ use std::{
     process::ExitCode,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{ColorChoice, Parser, Subcommand};
 
 use crate::{config, engine, filesystem, github::GitHub, hook, migrate, policy, report, rules};
 
@@ -84,6 +84,10 @@ struct Args {
     #[arg(short, long, value_enum)]
     format: Option<report::Format>,
 
+    /// When to color text output: auto (a terminal without NO_COLOR), always, or never.
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
+
     /// Minimum severity that makes a scan fail (any, note, warning, error, or none).
     #[arg(long, value_enum, default_value_t = policy::FailOn::Any)]
     fail_on: policy::FailOn,
@@ -130,6 +134,11 @@ enum HookAction {
 
 pub fn run() -> ExitCode {
     let args = Args::parse();
+    match args.color {
+        ColorChoice::Auto => {}
+        ColorChoice::Always => anstream::ColorChoice::Always.write_global(),
+        ColorChoice::Never => anstream::ColorChoice::Never.write_global(),
+    }
     if let Some(Commands::Migrate {
         from,
         action,
@@ -144,10 +153,10 @@ pub fn run() -> ExitCode {
     }
     if args.list_rules {
         match args.format {
-            None | Some(report::Format::Text) => print!("{}", report::rules()),
+            None | Some(report::Format::Text) => anstream::print!("{}", report::rules()),
             Some(report::Format::Json) => print!("{}", report::rules_json()),
             Some(_) => {
-                eprintln!("error: --list-rules prints text or json");
+                report::error("--list-rules prints text or json");
                 return ExitCode::from(2);
             }
         }
@@ -169,7 +178,7 @@ pub fn run() -> ExitCode {
             workflows
         }
         Err(error) => {
-            eprintln!("error: {error}");
+            report::error(error);
             return ExitCode::from(2);
         }
     };
@@ -184,12 +193,14 @@ pub fn run() -> ExitCode {
     let config = match load_config(&args) {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("error: {error}");
+            report::error(error);
             return ExitCode::from(2);
         }
     };
     for id in rules::unused_options(&config) {
-        eprintln!("warning: `rules.{id}.config` has no crosgha equivalent and is ignored");
+        report::warning(format_args!(
+            "`rules.{id}.config` has no crosgha equivalent and is ignored"
+        ));
     }
     let settings = policy::Settings {
         persona: args.persona,
@@ -211,7 +222,7 @@ pub fn run() -> ExitCode {
         match inspected {
             Ok(inspection) => files.push(report::FileReport { path, inspection }),
             Err(error) => {
-                eprintln!("ERROR {}: {error}", path.display());
+                report::error(format_args!("{}: {error}", path.display()));
                 failures.push(report::FileError {
                     path,
                     message: error,
@@ -258,7 +269,7 @@ pub fn run() -> ExitCode {
     let repository = match repository {
         Ok(found) => found,
         Err(error) => {
-            eprintln!("error: {error}");
+            report::error(error);
             return ExitCode::from(2);
         }
     };
@@ -269,7 +280,7 @@ pub fn run() -> ExitCode {
                 && outcome.fixed_count > 0
                 && let Err(error) = filesystem::write_verified(&file.path, &outcome.source)
             {
-                eprintln!("ERROR {}: {error}", file.path.display());
+                report::error(format_args!("{}: {error}", file.path.display()));
                 return ExitCode::from(2);
             }
         }
@@ -278,7 +289,7 @@ pub fn run() -> ExitCode {
         && let Err(error) =
             std::fs::write(target, report::sarif(&files, &repository, &failures, fix))
     {
-        eprintln!("error: {}: {error}", target.display());
+        report::error(format_args!("{}: {error}", target.display()));
         return ExitCode::from(2);
     }
     let format = args.format.unwrap_or(
@@ -288,7 +299,7 @@ pub fn run() -> ExitCode {
             report::Format::Text
         },
     );
-    print!(
+    anstream::print!(
         "{}",
         report::render(format, &files, &repository, &failures, fix)
     );
@@ -370,7 +381,7 @@ fn run_hook(action: &HookAction) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("error: {error}");
+            report::error(error);
             ExitCode::from(2)
         }
     }
@@ -390,7 +401,7 @@ fn run_migrate(
     match result {
         Ok(summary) => {
             for note in &summary.notes {
-                eprintln!("note: {note}");
+                report::note(note);
             }
             println!(
                 "Migrated {} step(s) in {} workflow file(s).",
@@ -402,7 +413,7 @@ fn run_migrate(
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("error: {error}");
+            report::error(error);
             ExitCode::from(2)
         }
     }

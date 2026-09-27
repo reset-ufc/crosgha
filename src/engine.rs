@@ -6,6 +6,8 @@ use crate::{
 };
 
 pub struct Inspection {
+    /// The source the findings' lines point into.
+    pub source: String,
     pub findings: Vec<Finding>,
     pub fix: Option<FixOutcome>,
 }
@@ -16,12 +18,16 @@ pub fn inspect(
     settings: &Settings,
     file: &str,
 ) -> Result<Inspection, String> {
-    let workflow = Workflow::parse(source)?;
+    let workflow = Workflow::parse(source.clone())?;
     let findings = rules::detect_all(&workflow, settings, file)?;
     let fix = if apply_fixes && !findings.is_empty() {
         Some(fix::apply(workflow, &findings, settings, file)?)
     } else {
         None
     };
-    Ok(Inspection { findings, fix })
+    Ok(Inspection {
+        source,
+        findings,
+        fix,
+    })
 }
