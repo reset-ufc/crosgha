@@ -95,13 +95,30 @@ runs:
         CROSGHA_ONLINE_AUDITS: ${{ inputs['online-audits'] }}
         CROSGHA_PERSONA: ${{ inputs.persona }}
         CROSGHA_MIN_SEVERITY: ${{ inputs['min-severity'] }}
+        CROSGHA_MIN_CONFIDENCE: ${{ inputs['min-confidence'] }}
         CROSGHA_VERSION: ${{ inputs.version }}
         CROSGHA_TOKEN: ${{ inputs.token }}
         CROSGHA_ADVANCED_SECURITY: ${{ inputs['advanced-security'] }}
         CROSGHA_ANNOTATIONS: ${{ inputs.annotations }}
         CROSGHA_CONFIG_FILE: ${{ inputs.config }}
+        CROSGHA_FAIL_ON_NO_INPUTS: ${{ inputs['fail-on-no-inputs'] }}
         CROSGHA_FAIL_ON: ${{ inputs['fail-on'] }}
         CROSGHA_FIX: ${{ inputs.fix }}
         CROSGHA_FIX_TOKEN: ${{ inputs['fix-token'] }}
         CROSGHA_AUTO_MERGE: ${{ inputs['dangerously-auto-merge'] }}
       run: bash "$GITHUB_ACTION_PATH/action/entrypoint.sh"
+
+    # The caller's job grants `security-events: write` when advanced-security is on.
+    - name: Upload SARIF
+      if: ${{ steps.crosgha.outputs['output-file'] != '' }}
+      uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      with:
+        sarif_file: ${{ steps.crosgha.outputs['output-file'] }}
+        category: crosgha
+
+    - name: Apply fail-on
+      if: ${{ steps.crosgha.outputs['exit-code'] != '0' }}
+      shell: bash
+      env:
+        CROSGHA_EXIT_CODE: ${{ steps.crosgha.outputs['exit-code'] }}
+      run: exit "$CROSGHA_EXIT_CODE"
