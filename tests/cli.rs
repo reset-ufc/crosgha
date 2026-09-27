@@ -265,7 +265,7 @@ fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
         .lines()
         .filter(|line| line.starts_with("missing-release-cooldown ["))
         .collect();
-    // Line 13 sets only `semver-major-days`, so minor and patch updates still land at once.
+    // Line 13 sets only `semver-major-days`, so other updates keep Dependabot's 3-day default.
     assert_eq!(cooldown.len(), 2, "{insecure}");
     assert!(cooldown[0].contains("dependabot.yml:9:"), "{insecure}");
     assert!(cooldown[1].contains("dependabot.yml:13:"), "{insecure}");
@@ -280,6 +280,23 @@ fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
             "{tool}: {insecure}"
         );
     }
+
+    // Dependabot waits 3 days even without `cooldown`, which meets a 3-day minimum.
+    let output = bin()
+        .args([
+            "--persona",
+            "auditor",
+            "--offline",
+            "--fail-on",
+            "none",
+            "--config",
+        ])
+        .arg(fixture("cooldown-3-days.yml"))
+        .arg(fixture("repos/insecure/.github/workflows"))
+        .output()
+        .unwrap();
+    let relaxed = String::from_utf8(output.stdout).unwrap();
+    assert!(!relaxed.contains("missing-release-cooldown ["), "{relaxed}");
 
     let hardened = scan("hardened");
     assert!(

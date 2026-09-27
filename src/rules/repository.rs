@@ -46,6 +46,10 @@ pub struct Located {
 /// zizmor's default for `rules.dependabot-cooldown.config.days`.
 const DEFAULT_COOLDOWN_DAYS: u64 = 7;
 
+/// Dependabot waits this long when `cooldown` or its `default-days` is absent:
+/// https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#cooldown-
+const DEPENDABOT_DEFAULT_DAYS: u64 = 3;
+
 pub fn cooldown(
     github: &Path,
     honor_ignores: bool,
@@ -67,19 +71,21 @@ pub fn cooldown(
             continue;
         };
         for (index, update) in updates.iter().enumerate() {
-            let days = update.get("cooldown").map(|cooldown| {
-                cooldown
-                    .get("default-days")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0)
-            });
-            let message = match days {
-                None => "updates are adopted without a minimum release age".to_owned(),
-                Some(days) if days < minimum => {
-                    format!("cooldown of {days} day(s) is below the {minimum}-day minimum")
-                }
-                Some(_) => continue,
+            let configured = update
+                .get("cooldown")
+                .and_then(|cooldown| cooldown.get("default-days"))
+                .and_then(Value::as_u64);
+            let days = configured.unwrap_or(DEPENDABOT_DEFAULT_DAYS);
+            if days >= minimum {
+                continue;
+            }
+            let source = if configured.is_some() {
+                ""
+            } else {
+                " (Dependabot's default)"
             };
+            let message =
+                format!("cooldown of {days} day(s){source} is below the {minimum}-day minimum");
             let ecosystem = update
                 .get("package-ecosystem")
                 .and_then(Value::as_str)
