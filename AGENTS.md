@@ -90,10 +90,12 @@ src/migrate.rs              `migrate --from zizmor|actionlint` step rewrites
 src/hook.rs                 `hook install|uninstall`: the git pre-push hook
 action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs
+install.sh                  `curl | sh` installer: verified release binary into ~/.local/bin
 docs/ARCHITECTURE.md        Module interfaces and Action flow
 tests/cli.rs                end-to-end tests of the built binary
 tests/rules.rs              fixture-driven rule checks, fake GitHub API server
 tests/action.rs             Action entry point against a local release server
+tests/install.rs            install.sh piped into sh against the same server (tests/common)
 tests/fixtures/             rules/, online/ (+ api.json), repos/, migrate/, and CLI inputs
 .githooks/                  commit-msg (Conventional Commits), pre-push (full check)
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)
