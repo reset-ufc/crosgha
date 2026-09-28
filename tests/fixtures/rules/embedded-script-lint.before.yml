@@ -12,3 +12,25 @@ jobs:
           echo "## Summary" >> ${GITHUB_STEP_SUMMARY}
       - shell: pwsh
         run: echo "c=3" >> $env:GITHUB_ENV
+  # `run` defaults to pwsh on Windows runners, where `$GITHUB_ENV` word splitting does not apply:
+  # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> $GITHUB_ENV
+      - shell: bash
+        run: echo "a=1" >> $GITHUB_ENV # expect: embedded-script-lint
+  self-hosted-windows:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> $GITHUB_ENV
+  both:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> $GITHUB_ENV # expect: embedded-script-lint

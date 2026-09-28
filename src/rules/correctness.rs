@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule, common};
+use super::{Finding, Rule, common, runner};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -329,7 +329,22 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let workflow_shell = default_shell(&workflow.value);
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
-        let job_shell = default_shell(job.value).or(workflow_shell);
+        // `run` defaults to pwsh on Windows and to bash elsewhere, so a matrix over both OSes
+        // still runs bash on some entries:
+        // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
+        let labels: Vec<String> = runner::job_labels(&job)
+            .iter()
+            .map(|label| label.to_ascii_lowercase())
+            .collect();
+        let windows = labels.iter().any(|label| label.starts_with("windows"))
+            && !labels.iter().any(|label| {
+                ["ubuntu", "macos", "linux"]
+                    .iter()
+                    .any(|os| label.starts_with(os))
+            });
+        let job_shell = default_shell(job.value)
+            .or(workflow_shell)
+            .or(windows.then_some("pwsh"));
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
             let shell = step
