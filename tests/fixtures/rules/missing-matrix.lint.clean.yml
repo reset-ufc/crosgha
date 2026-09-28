@@ -1,0 +1,16 @@
+name: Checks
+on: [push]
+permissions: {}
+# Linters and link checkers do not depend on the OS or toolchain version, so one runner is enough.
+jobs:
+  typos:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: typos
+  links:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: lychee --no-progress "**/*.md"
+      - run: npm i -g markdownlint-cli@0.42.0 && markdownlint "**/*.md" --ignore latest

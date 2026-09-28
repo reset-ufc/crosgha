@@ -1,0 +1,14 @@
+name: CI
+on: [push]
+permissions: {}
+jobs: # expect: missing-matrix
+  typos:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: typos
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: python -m pytest -q
