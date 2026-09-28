@@ -5,6 +5,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use crate::workflow::BOM;
+
 pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mut workflows = Vec::new();
     // A repository root or its `.github` is scanned through its workflows, as zizmor collects
@@ -101,6 +103,9 @@ pub fn read(path: &Path, fix: bool) -> Result<String, String> {
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
+    let bom = fs::read(path)
+        .is_ok_and(|old| old.starts_with(BOM.encode_utf8(&mut [0; 3]).as_bytes()))
+        && !source.starts_with(BOM);
     let name = path
         .file_name()
         .ok_or("workflow has no filename")?
@@ -116,6 +121,9 @@ pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
             .create_new(true)
             .open(&temporary)?;
         file.set_permissions(fs::metadata(path)?.permissions())?;
+        if bom {
+            write!(file, "{BOM}")?;
+        }
         file.write_all(source.as_bytes())?;
         file.sync_all()?;
         fs::rename(&temporary, path)?;
