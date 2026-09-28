@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/meiazero/crosgha/compare/v0.11.0...v0.11.1) (2026-09-28)
+
+
+### Fixed
+
+* cut false positives found by the benchmark ([81f5ede](https://github.com/meiazero/crosgha/commit/81f5eded471d5b19e3b33a3dc279a5c546291a19))
+
 ## [0.11.0](https://github.com/meiazero/crosgha/compare/v0.10.0...v0.11.0) (2026-09-28)
 
 
