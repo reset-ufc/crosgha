@@ -5,9 +5,19 @@ jobs:
   a:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    services:
+      httpstatus:
+        image: ghcr.io/example/httpstatus@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    env:
+      ASPNETCORE_URLS: http://+:80
     steps:
       - run: curl -fsSL http://example.com/tool.tar.gz -o tool.tgz # expect: insecure-protocol
       - run: curl http://localhost:8080/health
+      - run: curl http://[::1]:8080/health
+      - run: curl http://[2001:db8::1]/tool.tar.gz # expect: insecure-protocol
+      # Service containers and other single-label hosts never leave the runner's network.
+      - run: curl http://httpstatus/200
+      - run: curl http://${{ env.MIRROR }}/tool.tar.gz # expect: insecure-protocol
       - uses: example/deploy@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with:
           registry: http://registry.example.com # expect: insecure-protocol

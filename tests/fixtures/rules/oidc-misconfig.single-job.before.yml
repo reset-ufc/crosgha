@@ -1,0 +1,10 @@
+name: OIDC for one job on pull_request_target
+on: [push, pull_request_target]
+permissions:
+  id-token: write # expect: oidc-misconfig
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo deploy

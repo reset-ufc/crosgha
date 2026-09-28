@@ -10,6 +10,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Arc, Mutex};
 
 const TOKEN: &str = "test-token";
 
@@ -23,8 +24,15 @@ fn bin() -> Command {
     command
 }
 
-/// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.
 fn fake_github() -> String {
+    logged_github().0
+}
+
+/// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.
+/// The log holds every requested path in arrival order.
+fn logged_github() -> (String, Arc<Mutex<Vec<String>>>) {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::clone(&log);
     let routes: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(&fs::read_to_string(fixtures().join("online/api.json")).unwrap())
             .unwrap();
@@ -37,6 +45,7 @@ fn fake_github() -> String {
             let mut request = String::new();
             reader.read_line(&mut request).unwrap();
             let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+            requests.lock().unwrap().push(path.clone());
             let mut authorized = false;
             loop {
                 let mut header = String::new();
@@ -62,7 +71,7 @@ fn fake_github() -> String {
             );
         }
     });
-    format!("http://{address}")
+    (format!("http://{address}"), log)
 }
 
 fn scan(path: &Path, fix: bool, api: Option<&str>, config: Option<&Path>) -> Output {
@@ -209,6 +218,73 @@ fn every_workflow_rule_reports_exactly_the_marked_lines() {
 #[test]
 fn every_online_rule_reports_exactly_the_marked_lines() {
     check_fixtures("online", Some(&fake_github()));
+}
+
+/// Workflows are inspected concurrently and share one API cache: a batch must report exactly what
+/// its files report one by one, in path order, without asking the API twice for the same path.
+#[test]
+fn a_parallel_batch_matches_single_scans_and_shares_the_api_cache() {
+    let batch = std::env::temp_dir().join(format!("crosgha-batch-{}", std::process::id()));
+    fs::create_dir_all(&batch).unwrap();
+    let mut expected: Vec<(String, String, u64)> = Vec::new();
+    for entry in fs::read_dir(fixtures().join("online")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        if !name.ends_with(".before.yml") {
+            continue;
+        }
+        let single = scan(&path, false, Some(&fake_github()), None);
+        let single: serde_json::Value = serde_json::from_slice(&single.stdout).unwrap();
+        for copy in 0..8 {
+            let file = format!("{copy}-{name}");
+            fs::copy(&path, batch.join(&file)).unwrap();
+            for finding in single["findings"].as_array().unwrap() {
+                let rule = finding["rule"].as_str().unwrap().to_owned();
+                expected.push((file.clone(), rule, finding["line"].as_u64().unwrap()));
+            }
+        }
+    }
+    expected.sort();
+
+    let (api, log) = logged_github();
+    let output = scan(&batch, false, Some(&api), None);
+    fs::remove_dir_all(&batch).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let reported: Vec<(String, String, u64)> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| {
+            let path = Path::new(finding["path"].as_str().unwrap());
+            (
+                path.file_name().unwrap().to_str().unwrap().to_owned(),
+                finding["rule"].as_str().unwrap().to_owned(),
+                finding["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let files: Vec<&String> = reported.iter().map(|(file, ..)| file).collect();
+    assert!(files.is_sorted(), "findings out of path order: {files:?}");
+    let mut sorted = reported.clone();
+    sorted.sort();
+    assert_eq!(sorted, expected);
+
+    let log = log.lock().unwrap();
+    let mut repeated: Vec<&String> = log
+        .iter()
+        .filter(|path| log.iter().filter(|other| other == path).count() > 1)
+        .collect();
+    repeated.dedup();
+    assert!(!log.is_empty());
+    assert!(
+        repeated.is_empty(),
+        "requested more than once: {repeated:?}"
+    );
 }
 
 #[test]

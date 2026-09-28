@@ -1,0 +1,17 @@
+name: Permissions
+on: [push]
+# Only `build` inherits these scopes, so they are as narrow as job-level ones.
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo build
+  release:
+    permissions: write-all # expect: excessive-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo release

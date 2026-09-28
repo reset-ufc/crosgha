@@ -125,6 +125,57 @@ fn fixes_checkout_credentials_without_changing_other_nodes() {
     assert!(checked.status.success());
 }
 
+/// GitHub runs workflows saved with a UTF-8 BOM (common from Windows editors); the benchmark
+/// corpus has them with a key on the first line, which the YAML parser used to reject.
+#[test]
+fn byte_order_mark_is_scanned_like_plain_utf8_and_kept_on_fix() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("crosgha-bom-{}-{unique}.yml", std::process::id()));
+    let plain = fs::read_to_string(fixture("checkout-credentials.before.yml")).unwrap();
+    fs::write(&path, format!("\u{feff}{plain}")).unwrap();
+    let findings = |path: &std::path::Path| {
+        let output = bin()
+            .args(["--persona", "auditor", "-f", "json", "--fail-on", "none"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| (finding["rule"].to_string(), finding["line"].to_string()))
+            .collect::<Vec<_>>()
+    };
+
+    let with_bom = findings(&path);
+    let fix = bin().arg("--fix").arg(&path).output().unwrap();
+    let fixed = fs::read_to_string(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+
+    assert!(!with_bom.is_empty());
+    assert_eq!(
+        with_bom,
+        findings(&fixture("checkout-credentials.before.yml"))
+    );
+    assert!(
+        fix.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fix.stderr)
+    );
+    let after = fs::read_to_string(fixture("checkout-credentials.after.yml")).unwrap();
+    assert_eq!(fixed, format!("\u{feff}{after}"));
+}
+
 #[test]
 fn fix_does_not_overwrite_invalid_workflow() {
     let unique = SystemTime::now()
@@ -1353,7 +1404,7 @@ fn text_report_points_at_the_source_and_colors_only_on_request() {
     let (source, carets) = (lines[header + 3], lines[header + 4]);
     assert!(
         source.ends_with(
-            "- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0"
+            "- uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0"
         )
     );
     assert_eq!(carets.find('^'), source.find("uses"), "{piped}");

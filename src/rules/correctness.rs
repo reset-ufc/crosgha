@@ -372,7 +372,18 @@ fn unquoted_env_file(line: &str) -> bool {
     })
 }
 
-const LOCAL_HOSTS: &[&str] = &["localhost", "127.0.0.1", "0.0.0.0", "[::1]"];
+/// Loopback and bind-all addresses (`+` and `*` are ASP.NET and HTTP.sys listen wildcards).
+const LOCAL_HOSTS: &[&str] = &["localhost", "127.0.0.1", "0.0.0.0", "::1", "+", "*"];
+
+/// Whether plain HTTP to `host` stays on the runner: a local address, or a single DNS label such
+/// as a service container, which public DNS never resolves.
+fn is_local(host: &str) -> bool {
+    LOCAL_HOSTS.contains(&host)
+        || (!host.is_empty()
+            && host
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
+}
 
 pub fn insecure_protocol(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut seen = BTreeSet::new();
@@ -380,11 +391,12 @@ pub fn insecure_protocol(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     common::strings(&workflow.value, &Route::default(), &mut |route, text| {
         let insecure = ["http://", "git://", "ftp://"].iter().any(|scheme| {
             text.match_indices(scheme).any(|(index, _)| {
-                let host = text[index + scheme.len()..]
-                    .split(['/', ':', '"', '\'', ' ', '\n'])
-                    .next()
-                    .unwrap_or("");
-                *scheme != "http://" || !LOCAL_HOSTS.contains(&host)
+                let rest = &text[index + scheme.len()..];
+                let host = match rest.strip_prefix('[') {
+                    Some(ipv6) => ipv6.split(']').next(),
+                    None => rest.split(['/', ':', '"', '\'', ' ', '\n']).next(),
+                };
+                *scheme != "http://" || !is_local(host.unwrap_or(""))
             })
         });
         if insecure && seen.insert(format!("{route:?}")) {

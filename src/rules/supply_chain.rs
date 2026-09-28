@@ -130,6 +130,18 @@ fn unpinned_install(words: &[&str]) -> bool {
         ["uv", "tool", rest @ ..] => [&["pipx"][..], rest].concat(),
         _ => words.to_vec(),
     };
+    // Global flags may precede the subcommand, as in `npm -g install`.
+    let words: Vec<&str> = words
+        .iter()
+        .take(1)
+        .chain(
+            words
+                .iter()
+                .skip(1)
+                .skip_while(|word| word.starts_with('-')),
+        )
+        .copied()
+        .collect();
     match words.as_slice() {
         ["pip" | "pip3" | "pipx", "install", args @ ..] => arguments(
             args,
@@ -153,12 +165,32 @@ fn unpinned_install(words: &[&str]) -> bool {
         ["npm" | "pnpm", "install" | "i" | "add", args @ ..]
         | ["yarn", "global", "add", args @ ..] => arguments(args, &["--prefix", "--registry"])
             .any(|package| !has_npm_version(package) && !is_local_or_url(package)),
+        // A module version is `v<semver>` or a commit hash; `latest` and branch names move.
         ["go", "install", args @ ..] => arguments(args, &["-C", "-o"]).any(|module| {
             !is_local_or_url(module)
-                && module
-                    .rsplit_once('@')
-                    .is_none_or(|(_, version)| version == "latest")
+                && module.rsplit_once('@').is_none_or(|(_, version)| {
+                    !(version.starts_with('v')
+                        && version[1..].starts_with(|c: char| c.is_ascii_digit())
+                        || version.len() >= 7
+                            && version.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                })
         }),
+        // conda's match spec pins with `name=version` or `name==version`.
+        ["conda" | "mamba" | "micromamba", "install", args @ ..] => arguments(
+            args,
+            &[
+                "-c",
+                "--channel",
+                "-n",
+                "--name",
+                "-p",
+                "--prefix",
+                "--file",
+                "-r",
+                "--root-prefix",
+            ],
+        )
+        .any(|package| !package.contains('=') || package.contains(['<', '>'])),
         ["cargo", "install", args @ ..] => {
             let pinned_by_flag = args
                 .iter()
@@ -219,8 +251,17 @@ fn is_local_or_url(argument: &str) -> bool {
             .any(|suffix| argument.ends_with(suffix))
 }
 
+/// A version or range after the name; a dist-tag such as `latest` or `next` moves.
 fn has_npm_version(package: &str) -> bool {
-    package.rfind('@').is_some_and(|index| index > 0)
+    package
+        .rfind('@')
+        .filter(|index| *index > 0)
+        .is_some_and(|index| {
+            let version = &package[index + 1..];
+            !version.starts_with(|c: char| c.is_ascii_alphabetic())
+                || version.starts_with('v')
+                    && version[1..].starts_with(|c: char| c.is_ascii_digit())
+        })
 }
 
 pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {

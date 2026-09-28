@@ -2,7 +2,7 @@ use yaml_serde::{Mapping, Value};
 use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{ChangeKind, Finding, ProposedFix, Rule, common, online, runner};
+use super::{ChangeKind, Finding, ProposedFix, Rule, common, online, repository, runner};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -557,6 +557,157 @@ pub fn removed_hosted(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     step.key("uses"),
                     step.location.clone(),
                     reason,
+                )?);
+            }
+        }
+    }
+    Ok(findings)
+}
+
+/// Majors of GitHub's own JavaScript actions whose latest release declares a retired Node.js
+/// runtime (`repository::RUNTIME`), read from `runs.using` in each major's newest `vX.Y.Z` tag on
+/// 2026-09-27. A major is the unit because `@vN` follows its newest release.
+// ponytail: `actions/*` only and major granularity, so a pin to an older minor of a node24 major
+// (setup-go v6.0.0) is missed; per-release data or more owners would close both gaps.
+const RETIRED_RUNTIME_MAJORS: &[(&str, &[(u64, &str)])] = &[
+    ("actions/add-to-project", &[(0, "node20"), (1, "node20")]),
+    (
+        "actions/cache",
+        &[
+            (0, "node12"),
+            (1, "node12"),
+            (2, "node12"),
+            (3, "node16"),
+            (4, "node20"),
+        ],
+    ),
+    (
+        "actions/checkout",
+        &[(2, "node12"), (3, "node16"), (4, "node20")],
+    ),
+    (
+        "actions/configure-pages",
+        &[
+            (0, "node16"),
+            (1, "node16"),
+            (2, "node16"),
+            (3, "node16"),
+            (4, "node20"),
+            (5, "node20"),
+        ],
+    ),
+    (
+        "actions/create-github-app-token",
+        &[(1, "node20"), (2, "node20")],
+    ),
+    ("actions/create-release", &[(1, "node12")]),
+    (
+        "actions/dependency-review-action",
+        &[(1, "node16"), (2, "node16"), (3, "node16"), (4, "node20")],
+    ),
+    (
+        "actions/deploy-pages",
+        &[(1, "node16"), (2, "node16"), (3, "node20"), (4, "node20")],
+    ),
+    (
+        "actions/download-artifact",
+        &[(2, "node12"), (4, "node20"), (5, "node20"), (6, "node20")],
+    ),
+    (
+        "actions/github-script",
+        &[
+            (1, "node12"),
+            (2, "node12"),
+            (3, "node12"),
+            (4, "node12"),
+            (5, "node12"),
+            (6, "node16"),
+            (7, "node20"),
+        ],
+    ),
+    (
+        "actions/labeler",
+        &[(2, "node12"), (3, "node12"), (4, "node16"), (5, "node20")],
+    ),
+    (
+        "actions/setup-dotnet",
+        &[(1, "node12"), (2, "node16"), (3, "node16"), (4, "node20")],
+    ),
+    (
+        "actions/setup-go",
+        &[
+            (1, "node12"),
+            (2, "node12"),
+            (3, "node16"),
+            (4, "node16"),
+            (5, "node20"),
+        ],
+    ),
+    (
+        "actions/setup-java",
+        &[(1, "node12"), (2, "node12"), (3, "node16"), (4, "node20")],
+    ),
+    (
+        "actions/setup-node",
+        &[(1, "node12"), (2, "node12"), (3, "node16"), (4, "node20")],
+    ),
+    (
+        "actions/setup-python",
+        &[
+            (1, "node12"),
+            (2, "node12"),
+            (3, "node16"),
+            (4, "node16"),
+            (5, "node20"),
+        ],
+    ),
+    ("actions/setup-ruby", &[(1, "node12")]),
+    (
+        "actions/stale",
+        &[
+            (1, "node12"),
+            (2, "node12"),
+            (3, "node12"),
+            (4, "node12"),
+            (5, "node16"),
+            (6, "node16"),
+            (7, "node16"),
+            (8, "node16"),
+            (9, "node20"),
+        ],
+    ),
+    (
+        "actions/upload-artifact",
+        &[(2, "node12"), (4, "node20"), (5, "node20")],
+    ),
+    ("actions/upload-release-asset", &[(1, "node12")]),
+];
+
+/// Steps that use a version of an `actions/*` action built for a retired Node.js runtime.
+pub fn retired_runtime(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let mut findings = Vec::new();
+    for job in common::jobs(workflow) {
+        for step in common::steps(&job) {
+            let Some((name, version)) = versioned_action(workflow, &step) else {
+                continue;
+            };
+            let runtime = RETIRED_RUNTIME_MAJORS
+                .iter()
+                .find(|(action, _)| *action == name)
+                .and_then(|(_, majors)| {
+                    majors
+                        .iter()
+                        .find(|(major, _)| Some(major) == version.first())
+                });
+            if let Some((major, runtime)) = runtime {
+                findings.push(common::finding(
+                    workflow,
+                    &repository::RUNTIME,
+                    step.key("uses"),
+                    step.location.clone(),
+                    format!(
+                        "{name} v{major} declares `{runtime}`, which GitHub retired; runners force it onto Node 24, so use a release built for `node24`"
+                    ),
                 )?);
             }
         }

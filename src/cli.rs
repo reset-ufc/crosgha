@@ -212,13 +212,8 @@ pub fn run() -> ExitCode {
         min_severity: args.min_severity.as_deref().and_then(config::severity),
         hosted: api_url(&args.gh_hostname) == "https://api.github.com",
     };
-    for path in workflows {
-        let file = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let inspected = filesystem::read(&path, args.fix)
-            .and_then(|source| engine::inspect(source, args.fix, &settings, &file));
+    let inspections = engine::inspect_files(&workflows, args.fix, &settings);
+    for (path, inspected) in workflows.into_iter().zip(inspections) {
         match inspected {
             Ok(inspection) => files.push(report::FileReport { path, inspection }),
             Err(error) => {
@@ -250,22 +245,23 @@ pub fn run() -> ExitCode {
             .and_then(|path| path.parent().map(Path::to_path_buf))
             .is_none_or(|parent| !scanned.contains(&parent))
     });
-    let repository = github_dirs
-        .iter()
-        .map(|github| rules::detect_repository(github, &settings))
-        .chain(dependabot.map(|path| rules::detect_dependabot(path, &settings)))
-        .collect::<Result<Vec<_>, _>>()
-        .map(|found| found.into_iter().flatten().collect::<Vec<_>>())
-        .and_then(|mut found| {
-            if let Some(repository) = &args.repository {
-                found.extend(rules::detect_settings(
-                    repository,
-                    &args.paths[0],
-                    &settings,
-                )?);
-            }
-            Ok(found)
-        });
+    let repository = engine::parallel_map(&github_dirs, |github| {
+        rules::detect_repository(github, &settings)
+    })
+    .into_iter()
+    .chain(dependabot.map(|path| rules::detect_dependabot(path, &settings)))
+    .collect::<Result<Vec<_>, _>>()
+    .map(|found| found.into_iter().flatten().collect::<Vec<_>>())
+    .and_then(|mut found| {
+        if let Some(repository) = &args.repository {
+            found.extend(rules::detect_settings(
+                repository,
+                &args.paths[0],
+                &settings,
+            )?);
+        }
+        Ok(found)
+    });
     let repository = match repository {
         Ok(found) => found,
         Err(error) => {

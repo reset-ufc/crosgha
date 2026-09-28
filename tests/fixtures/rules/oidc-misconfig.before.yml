@@ -4,6 +4,11 @@ permissions:
   contents: read
   id-token: write # expect: oidc-misconfig
 jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo test
   deploy:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

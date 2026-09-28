@@ -17,7 +17,7 @@ use crate::{
 // GHAST PERM-1 flags permissions declared only at the workflow level.
 pub const EXCESSIVE: Rule = Rule {
     id: "excessive-permissions",
-    summary: "GITHUB_TOKEN must not get write-all or workflow-level write scopes.",
+    summary: "GITHUB_TOKEN must not get write-all, or workflow-level write scopes that several jobs inherit.",
     tag: "excessive-permissions",
     severity: Severity::Warning,
     persona: Persona::Regular,
@@ -69,6 +69,17 @@ fn permissions_route() -> Route<'static> {
     Route::default().with_key("permissions")
 }
 
+/// Jobs that get the workflow-level `permissions`: a job's own block replaces them. With one such
+/// job, workflow-level scopes are as narrow as job-level ones, unless it calls a reusable workflow,
+/// whose jobs all inherit them; that call counts as two.
+fn inheriting_jobs(workflow: &Workflow) -> usize {
+    common::jobs(workflow)
+        .iter()
+        .filter(|job| job.get("permissions").is_none())
+        .map(|job| if job.get("uses").is_some() { 2 } else { 1 })
+        .sum()
+}
+
 pub fn excessive(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     match workflow.value.get("permissions") {
@@ -80,9 +91,10 @@ pub fn excessive(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             "`write-all` grants every GITHUB_TOKEN scope",
         )?),
         Some(Value::Mapping(scopes))
-            if scopes
-                .values()
-                .any(|access| access.as_str() == Some("write")) =>
+            if inheriting_jobs(workflow) > 1
+                && scopes
+                    .values()
+                    .any(|access| access.as_str() == Some("write")) =>
         {
             findings.push(common::finding(
                 workflow,
@@ -249,16 +261,24 @@ pub fn oidc(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             .and_then(Value::as_str)
             == Some("write")
     };
+    let external = common::has_trigger(workflow, EXTERNAL_TRIGGERS);
     if grants(workflow.value.get("permissions")) {
-        findings.push(common::finding(
-            workflow,
-            &OIDC,
-            permissions_route().with_key("id-token"),
-            "workflow",
-            "every job can mint an OIDC token",
-        )?);
+        let message = if inheriting_jobs(workflow) > 1 {
+            Some("every job can mint an OIDC token")
+        } else {
+            external.then_some("OIDC token is mintable on a trigger outsiders control")
+        };
+        if let Some(message) = message {
+            findings.push(common::finding(
+                workflow,
+                &OIDC,
+                permissions_route().with_key("id-token"),
+                "workflow",
+                message,
+            )?);
+        }
     }
-    if common::has_trigger(workflow, EXTERNAL_TRIGGERS) {
+    if external {
         for job in common::jobs(workflow) {
             if grants(job.get("permissions")) {
                 findings.push(common::finding(

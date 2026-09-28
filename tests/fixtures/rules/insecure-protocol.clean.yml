@@ -5,9 +5,18 @@ jobs:
   a:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    services:
+      httpstatus:
+        image: ghcr.io/example/httpstatus@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    env:
+      ASPNETCORE_URLS: http://+:80
     steps:
       - run: curl -fsSL https://example.com/tool.tar.gz -o tool.tgz
       - run: curl http://localhost:8080/health
+      - run: curl http://[::1]:8080/health
+      - run: curl https://[2001:db8::1]/tool.tar.gz
+      - run: curl http://httpstatus/200
+      - run: curl https://${{ env.MIRROR }}/tool.tar.gz
       - uses: example/deploy@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with:
           registry: https://registry.example.com

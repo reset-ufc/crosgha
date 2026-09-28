@@ -3,6 +3,11 @@ on: [push]
 permissions:
   contents: read
 jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo test
   deploy:
     permissions:
       id-token: write

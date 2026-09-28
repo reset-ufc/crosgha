@@ -9,3 +9,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo a
+  b:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo b

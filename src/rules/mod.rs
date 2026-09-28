@@ -220,8 +220,12 @@ const REPOSITORY: &[(&Rule, RepositoryDetect)] = &[
 
 /// Checks that state github.com facts (retired hosted-runner images, service shutdowns, the
 /// runner's Node.js) and are skipped for another `--gh-hostname`. `removed-feature` keeps its
-/// host-independent part in `REGISTRY`, so it is not repeated in `all()`.
-const HOSTED: &[(&Rule, Detect)] = &[(&maintainability::REMOVED, maintainability::removed_hosted)];
+/// host-independent part in `REGISTRY`, and `retired-runtime` is listed through
+/// `HOSTED_REPOSITORY`, so neither is repeated in `all()`.
+const HOSTED: &[(&Rule, Detect)] = &[
+    (&maintainability::REMOVED, maintainability::removed_hosted),
+    (&repository::RUNTIME, maintainability::retired_runtime),
+];
 const HOSTED_REPOSITORY: &[(&Rule, RepositoryDetect)] =
     &[(&repository::RUNTIME, repository::runtime)];
 
