@@ -24,6 +24,15 @@ jobs:
       - run: pip install -e .[dev]
       - run: npm install
       - run: npm ci
+      - run: npm install --global --force corepack@latest # expect: unpinned-package
+      - run: npm install -g typescript@next # expect: unpinned-package
+      - run: npm -g install terser # expect: unpinned-package
+      - run: npm -g install terser@5.36.0
+      - run: go install github.com/cloudwego/thriftgo@main # expect: unpinned-package
+      - run: go install github.com/cloudwego/thriftgo@3f2a1b9c
+      - run: conda install -c conda-forge -y pyyaml cmake # expect: unpinned-package
+      - run: mamba install -c conda-forge -y pyyaml=6.0.2 cmake==3.30.5
+      - run: micromamba install --file environment-lock.txt
       - parallel:
           - run: npm install eslint # expect: unpinned-package
           - run: npm install eslint@9.9.0
