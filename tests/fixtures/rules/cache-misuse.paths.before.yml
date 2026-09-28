@@ -1,0 +1,56 @@
+name: Cache paths
+on: [push]
+permissions: {}
+jobs:
+  node-modules:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v5
+      # setup-node caches the package manager's store, never node_modules.
+      - uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: modules
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: mixed
+      - uses: actions/cache@v5
+        with:
+          path: ~/.m2/repository
+          key: other-manager
+  old-java:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # setup-java has a `cache` input from v2.3.0 on.
+      - uses: actions/setup-java@v1
+        with: { java-version: '11' }
+      - uses: actions/cache@v5
+        with:
+          path: ~/.m2/repository
+          key: m2
+  java:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/cache@v5 # expect: cache-misuse
+        with:
+          path: /home/runner/.m2/repository
+          key: m2
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v6
+      - uses: actions/cache@v5 # expect: cache-misuse
+        with:
+          path: |
+            ~/.cache/pip
+            !~/.cache/pip/log
+          key: pip

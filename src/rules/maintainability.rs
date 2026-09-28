@@ -246,9 +246,31 @@ pub fn fork_guard(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         .collect()
 }
 
+/// Commands that run a test suite. Linters, link checkers, and builds do not depend on the OS or
+/// toolchain version the way tests do, so a workflow without tests needs no matrix.
+// ponytail: builds that run tests implicitly (`mvn package`, `gradle build`) are not recognized;
+// match build-tool goals too if that gap shows up in labeled data.
+const TEST_COMMANDS: &[&str] = &[
+    "test", "tests", "pytest", "ctest", "tox", "nox", "unittest", "jest", "vitest", "rspec",
+    "phpunit",
+];
+
+fn runs_tests(job: &common::Job<'_>) -> bool {
+    common::steps(job)
+        .iter()
+        .filter_map(|step| step.run())
+        .any(|script| {
+            script
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|word| TEST_COMMANDS.contains(&word))
+        })
+}
+
 pub fn matrix(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let jobs = common::jobs(workflow);
-    let runs = jobs.iter().any(|job| job.get("runs-on").is_some());
+    let runs = jobs
+        .iter()
+        .any(|job| job.get("runs-on").is_some() && runs_tests(job));
     let has_matrix = jobs.iter().any(|job| {
         job.get("strategy")
             .and_then(|strategy| strategy.get("matrix"))
@@ -266,35 +288,110 @@ pub fn matrix(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     )?])
 }
 
-const SETUP_WITH_CACHE: &[&str] = &[
-    "actions/setup-node",
-    "actions/setup-python",
-    "actions/setup-java",
-    "actions/setup-go",
-    "actions/setup-dotnet",
+/// Setup actions, the first release whose `cache` input exists (read from `action.yml` at each tag),
+/// and the directories that input restores: the package managers' default locations the action
+/// resolves (setup-java `src/cache.ts`; setup-go `go env GOMODCACHE GOCACHE`; setup-node
+/// `npm config get cache`, `yarn cache dir`, `pnpm store path`; setup-python pip, poetry, pipenv;
+/// setup-dotnet NuGet global-packages).
+const SETUP_CACHES: &[(&str, [u64; 2], &[&str])] = &[
+    (
+        "actions/setup-node",
+        [2, 2],
+        &[
+            "~/.npm",
+            "~/.cache/yarn",
+            "~/.yarn/berry/cache",
+            "~/.local/share/pnpm/store",
+            "~/.pnpm-store",
+        ],
+    ),
+    (
+        "actions/setup-python",
+        [2, 3],
+        &[
+            "~/.cache/pip",
+            "~/.cache/pypoetry",
+            "~/.local/share/virtualenvs",
+        ],
+    ),
+    (
+        "actions/setup-java",
+        [2, 3],
+        &[
+            "~/.m2/repository",
+            "~/.m2/wrapper",
+            "~/.gradle/caches",
+            "~/.gradle/wrapper",
+            "~/.ivy2/cache",
+            "~/.sbt",
+            "~/.cache/coursier",
+        ],
+    ),
+    (
+        "actions/setup-go",
+        [3, 2],
+        &["~/go/pkg/mod", "~/.cache/go-build"],
+    ),
+    ("actions/setup-dotnet", [3, 2], &["~/.nuget/packages"]),
 ];
+
+/// Whether `path` is, or sits inside or around, one of `directories`.
+fn overlaps(path: &str, directories: &[&str]) -> bool {
+    let path = path.trim_end_matches('/');
+    let path = path
+        .strip_prefix("/home/runner")
+        .map_or(path.to_owned(), |rest| format!("~{rest}"));
+    directories.iter().any(|directory| {
+        path == *directory
+            || path.starts_with(&format!("{directory}/"))
+            || directory.starts_with(&format!("{path}/"))
+    })
+}
 
 pub fn cache_misuse(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
         let steps = common::steps(&job);
-        let has_setup = steps
+        // A setup step pinned to a SHA without a version comment is assumed to be recent.
+        let covered: Vec<&str> = steps
             .iter()
-            .any(|step| SETUP_WITH_CACHE.iter().any(|setup| step.uses_action(setup)));
-        if !has_setup {
-            continue;
-        }
+            .flat_map(|step| {
+                let version = versioned_action(workflow, step).map(|(_, version)| version);
+                SETUP_CACHES
+                    .iter()
+                    .filter(move |(setup, since, _)| {
+                        step.uses_action(setup)
+                            && version
+                                .as_ref()
+                                .is_none_or(|version| version.as_slice() >= since.as_slice())
+                    })
+                    .flat_map(|(_, _, directories)| directories.iter().copied())
+            })
+            .collect();
         for step in steps
             .iter()
             .filter(|step| step.uses_action("actions/cache"))
         {
-            findings.push(common::finding(
-                workflow,
-                &CACHE_MISUSE,
-                step.key("uses"),
-                step.location.clone(),
-                "setup action has a built-in `cache` input for this",
-            )?);
+            let paths: Vec<&str> = step
+                .value
+                .get("with")
+                .and_then(|with| with.get("path"))
+                .and_then(Value::as_str)
+                .into_iter()
+                .flat_map(str::lines)
+                .map(str::trim)
+                .filter(|path| !path.is_empty() && !path.starts_with('!'))
+                .collect();
+            // Only a cache the setup action can restore completely is redundant.
+            if !paths.is_empty() && paths.iter().all(|path| overlaps(path, &covered)) {
+                findings.push(common::finding(
+                    workflow,
+                    &CACHE_MISUSE,
+                    step.key("uses"),
+                    step.location.clone(),
+                    "setup action has a built-in `cache` input for this",
+                )?);
+            }
         }
     }
     Ok(findings)
