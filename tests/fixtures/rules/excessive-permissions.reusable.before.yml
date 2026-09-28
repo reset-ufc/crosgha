@@ -1,0 +1,16 @@
+name: Permissions through a reusable workflow
+on: [push]
+permissions: # expect: excessive-permissions
+  contents: write
+jobs:
+  image:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo image
+  # Every job of the called workflow inherits the caller's scopes.
+  ci:
+    needs: image
+    uses: ./.github/workflows/ci.yml

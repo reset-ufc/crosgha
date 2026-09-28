@@ -1,0 +1,11 @@
+name: OIDC for one job
+on: [push]
+# Only `deploy` inherits the grant, so it is as narrow as a job-level one.
+permissions:
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo deploy
