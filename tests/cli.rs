@@ -1404,7 +1404,7 @@ fn text_report_points_at_the_source_and_colors_only_on_request() {
     let (source, carets) = (lines[header + 3], lines[header + 4]);
     assert!(
         source.ends_with(
-            "- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0"
+            "- uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0"
         )
     );
     assert_eq!(carets.find('^'), source.find("uses"), "{piped}");
