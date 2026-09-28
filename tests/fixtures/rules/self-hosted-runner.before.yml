@@ -24,3 +24,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo d
+  # Self-hosted runners get OS and architecture labels by default; hosted runners never use them:
+  # https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/use-in-a-workflow
+  e:
+    runs-on: [Linux, X64] # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo e
+  f:
+    runs-on: ARM64 # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo f
+  g:
+    runs-on: [windows-2025, ubuntu-24.04-arm]
+    timeout-minutes: 10
+    steps:
+      - run: echo g

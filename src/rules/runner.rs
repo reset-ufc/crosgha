@@ -119,9 +119,21 @@ fn self_hosted_labels(options: Options<'_>) -> Vec<&str> {
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .chain(["self-hosted"])
         .collect()
 }
+
+/// Labels every self-hosted runner gets unless created with `--no-default-labels`; no GitHub-hosted
+/// runner uses them. Matched without case, as `[Linux, X64]` appears in workflows.
+/// https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/use-in-a-workflow
+const DEFAULT_SELF_HOSTED_LABELS: &[&str] = &[
+    "self-hosted",
+    "linux",
+    "windows",
+    "macos",
+    "x64",
+    "arm",
+    "arm64",
+];
 
 /// `*` matches any run of characters; everything else matches literally.
 fn glob(pattern: &str, text: &str) -> bool {
@@ -142,9 +154,10 @@ pub fn self_hosted(workflow: &Workflow, options: Options) -> Result<Vec<Finding>
     common::jobs(workflow)
         .iter()
         .filter(|job| {
-            job_labels(job)
-                .iter()
-                .any(|label| known.iter().any(|pattern| glob(pattern, label)))
+            job_labels(job).iter().any(|label| {
+                DEFAULT_SELF_HOSTED_LABELS.contains(&label.to_ascii_lowercase().as_str())
+                    || known.iter().any(|pattern| glob(pattern, label))
+            })
         })
         .map(|job| {
             common::finding(
