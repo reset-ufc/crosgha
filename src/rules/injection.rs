@@ -230,24 +230,29 @@ const HEAD_REFS: &[&str] = &[
     "github.event.workflow_run.head_",
 ];
 
+/// Whether a step checks out or fetches the pull request's head, whose code the author controls.
+fn checks_out_head(step: &common::Step) -> bool {
+    let mentions_head = |text: &str| HEAD_REFS.iter().any(|head| text.contains(head));
+    let checkout = step
+        .uses()
+        .is_some_and(|uses| uses.to_ascii_lowercase().starts_with("actions/checkout@"))
+        && step.input_str("ref").is_some_and(mentions_head);
+    let fetch = step.run().is_some_and(|script| {
+        script.contains("gh pr checkout")
+            || (script.contains("git fetch") && script.contains("pull/"))
+            || (script.contains("git checkout") && mentions_head(script))
+    });
+    checkout || fetch
+}
+
 pub fn pwn_request(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     if !common::has_trigger(workflow, PRIVILEGED_TRIGGERS) {
         return Ok(Vec::new());
     }
-    let mentions_head = |text: &str| HEAD_REFS.iter().any(|head| text.contains(head));
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
-            let checkout = step
-                .uses()
-                .is_some_and(|uses| uses.to_ascii_lowercase().starts_with("actions/checkout@"))
-                && step.input_str("ref").is_some_and(mentions_head);
-            let fetch = step.run().is_some_and(|script| {
-                script.contains("gh pr checkout")
-                    || (script.contains("git fetch") && script.contains("pull/"))
-                    || (script.contains("git checkout") && mentions_head(script))
-            });
-            if checkout || fetch {
+            if checks_out_head(&step) {
                 findings.push(common::finding(
                     workflow,
                     &PWN_REQUEST,
@@ -408,6 +413,27 @@ pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
 
+    // A privileged run shares the base branch's cache scope, so a cache saved after the pull
+    // request's code ran is restored by later trusted runs:
+    // https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache
+    if common::has_trigger(workflow, PRIVILEGED_TRIGGERS) {
+        for job in common::jobs(workflow) {
+            let steps = common::steps(&job);
+            if !steps.iter().any(checks_out_head) {
+                continue;
+            }
+            for step in steps.iter().filter(|step| uses_cache(workflow, step)) {
+                findings.push(common::finding(
+                    workflow,
+                    &CACHE_POISONING,
+                    step.key("uses"),
+                    step.location.clone(),
+                    "cache saved after pull request code ran on a privileged trigger reaches the base branch",
+                )?);
+            }
+        }
+    }
+
     let release = triggers.iter().any(|trigger| {
         trigger.name == "release"
             || (trigger.name == "push"
@@ -455,6 +481,17 @@ fn uses_cache(workflow: &Workflow, step: &common::Step) -> bool {
                 cache_input.is_some() && !disabled(cache_input)
             } else {
                 !disabled(cache_input)
+            }
+        }
+        // setup-uv's `enable-cache` defaults to false before v5, then to `auto`, which from v10 skips
+        // release, tag push, pull_request_target, and workflow_run runs (action.yml of each tag).
+        "astral-sh/setup-uv" => {
+            let major = maintainability::versioned_action(workflow, step)
+                .and_then(|(_, version)| version.first().copied());
+            match step.input("enable-cache") {
+                Some(Value::Bool(enabled)) => *enabled,
+                Some(Value::String(text)) if text != "auto" => text == "true",
+                _ => major.is_some_and(|major| (5..10).contains(&major)),
             }
         }
         "actions/setup-node"
