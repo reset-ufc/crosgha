@@ -21,3 +21,22 @@ jobs:
           persist-credentials: false
   reuse:
     uses: ./.github/workflows/reusable.yml
+  # harden-runner needs sudo on the VM, so it cannot monitor a container job on a hosted runner:
+  # https://github.com/step-security/harden-runner/blob/main/docs/limitations.md
+  in-container:
+    runs-on: ubuntu-24.04
+    container: node:22@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    timeout-minutes: 10
+    steps:
+      - run: npm test
+  slim:
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - run: echo slim
+  self-hosted-container: # expect: runtime-monitoring
+    runs-on: [self-hosted, linux]
+    container: node:22@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    timeout-minutes: 10
+    steps:
+      - run: npm test

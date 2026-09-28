@@ -158,9 +158,21 @@ pub fn self_hosted(workflow: &Workflow, options: Options) -> Result<Vec<Finding>
         .collect()
 }
 
+/// Jobs harden-runner cannot monitor: a whole job in a container on a GitHub-hosted runner, and
+/// `ubuntu-slim`.
+/// https://github.com/step-security/harden-runner/blob/main/docs/limitations.md
+fn unmonitorable(job: &common::Job<'_>) -> bool {
+    let labels = job_labels(job);
+    labels.contains(&"ubuntu-slim")
+        || job.get("container").is_some() && !labels.contains(&"self-hosted")
+}
+
 pub fn monitoring(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
+        if unmonitorable(&job) {
+            continue;
+        }
         let steps = common::steps(&job);
         let Some(first) = steps
             .iter()
