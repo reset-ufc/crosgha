@@ -6,6 +6,7 @@ use yamlpath::Route;
 use super::{
     Finding, Rule,
     common::{self, EXTERNAL_TRIGGERS, PRIVILEGED_TRIGGERS},
+    maintainability,
 };
 use crate::{
     policy::{Persona, Severity},
@@ -417,7 +418,7 @@ pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     if release {
         for job in common::jobs(workflow) {
             for step in common::steps(&job) {
-                if uses_cache(&step) {
+                if uses_cache(workflow, &step) {
                     findings.push(common::finding(
                         workflow,
                         &CACHE_POISONING,
@@ -432,7 +433,7 @@ pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-fn uses_cache(step: &common::Step) -> bool {
+fn uses_cache(workflow: &Workflow, step: &common::Step) -> bool {
     let Some(uses) = step.uses() else {
         return false;
     };
@@ -446,8 +447,16 @@ fn uses_cache(step: &common::Step) -> bool {
     };
     match name.as_str() {
         "actions/cache" | "actions/cache/restore" => true,
-        // setup-go caches by default since v4: https://github.com/actions/setup-go#caching-dependency-files-and-build-outputs
-        "actions/setup-go" => !disabled(cache_input),
+        // setup-go's `cache` defaults to true from v4 and to false before (action.yml of each tag).
+        "actions/setup-go" => {
+            let before_v4 = maintainability::versioned_action(workflow, step)
+                .is_some_and(|(_, version)| version.first().is_some_and(|major| *major < 4));
+            if before_v4 {
+                cache_input.is_some() && !disabled(cache_input)
+            } else {
+                !disabled(cache_input)
+            }
+        }
         "actions/setup-node"
         | "actions/setup-python"
         | "actions/setup-java"

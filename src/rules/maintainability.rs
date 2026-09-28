@@ -610,7 +610,10 @@ const ADOPT_SUCCESSORS: &[(&str, &str)] = &[
 
 /// `owner/repo` (lowercased, as GitHub resolves it) and the `major.minor...` numbers of a step's
 /// action, when its ref names a version.
-fn versioned_action(workflow: &Workflow, step: &common::Step<'_>) -> Option<(String, Vec<u64>)> {
+pub(super) fn versioned_action(
+    workflow: &Workflow,
+    step: &common::Step<'_>,
+) -> Option<(String, Vec<u64>)> {
     let action = step.uses().and_then(common::parse_uses)?;
     let version = online::ref_version(workflow, &step.key("uses"), action.git_ref)?;
     let name = format!("{}/{}", action.owner, action.repo).to_ascii_lowercase();
