@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0](https://github.com/meiazero/crosgha/compare/v0.10.0...v0.11.0) (2026-09-28)
+
+
+### Added
+
+* **rules:** flag actions/* versions built for a retired Node runtime ([3380ac4](https://github.com/meiazero/crosgha/commit/3380ac48d4691a45f1ed2591d49e91aa75b31813))
+
+
+### Fixed
+
+* **rules:** catch moving refs and conda installs in unpinned-package ([1af2c22](https://github.com/meiazero/crosgha/commit/1af2c22725835474a32fa5df601bfa65d63934dd))
+* **rules:** keep local hosts out of insecure-protocol ([f3f38aa](https://github.com/meiazero/crosgha/commit/f3f38aa8ece0c76e7198320a09de3f3fe29b0a84))
+* **rules:** spare workflow-level scopes that only one job inherits ([22c24c4](https://github.com/meiazero/crosgha/commit/22c24c452fc0ff952dd6f8a645712f84d0a66286))
+* **workflow:** parse files that start with a UTF-8 BOM ([f3d9633](https://github.com/meiazero/crosgha/commit/f3d9633964a5542e8323de566b74134eeeea821d))
+
+
+### Changed
+
+* parallel scan and rule fixes from the benchmark ([f96e87a](https://github.com/meiazero/crosgha/commit/f96e87a7ead4ac387f1b5cf903c81895f8124ba8))
+* **scan:** inspect workflows and repository dirs in parallel ([403b6d3](https://github.com/meiazero/crosgha/commit/403b6d3f23905aba804570c59012bbb47643ef6f))
+
 ## [0.10.0](https://github.com/meiazero/crosgha/compare/v0.9.0...v0.10.0) (2026-09-27)
 
 
