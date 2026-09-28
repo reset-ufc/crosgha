@@ -1,0 +1,35 @@
+name: References
+on: [push]
+permissions: {}
+jobs:
+  test:
+    strategy:
+      matrix:
+        node-v: [20, 22]
+        include:
+          - node-v: 24
+            experimental: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - id: meta
+        run: echo "version=1" >> "$GITHUB_OUTPUT"
+      - run: echo "${{ matrix.node }}" # expect: schema-validity
+      - run: echo "${{ matrix.node-v }} ${{ matrix.experimental }} ${{ matrix.NODE-V }}"
+      - run: echo "${{ steps.metadata.outputs.version }}" # expect: schema-validity
+      - if: steps.meta.outcome == 'success' && !contains('steps.nothing', 'x')
+        run: echo ok
+  dynamic:
+    strategy:
+      matrix: ${{ fromJSON(vars.MATRIX) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "${{ matrix.anything }}"
+  single:
+    runs-on: ${{ matrix.os }} # expect: schema-validity
+    timeout-minutes: 10
+    steps:
+      - run: echo single
