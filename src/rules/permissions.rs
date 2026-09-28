@@ -17,7 +17,7 @@ use crate::{
 // GHAST PERM-1 flags permissions declared only at the workflow level.
 pub const EXCESSIVE: Rule = Rule {
     id: "excessive-permissions",
-    summary: "GITHUB_TOKEN must not get write-all, or workflow-level write scopes that several jobs inherit.",
+    summary: "GITHUB_TOKEN must not get read-all, write-all, or workflow-level write scopes that several jobs inherit.",
     tag: "excessive-permissions",
     severity: Severity::Warning,
     persona: Persona::Regular,
@@ -80,40 +80,48 @@ fn inheriting_jobs(workflow: &Workflow) -> usize {
         .sum()
 }
 
+/// Why a `permissions` shorthand is excessive: it grants every scope instead of the ones a job uses.
+fn blanket(scope: &str) -> Option<&'static str> {
+    match scope {
+        "write-all" => Some("`write-all` grants every GITHUB_TOKEN scope"),
+        "read-all" => Some("`read-all` grants read access to every GITHUB_TOKEN scope"),
+        _ => None,
+    }
+}
+
 pub fn excessive(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
-    match workflow.value.get("permissions") {
-        Some(Value::String(scope)) if scope == "write-all" => findings.push(common::finding(
+    let scopes = workflow.value.get("permissions");
+    let wide_writes = scopes.and_then(Value::as_mapping).is_some_and(|scopes| {
+        scopes
+            .values()
+            .any(|access| access.as_str() == Some("write"))
+    }) && inheriting_jobs(workflow) > 1;
+    let message = scopes
+        .and_then(Value::as_str)
+        .and_then(blanket)
+        .or(wide_writes.then_some("write scopes at the workflow level reach every job"));
+    if let Some(message) = message {
+        findings.push(common::finding(
             workflow,
             &EXCESSIVE,
             permissions_route(),
             "workflow",
-            "`write-all` grants every GITHUB_TOKEN scope",
-        )?),
-        Some(Value::Mapping(scopes))
-            if inheriting_jobs(workflow) > 1
-                && scopes
-                    .values()
-                    .any(|access| access.as_str() == Some("write")) =>
-        {
-            findings.push(common::finding(
-                workflow,
-                &EXCESSIVE,
-                permissions_route(),
-                "workflow",
-                "write scopes at the workflow level reach every job",
-            )?)
-        }
-        _ => {}
+            message,
+        )?);
     }
     for job in common::jobs(workflow) {
-        if job.get("permissions").and_then(Value::as_str) == Some("write-all") {
+        if let Some(message) = job
+            .get("permissions")
+            .and_then(Value::as_str)
+            .and_then(blanket)
+        {
             findings.push(common::finding(
                 workflow,
                 &EXCESSIVE,
                 job.route.with_key("permissions"),
                 job.location(),
-                "`write-all` grants every GITHUB_TOKEN scope",
+                message,
             )?);
         }
     }

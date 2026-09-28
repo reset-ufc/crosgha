@@ -86,5 +86,9 @@
   "/repos/example/archived-workflows": {
     "default_branch": "main",
     "archived": true
+  },
+  "/repos/example/abandoned-release": {
+    "default_branch": "main",
+    "archived": true
   }
 }

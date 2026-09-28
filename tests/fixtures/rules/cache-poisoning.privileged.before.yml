@@ -1,0 +1,26 @@
+name: Pull request target
+on: pull_request_target
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      # The pull request's code runs where the saved cache is visible to the base branch.
+      - uses: actions/setup-node@v5 # expect: cache-poisoning
+        with:
+          cache: npm
+      - run: npm ci && npm test
+  label:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/cache@v5
+        with:
+          path: ~/.npm
+          key: npm
+      - run: echo label

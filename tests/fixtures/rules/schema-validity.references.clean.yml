@@ -1,0 +1,29 @@
+name: References
+on: [push]
+permissions: {}
+jobs:
+  test:
+    strategy:
+      matrix:
+        node-v: [20, 22]
+        include:
+          - node-v: 24
+            experimental: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - id: meta
+        run: echo "version=1" >> "$GITHUB_OUTPUT"
+      - run: echo "${{ matrix.node-v }}"
+      - run: echo "${{ matrix.node-v }} ${{ matrix.experimental }} ${{ matrix.NODE-V }}"
+      - run: echo "${{ steps.meta.outputs.version }}"
+  single:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - run: echo single

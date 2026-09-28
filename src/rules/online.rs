@@ -342,6 +342,46 @@ pub fn archived(
     Ok(findings)
 }
 
+/// Archived action repositories of the `actions` and `actions-rs` organizations: `archived: true`
+/// with an `action.yml`, from the GitHub API on 2026-09-27. `archived-action` reports them without a
+/// token; with one, the online check covers every repository and this list is not used.
+// ponytail: two organizations only; add others once their archived actions are verified the same way.
+const KNOWN_ARCHIVED: &[&str] = &[
+    "actions-rs/audit-check",
+    "actions-rs/cargo",
+    "actions-rs/clippy",
+    "actions-rs/clippy-check",
+    "actions-rs/components-nightly",
+    "actions-rs/grcov",
+    "actions-rs/install",
+    "actions-rs/tarpaulin",
+    "actions-rs/toolchain",
+    "actions/create-release",
+    "actions/setup-elixir",
+    "actions/setup-haskell",
+    "actions/setup-ruby",
+    "actions/upload-release-asset",
+];
+
+pub fn archived_offline(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    pins(workflow)
+        .into_iter()
+        .filter(|pin| {
+            let name = format!("{}/{}", pin.owner, pin.repo).to_ascii_lowercase();
+            KNOWN_ARCHIVED.contains(&name.as_str())
+        })
+        .map(|pin| {
+            common::finding(
+                workflow,
+                &ARCHIVED,
+                pin.route,
+                pin.location,
+                format!("{}/{} is archived", pin.owner, pin.repo),
+            )
+        })
+        .collect()
+}
+
 pub fn settings(github: &GitHub, repository: &str, path: &Path) -> Result<Vec<Located>, String> {
     let Some(workflow) =
         github.get(&format!("/repos/{repository}/actions/permissions/workflow"))?

@@ -28,5 +28,12 @@ jobs:
         with:
           cache: true
       - uses: actions/setup-go@v4 # expect: cache-poisoning
+      # setup-uv caches by default from v5; from v10 its `auto` default skips release and tag runs.
+      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v7 # expect: cache-poisoning
+      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10 # expect: cache-poisoning
+        with:
+          enable-cache: true
   publish:
     uses: ./.github/workflows/publish.yml

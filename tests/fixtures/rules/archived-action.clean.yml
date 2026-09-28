@@ -1,0 +1,13 @@
+name: Archived actions offline
+on: [push]
+permissions: {}
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: softprops/action-gh-release@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
