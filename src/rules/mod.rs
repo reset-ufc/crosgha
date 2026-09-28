@@ -213,6 +213,10 @@ const ONLINE: &[(&Rule, OnlineDetect)] = &[
     (&online::ARCHIVED, online::archived),
 ];
 
+/// Offline stand-ins for online rules, run only without GitHub API access. Their rules are listed
+/// through `ONLINE`, so they are not repeated in `all()`.
+const OFFLINE: &[(&Rule, Detect)] = &[(&online::ARCHIVED, online::archived_offline)];
+
 const REPOSITORY: &[(&Rule, RepositoryDetect)] = &[
     (&repository::COOLDOWN, repository::cooldown),
     (&repository::TOOLING, repository::tooling),
@@ -352,6 +356,12 @@ pub fn detect_all(
         for (rule, detect) in ONLINE {
             if enabled(rule, settings) {
                 findings.extend(detect(workflow, github, settings.config.options(rule))?);
+            }
+        }
+    } else {
+        for (rule, detect) in OFFLINE {
+            if enabled(rule, settings) {
+                findings.extend(detect(workflow)?);
             }
         }
     }

@@ -147,6 +147,8 @@ Rules with scope `online` in the [rule table](#rules) query the GitHub API.
 - **GitHub Enterprise Server:** `--gh-hostname` (or `GH_HOST`). It also turns off the checks that describe github.com:
   retired runner images and shut-down action versions in `removed-feature`, and `retired-runtime`.
 - **`repo-org-settings`** also needs `--repository owner/name` (or `GITHUB_REPOSITORY`).
+- **Without the API,** `archived-action` still reports the archived actions of the `actions` and `actions-rs`
+  organizations from a built-in list.
 
 ### Config file
 
