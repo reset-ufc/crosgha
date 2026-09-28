@@ -1,4 +1,12 @@
+use std::{
+    num::NonZero,
+    path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
+    thread,
+};
+
 use crate::{
+    filesystem,
     fix::{self, FixOutcome},
     policy::Settings,
     rules::{self, Finding},
@@ -30,4 +38,56 @@ pub fn inspect(
         findings,
         fix,
     })
+}
+
+/// Reads and inspects `paths` in parallel.
+pub fn inspect_files(
+    paths: &[PathBuf],
+    apply_fixes: bool,
+    settings: &Settings,
+) -> Vec<Result<Inspection, String>> {
+    parallel_map(paths, |path| {
+        let file = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        filesystem::read(path, apply_fixes)
+            .and_then(|source| inspect(source, apply_fixes, settings, &file))
+    })
+}
+
+/// Maps `items` on every available core. Results keep the order of `items`, so reports stay
+/// deterministic.
+pub fn parallel_map<T: Sync, R: Send>(items: &[T], map: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let next = AtomicUsize::new(0);
+    let workers = thread::available_parallelism()
+        .map_or(1, NonZero::get)
+        .min(items.len());
+    let mut done: Vec<(usize, R)> = thread::scope(|scope| {
+        let workers: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    // Items differ widely in cost, so each worker takes the next one when free.
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(index) else {
+                            break done;
+                        };
+                        done.push((index, map(item)));
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    done.sort_by_key(|(index, _)| *index);
+    done.into_iter().map(|(_, result)| result).collect()
 }
