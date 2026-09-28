@@ -1,0 +1,15 @@
+name: Read everything
+on: [push]
+permissions: read-all # expect: excessive-permissions
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo build
+  scan:
+    permissions: read-all # expect: excessive-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo scan

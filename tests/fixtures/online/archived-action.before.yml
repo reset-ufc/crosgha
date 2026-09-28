@@ -8,5 +8,5 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/create-release@v1 # expect: archived-action
+      - uses: example/abandoned-release@v1 # expect: archived-action
       - uses: actions/checkout@v4

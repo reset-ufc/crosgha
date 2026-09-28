@@ -207,6 +207,7 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 ));
             }
         }
+        problems.extend(undefined_references(&job));
         if job.get("runs-on").is_none() && job.get("uses").is_none() {
             problems.push((
                 job.route.clone(),
@@ -290,6 +291,112 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         .into_iter()
         .map(|(route, location, message)| {
             common::finding(workflow, &SCHEMA, route, location, message)
+        })
+        .collect()
+}
+
+/// `matrix.<key>` and `steps.<id>` references in a job that name no key of its matrix and no step
+/// `id`. A matrix built from an expression is skipped, since its keys are known only at run time.
+fn undefined_references(job: &common::Job<'_>) -> Vec<(Route<'static>, String, String)> {
+    let matrix = job
+        .get("strategy")
+        .and_then(|strategy| strategy.get("matrix"));
+    let matrix_keys: Option<Vec<String>> = match matrix {
+        None => Some(Vec::new()),
+        Some(Value::Mapping(matrix)) => {
+            let include = match matrix.get("include") {
+                None => Some(Vec::new()),
+                Some(Value::Sequence(entries)) => entries
+                    .iter()
+                    .map(|entry| {
+                        entry
+                            .as_mapping()
+                            .map(|entry| entry.keys().collect::<Vec<_>>())
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|keys| keys.concat()),
+                Some(_) => None,
+            };
+            include.map(|include| {
+                matrix
+                    .keys()
+                    .chain(include)
+                    .filter_map(Value::as_str)
+                    .filter(|key| !matches!(*key, "include" | "exclude"))
+                    .map(str::to_ascii_lowercase)
+                    .collect()
+            })
+        }
+        Some(_) => None,
+    };
+    let step_ids: Vec<String> = common::steps(job)
+        .iter()
+        .filter_map(|step| step.value.get("id").and_then(Value::as_str))
+        .map(str::to_ascii_lowercase)
+        .collect();
+
+    let mut expressions: Vec<(Route<'static>, &str)> = Vec::new();
+    common::strings(job.value, &job.route, &mut |route, text| {
+        for expression in common::expressions(text) {
+            expressions.push((route.clone(), expression));
+        }
+    });
+    // `if` is an expression even without `${{ }}`.
+    let conditions = std::iter::once((job.route.clone(), job.value)).chain(
+        common::steps(job)
+            .into_iter()
+            .map(|step| (step.route.clone(), step.value)),
+    );
+    for (route, value) in conditions {
+        if let Some(condition) = value.get("if").and_then(Value::as_str)
+            && !condition.contains("${{")
+        {
+            expressions.push((route.with_key("if"), condition));
+        }
+    }
+
+    let mut problems = Vec::new();
+    for (route, expression) in expressions {
+        if let Some(keys) = &matrix_keys {
+            for key in context_names(expression, "matrix") {
+                if !keys.contains(&key.to_ascii_lowercase()) {
+                    problems.push((
+                        route.clone(),
+                        job.location(),
+                        format!("`matrix.{key}` is not a key of this job's matrix"),
+                    ));
+                }
+            }
+        }
+        for id in context_names(expression, "steps") {
+            if !step_ids.contains(&id.to_ascii_lowercase()) {
+                problems.push((
+                    route.clone(),
+                    job.location(),
+                    format!("`steps.{id}` names no step `id` in this job"),
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// Property names read as `<context>.<name>` in an expression, outside string literals.
+fn context_names<'a>(expression: &'a str, context: &str) -> Vec<&'a str> {
+    let prefix = format!("{context}.");
+    let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    expression
+        .split('\'')
+        .step_by(2)
+        .flat_map(|code| {
+            code.match_indices(prefix.as_str())
+                .filter(|(index, _)| !code[..*index].ends_with(|c: char| is_name(c) || c == '.'))
+                .map(|(index, _)| {
+                    let rest = &code[index + prefix.len()..];
+                    &rest[..rest.find(|c: char| !is_name(c)).unwrap_or(rest.len())]
+                })
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
         })
         .collect()
 }

@@ -1,0 +1,15 @@
+name: Archived actions offline
+on: [push]
+permissions: {}
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/create-release@0cb9c9b65d5d1901c1f53e5e66eaf4afd303e70e # v1.1.4 # expect: archived-action
+      - uses: Actions-RS/Toolchain@v1 # expect: archived-action
+      - uses: actions-rs/cargo@v1 # expect: archived-action
+      # Unknown offline: only online mode can tell whether other repositories are archived.
+      - uses: example/abandoned-release@v1
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
