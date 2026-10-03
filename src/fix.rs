@@ -58,14 +58,32 @@ pub fn apply(
         },
         false => (workflow, false, false),
     };
+    // Findings of `current`. The caller's findings describe it until the source is normalized;
+    // after that, each accepted patch's validation has already found them.
+    let mut known: Option<Vec<Finding>> = None;
+    let normalized = crlf || unterminated;
     let mut attempts = Vec::new();
     for (index, finding) in findings.iter().enumerate() {
         let Some(proposal) = &finding.fix else {
             continue;
         };
-        let rejected = match patch(&current, finding, proposal, settings, file) {
-            Ok(next) => {
+        if normalized && known.is_none() {
+            match rules::detect_all(&current, settings, file) {
+                Ok(found) => known = Some(found),
+                Err(reason) => {
+                    attempts.push(Attempt {
+                        finding: index,
+                        rejected: Some(reason),
+                    });
+                    continue;
+                }
+            }
+        }
+        let before = known.as_deref().unwrap_or(findings);
+        let rejected = match patch(&current, finding, proposal, before, settings, file) {
+            Ok((next, after)) => {
                 current = next;
+                known = Some(after);
                 None
             }
             Err(reason) => Some(reason),
@@ -75,7 +93,10 @@ pub fn apply(
             rejected,
         });
     }
-    let remaining = rules::detect_all(&current, settings, file)?;
+    let remaining = match known {
+        Some(found) => found,
+        None => rules::detect_all(&current, settings, file)?,
+    };
     let mut source = current.document.source();
     if unterminated {
         source = source.strip_suffix('\n').unwrap_or(source);
@@ -90,19 +111,20 @@ pub fn apply(
     })
 }
 
+/// The patched workflow and its findings, once the patch passes validation.
 fn patch(
     current: &Workflow,
     finding: &Finding,
     proposal: &ProposedFix,
+    before: &[Finding],
     settings: &Settings,
     file: &str,
-) -> Result<Workflow, String> {
-    let before = rules::detect_all(current, settings, file)?;
+) -> Result<(Workflow, Vec<Finding>), String> {
     let patched = apply_yaml_patches(&current.document, std::slice::from_ref(&proposal.patch))
         .map_err(|error| error.to_string())?;
     let next = Workflow::parse(patched.source().to_owned())?;
-    validate_change(current, &next, finding, proposal, &before, settings, file)?;
-    Ok(next)
+    let after = validate_change(current, &next, finding, proposal, before, settings, file)?;
+    Ok((next, after))
 }
 
 fn validate_change(
@@ -113,7 +135,7 @@ fn validate_change(
     old_findings: &[Finding],
     settings: &Settings,
     file: &str,
-) -> Result<(), String> {
+) -> Result<Vec<Finding>, String> {
     let new_findings = rules::detect_all(after, settings, file)?;
     if new_findings
         .iter()
@@ -180,7 +202,7 @@ fn validate_change(
     if !only_target {
         return Err("fix changed YAML outside the intended node".to_owned());
     }
-    Ok(())
+    Ok(new_findings)
 }
 
 /// `end` without the blank and comment lines that close `source[start..end]`: the parser counts
