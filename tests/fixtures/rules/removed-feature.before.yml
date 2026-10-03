@@ -91,3 +91,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo monterey
+  nested:
+    strategy:
+      matrix:
+        config: [{ os: ubuntu-24.04 }, { os: ubuntu-20.04 }]
+    runs-on: ${{ matrix.config.os }} # expect: removed-feature
+    timeout-minutes: 10
+    steps:
+      - run: echo nested

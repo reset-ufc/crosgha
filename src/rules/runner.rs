@@ -53,8 +53,9 @@ const UNTRUSTED_RUNNER_TRIGGERS: &[&str] = &[
 ];
 
 /// Literal runner labels of a job from the string, list, and `labels` mapping forms of
-/// `runs-on`. A label that is exactly `${{ matrix.<key> }}` expands to the literal values under
-/// `strategy.matrix.<key>` and `strategy.matrix.include[*].<key>`; other expressions are dropped.
+/// `runs-on`. A label that is exactly `${{ matrix.<key> }}`, or a dotted path into a matrix value
+/// such as `${{ matrix.config.os }}`, expands to the literal values under `strategy.matrix` and
+/// `strategy.matrix.include[*]`; other expressions are dropped.
 pub(super) fn job_labels<'a>(job: &common::Job<'a>) -> Vec<&'a str> {
     let Some(runs_on) = job.get("runs-on") else {
         return Vec::new();
@@ -81,23 +82,29 @@ pub(super) fn job_labels<'a>(job: &common::Job<'a>) -> Vec<&'a str> {
         .collect()
 }
 
-/// `key` when `label` is exactly `${{ matrix.<key> }}`.
+/// The dotted path when `label` is exactly `${{ matrix.<key>[.<key>...] }}`.
 fn matrix_key(label: &str) -> Option<&str> {
     let inner = label.trim().strip_prefix("${{")?.strip_suffix("}}")?.trim();
-    inner.strip_prefix("matrix.").filter(|key| {
-        !key.is_empty()
-            && key
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    inner.strip_prefix("matrix.").filter(|path| {
+        path.split('.').all(|key| {
+            !key.is_empty()
+                && key
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
     })
 }
 
-fn matrix_values<'a>(matrix: Option<&'a Value>, key: &str) -> Vec<&'a str> {
+/// Literal values at `path` (`key` or `key.nested...`) under `matrix.<key>` and
+/// `matrix.include[*].<key>`.
+fn matrix_values<'a>(matrix: Option<&'a Value>, path: &str) -> Vec<&'a str> {
     let Some(matrix) = matrix else {
         return Vec::new();
     };
+    let mut keys = path.split('.');
+    let first = keys.next().unwrap_or("");
     let direct = matrix
-        .get(key)
+        .get(first)
         .and_then(Value::as_sequence)
         .into_iter()
         .flatten();
@@ -106,10 +113,17 @@ fn matrix_values<'a>(matrix: Option<&'a Value>, key: &str) -> Vec<&'a str> {
         .and_then(Value::as_sequence)
         .into_iter()
         .flatten()
-        .filter_map(|entry| entry.get(key));
+        .filter_map(|entry| entry.get(first));
+    let mut values: Vec<&Value> = direct.chain(include).collect();
+    for key in keys {
+        values = values
+            .into_iter()
+            .filter_map(|value| value.get(key))
+            .collect();
+    }
     // A matrix value may itself be a list of labels, as in `runner: [[self-hosted, linux]]`.
-    direct
-        .chain(include)
+    values
+        .into_iter()
         .flat_map(|value| match value {
             Value::Sequence(labels) => labels.iter().filter_map(Value::as_str).collect(),
             other => other.as_str().into_iter().collect::<Vec<_>>(),
