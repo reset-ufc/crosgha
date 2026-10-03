@@ -92,8 +92,9 @@ unchanged under `--fix` and remain visible in the report.
    back.
 4. Prepare all files before writing any file. Write each changed file through
    a same-directory temporary file, preserving permissions and renaming it
-   over the original. An I/O failure during a later rename can leave earlier
-   files fixed; there is no cross-file transaction.
+   over the original. A symbolic link is never replaced. A failed write is
+   reported, exits with status 2, and leaves the other files fixed; there is no
+   cross-file transaction.
 
 This validation applies to every new rule's fix. A rule that cannot describe
 and verify its intended node changes remains detection-only.

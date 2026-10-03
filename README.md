@@ -195,20 +195,21 @@ the run fail.
 | `--format` | Output |
 |---|---|
 | `text` (default; `plain` in zizmor) | One rustc-style diagnostic per finding: the source line with the node underlined, the rule's help, and the equivalent rule in other tools, such as `same as zizmor: template-injection; actionlint: expression`. A summary counts findings by severity. |
-| `json` | Versioned report: `version`, `summary`, `findings`, and `errors` for workflows that failed to parse. |
+| `json` | Versioned report: `version`, `summary`, `findings`, `errors` for workflows that failed to parse, and under `--fix` a `fixes` entry per proposed fix with its status (`applied`, `rejected`, or `not-written`) and reason. |
 | `sarif` | SARIF 2.1.0 with the rule metadata GitHub code scanning requires; it validates against the official schema. Columns count UTF-16 code units (`columnKind`), and repository-wide findings have no file location. Parse failures are `toolExecutionNotifications` of the invocation. |
 | `github` | Workflow-command annotations. The default when `GITHUB_ACTIONS=true`. |
 | `agent` | One brief line per finding for AI agents: `path:line:col: severity rule: message help: <rule summary>`, after oxlint's format of the same name. |
 
 `--sarif-file FILE` also writes SARIF during any format, so one run serves the log and the Security tab. After `--fix`,
-every format lists what remains. Text is colored on a terminal; `--color always|never` overrides that, and `NO_COLOR`
+every format lists what remains on disk: the findings left in each written file, and the original findings of a file
+whose fixes were not written. Text is colored on a terminal; `--color always|never` overrides that, and `NO_COLOR`
 turns it off.
 
 | Exit status | Meaning |
 |---|---|
 | 0 | No finding reaches `--fail-on`. |
 | 1 | A finding does. |
-| 2 | A path, workflow, config, write, or API call failed. No file is changed; findings in the workflows that did parse are still reported, and JSON and SARIF list the failed files. A failed API call skips only the online checks that needed it; stderr names it. |
+| 2 | A path, workflow, config, write, or API call failed. Findings in the workflows that did parse are still reported, and JSON and SARIF list the failed files. A workflow that fails to parse, or a failed API call, means no file is changed; a failed write leaves the other files fixed. A failed API call skips only the online checks that needed it; stderr names it. |
 
 ## Fixes
 
@@ -217,6 +218,10 @@ turns it off.
 1. the patched YAML parses;
 2. the targeted finding disappears and no new finding appears;
 3. only the intended YAML node changed.
+
+A fix that fails a check is skipped: its finding stays in the report with the reason ("Not fixed" in text, `fixes` in
+JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
+workflow is never rewritten; its fixes are reported as not written.
 
 Two rules have fixes:
 
