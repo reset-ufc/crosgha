@@ -579,7 +579,7 @@ fn inline_ignores_accept_crosgha_and_zizmor_rule_ids() {
 }
 
 #[test]
-fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
+fn missing_release_cooldown_and_missing_security_tooling_check_the_repository() {
     let scan = |repo: &str| {
         let output = bin()
             .args(["--persona", "auditor", "--offline", "--fail-on", "none"])
@@ -638,7 +638,7 @@ fn repository_rules_check_dependabot_cooldown_and_security_tooling() {
 }
 
 #[test]
-fn repository_rules_flag_retired_node_runtimes() {
+fn retired_runtime_flags_local_actions_of_the_repository() {
     let output = bin()
         .args(["--offline", "--fail-on", "none"])
         .arg(fixture("repos/runtime/.github/workflows"))

@@ -517,7 +517,7 @@ fn unreadable_repository_settings_skip_only_that_rule() {
 }
 
 #[test]
-fn repository_settings_are_read_for_the_named_repository() {
+fn repo_org_settings_are_read_for_the_named_repository() {
     let workflow = fixtures().join("online/archived-action.clean.yml");
     let api = fake_github();
     let output = bin()
@@ -579,12 +579,23 @@ fn repository_settings_are_read_for_the_named_repository() {
 fn every_registered_rule_has_a_fixture() {
     let output = bin().arg("--list-rules").output().unwrap();
     assert!(output.status.success());
-    let tests: String = ["tests/cli.rs", "tests/rules.rs"]
-        .iter()
-        .map(|file| {
-            fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap()
-        })
-        .collect();
+    // Names of the `#[test]` functions: a repository rule is covered by a test named after it.
+    let mut tests: Vec<String> = Vec::new();
+    for file in ["tests/cli.rs", "tests/rules.rs"] {
+        let source =
+            fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
+        let mut lines = source.lines();
+        while let Some(line) = lines.next() {
+            if line.trim() == "#[test]"
+                && let Some(name) = lines
+                    .next()
+                    .and_then(|next| next.strip_prefix("fn "))
+                    .and_then(|next| next.split_once('('))
+            {
+                tests.push(name.0.to_owned());
+            }
+        }
+    }
     let missing: Vec<String> = String::from_utf8(output.stdout)
         .unwrap()
         .lines()
@@ -596,7 +607,10 @@ fn every_registered_rule_has_a_fixture() {
                 "online" => fixtures()
                     .join(format!("online/{rule}.before.yml"))
                     .exists(),
-                _ => tests.contains(&format!("\"{rule}\"")) || tests.contains(&format!("[{rule}]")),
+                _ => {
+                    let name = rule.replace('-', "_");
+                    tests.iter().any(|test| test.contains(&name))
+                }
             };
             (!covered).then(|| format!("{rule} ({scope})"))
         })

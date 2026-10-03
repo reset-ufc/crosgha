@@ -65,8 +65,8 @@ It is listed in `.git/info/exclude` and never committed.
    detect whether code changed.
 6. Bug fixes get a regression test only when existing behavior tests leave a real gap.
 7. Every rule ships with YAML fixtures. Workflow rules live in `tests/fixtures/rules/`,
-   online rules live in `tests/fixtures/online/`, and repository rules have a named test in
-   `tests/cli.rs` or `tests/rules.rs`. `tests/rules.rs` checks each `.before.yml` against its
+   online rules live in `tests/fixtures/online/`, and repository rules have a test in
+   `tests/cli.rs` or `tests/rules.rs` whose name contains the rule id (`-` → `_`). `tests/rules.rs` checks each `.before.yml` against its
    `# expect: <rule>` markers and fails when a registered rule has no fixture. Markers count:
    `# expect: <rule>, <rule>` requires two findings of that rule on the line. The hand-written
    `.clean.yml` applies the remediation and must not be reported. `.after.yml` is never written by
