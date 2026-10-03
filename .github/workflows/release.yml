@@ -314,7 +314,8 @@ jobs:
           NEEDS_PLAN_OUTPUTS_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           # If we're editing a release in place, we need to upload things ahead of time
-          gh release upload "${NEEDS_PLAN_OUTPUTS_TAG}" artifacts/*
+          # --clobber lets a re-run of this job replace assets a failed attempt already uploaded.
+          gh release upload --clobber "${NEEDS_PLAN_OUTPUTS_TAG}" artifacts/*
 
           gh release edit "${NEEDS_PLAN_OUTPUTS_TAG}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --draft=false
 
