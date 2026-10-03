@@ -70,7 +70,7 @@ fn refuse_foreign(hook: &Path) -> Result<(), String> {
     // Anything that exists but cannot be read as our script (non-UTF-8, a directory,
     // unreadable, a dangling symlink) is someone else's hook too.
     match fs::read_to_string(hook) {
-        Ok(script) if script.contains(MARKER) => Ok(()),
+        Ok(script) if is_ours(&script) => Ok(()),
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound
                 && fs::symlink_metadata(hook).is_err() =>
@@ -82,6 +82,39 @@ fn refuse_foreign(hook: &Path) -> Result<(), String> {
             hook.display()
         )),
     }
+}
+
+/// Only the stored arguments vary, so a copy the user edited, marker included, is theirs.
+/// The template must stay byte-identical, or hooks from earlier releases become foreign.
+fn is_ours(content: &str) -> bool {
+    content
+        .lines()
+        .find_map(|line| line.strip_prefix("crosgha"))
+        .and_then(unquote)
+        .is_some_and(|args| script(&args) == content)
+}
+
+/// Inverse of `quote` over a line of ` '…'` words; `None` for anything `quote` cannot produce.
+fn unquote(mut rest: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    while !rest.is_empty() {
+        rest = rest.strip_prefix(" '")?;
+        let mut arg = String::new();
+        loop {
+            let end = rest.find('\'')?;
+            arg.push_str(&rest[..end]);
+            rest = &rest[end + 1..];
+            match rest.strip_prefix(r"\''") {
+                Some(next) => {
+                    arg.push('\'');
+                    rest = next;
+                }
+                None => break,
+            }
+        }
+        args.push(arg);
+    }
+    Some(args)
 }
 
 /// The pre-push hook git would run, after `core.hooksPath` and worktrees, and the directories

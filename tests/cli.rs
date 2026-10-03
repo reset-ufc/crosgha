@@ -1945,6 +1945,45 @@ fn hook_install_stays_inside_the_repository_it_was_run_in() {
 }
 
 #[test]
+fn hook_install_treats_an_edited_copy_of_its_script_as_foreign() {
+    let work = git_repo("copy");
+    let run = |args: &[&str]| {
+        bin()
+            .current_dir(&work)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let installed = run(&["hook", "install", "--", "--offline"]);
+    assert!(installed.status.success(), "{}", combined(&installed));
+    let hook = work.join(".git/hooks/pre-push");
+    let generated = fs::read_to_string(&hook).unwrap();
+
+    // What a user who follows "add `crosgha` to it by hand" ends up with.
+    for edited in [
+        format!("{generated}make check\n"),
+        generated.replace("crosgha '--offline'", "crosgha '--offline' && make check"),
+    ] {
+        fs::write(&hook, &edited).unwrap();
+        for command in [&["hook", "install"][..], &["hook", "uninstall"][..]] {
+            let refused = run(command);
+            assert_eq!(refused.status.code(), Some(2), "{}", combined(&refused));
+            assert_eq!(fs::read_to_string(&hook).unwrap(), edited);
+        }
+    }
+
+    // Our own script stays ours, even with quotes inside its stored arguments.
+    fs::write(&hook, &generated).unwrap();
+    let reinstalled = run(&["hook", "install", "--", "--persona", "pedantic", "a 'b' c"]);
+    assert!(reinstalled.status.success(), "{}", combined(&reinstalled));
+    let removed = run(&["hook", "uninstall"]);
+    assert!(removed.status.success(), "{}", combined(&removed));
+    assert!(!hook.exists());
+    fs::remove_dir_all(work.parent().unwrap()).unwrap();
+}
+
+#[test]
 fn text_report_points_at_the_source_and_colors_only_on_request() {
     let scan = |extra: &[&str]| {
         let output = bin()
