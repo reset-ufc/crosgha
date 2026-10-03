@@ -207,7 +207,18 @@ const UNTRUSTED_SUFFIXES: &[&str] = &[
     "title",
     // `workflow_run.head_branch` is the head_ref of the run's pull request under another name.
     "head_branch",
+    // `workflow_run.display_title` defaults to the commit message or pull request title:
+    // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#run-name
+    // and `display_title` in https://docs.github.com/en/rest/actions/workflow-runs
+    "display_title",
 ];
+
+/// `changes.<field>.from` of an `edited` event is the field's previous text, so an untrusted
+/// `<field>` stays untrusted (`webhook-issues-edited` and the other `edited` payloads):
+/// https://docs.github.com/en/webhooks/webhook-events-and-payloads
+fn previous_untrusted_text(segments: &[&str]) -> bool {
+    matches!(segments, [.., "changes", field, "from"] if UNTRUSTED_SUFFIXES.contains(field))
+}
 
 /// Event payload objects that carry the free text above; `toJSON` of one, or of `github` or
 /// `github.event` as a whole, serializes that text into the script.
@@ -259,7 +270,8 @@ pub fn untrusted_contexts(expression: &str) -> Vec<String> {
         let untrusted = segments.as_slice() == ["github", "head_ref"]
             || (segments.len() > 2
                 && segments[1] == "event"
-                && UNTRUSTED_SUFFIXES.contains(segments.last().unwrap()))
+                && (UNTRUSTED_SUFFIXES.contains(segments.last().unwrap())
+                    || previous_untrusted_text(&segments)))
             || whole_object;
         if untrusted {
             found.push(path.to_owned());

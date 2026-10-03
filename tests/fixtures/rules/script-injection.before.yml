@@ -26,6 +26,12 @@ jobs:
       - run: echo '${{ toJSON(github.event.issue) }}' | jq .labels # expect: script-injection
       - run: echo '${{ toJSON(github) }}' # expect: script-injection
       - run: echo "${{ github.event.workflow_run.head_branch }}" # expect: script-injection
+      # The run's title is the triggering commit message or pull request title; `changes` holds
+      # the text an `edited` event replaced.
+      - run: echo "${{ github.event.workflow_run.display_title }}" # expect: script-injection
+      - run: echo "${{ github.event.changes.title.from }}" # expect: script-injection
+      - run: echo "${{ github.event.changes.body.from }}" # expect: script-injection
+      - run: echo "${{ github.event.changes.base.sha.from }}"
       - run: echo "${{ github.event.issue }} ${{ inputs.github_token }}"
       - run: echo '${{ toJSON(github.event.sender) }}'
       - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

@@ -12,6 +12,9 @@ jobs:
       - uses: actions/ai-inference@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: llm-prompt-injection
         with:
           prompt: "Label this pull request: ${{ toJSON(github.event.pull_request) }}"
+      - uses: anthropics/claude-code-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: llm-prompt-injection
+        with:
+          prompt: "Explain why run '${{ github.event.workflow_run.display_title }}' failed"
       - uses: google-github-actions/run-gemini-cli@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with:
           prompt: Review the diff
