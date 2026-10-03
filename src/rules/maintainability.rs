@@ -631,6 +631,16 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 /// https://github.blog/changelog/2025-07-11-upcoming-changes-to-macos-hosted-runners-macos-latest-migration-and-xcode-support-policy-updates/
 // ponytail: a fixed list with no runtime lookup; add each image when GitHub retires it.
 const RETIRED_RUNNERS: &[(&str, &str)] = &[
+    // https://github.com/actions/runner-images/issues/3287
+    ("ubuntu-16.04", "2021-09-20"),
+    // https://github.com/actions/runner-images/issues/4312
+    ("windows-2016", "2022-03-15"),
+    // https://github.com/actions/runner-images/issues/5583
+    ("macos-10.15", "2022-12-01"),
+    // https://github.blog/changelog/2024-05-20-actions-upcoming-changes-to-github-hosted-macos-runners/
+    ("macos-11", "2024-06-28"),
+    // https://github.com/actions/runner-images/issues/10721
+    ("macos-12", "2024-12-03"),
     ("ubuntu-18.04", "2023-04-03"),
     ("ubuntu-20.04", "2025-04-15"),
     ("windows-2019", "2025-06-30"),
