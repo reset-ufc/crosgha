@@ -547,14 +547,20 @@ fn a_workflow_edited_during_the_scan_is_not_overwritten() {
             );
         }
     });
+    let sarif = path.with_extension("sarif");
     let output = bin()
         .args(["--fix", "--no-config", "-f", "json", "--gh-token", "t"])
         .args(["--gh-hostname", &api])
+        .arg("--sarif-file")
+        .arg(&sarif)
         .arg(&path)
         .output()
         .unwrap();
     let after = fs::read_to_string(&path).unwrap();
+    let sarif: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&sarif).unwrap()).unwrap();
     fs::remove_file(&path).unwrap();
+    fs::remove_file(path.with_extension("sarif")).unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(after, edited);
@@ -570,6 +576,17 @@ fn a_workflow_edited_during_the_scan_is_not_overwritten() {
     assert_eq!(
         fix["reason"], "file changed since it was read",
         "{report:#}"
+    );
+    // The failed write is a run error in every machine-readable format, not a success.
+    assert_eq!(report["summary"]["errors"], 1, "{report:#}");
+    let error = &report["errors"][0];
+    assert_eq!(error["message"], "file changed since it was read");
+    assert!(error["path"].as_str().unwrap().ends_with(".yml"), "{error}");
+    let invocation = &sarif["runs"][0]["invocations"][0];
+    assert_eq!(invocation["executionSuccessful"], false, "{invocation:#}");
+    assert_eq!(
+        invocation["toolExecutionNotifications"][0]["message"]["text"],
+        "file changed since it was read"
     );
 }
 
@@ -705,7 +722,7 @@ fn fixes_regular_workflows_but_refuses_to_write_through_symlinks() {
     );
     let stdout = String::from_utf8(fix.stdout).unwrap();
     assert!(
-        stdout.contains("Fixed 3 findings in 1 workflow file."),
+        stdout.contains("Fixed 3 findings in 1 workflow file (1 failed)."),
         "{stdout}"
     );
     assert_eq!(

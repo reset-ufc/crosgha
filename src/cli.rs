@@ -258,7 +258,7 @@ pub fn run() -> ExitCode {
             Err(error) => {
                 report::error(format_args!("{}: {error}", path.display()));
                 failures.push(report::FileError {
-                    path,
+                    path: Some(path),
                     message: error,
                 });
             }
@@ -331,13 +331,12 @@ pub fn run() -> ExitCode {
     // needed the answer; the rest is still reported. The scan is then incomplete and exits 2
     // without writing fixes, so CI does not pass on checks that never ran. A settings read the token
     // is not permitted to make is expected in Actions and only skips `repo-org-settings`.
-    let mut incomplete = false;
+    let mut skipped = Vec::new();
     if let Some(github) = &settings.github {
         for failure in github.failures() {
-            report::warning(format_args!(
-                "{failure}; online checks that needed it were skipped"
-            ));
-            incomplete = true;
+            let message = format!("{failure}; online checks that needed it were skipped");
+            report::warning(&message);
+            skipped.push(message);
         }
     }
     if let Some(name) = &args.repository {
@@ -349,22 +348,26 @@ pub fn run() -> ExitCode {
             match result {
                 Ok(found) => repository.extend(found),
                 Err(error) => {
-                    report::warning(format_args!("repo-org-settings was skipped: {error}"));
-                    incomplete |= !error.denied();
+                    let message = format!("repo-org-settings was skipped: {error}");
+                    report::warning(&message);
+                    if !error.denied() {
+                        skipped.push(message);
+                    }
                 }
             }
         }
     }
+    let incomplete = !skipped.is_empty();
     if incomplete {
         report::warning(
             "the scan is incomplete: some online checks did not run; exiting with status 2",
         );
     }
 
-    let mut write_failed = false;
     if args.fix {
-        // Exit 2 promises that no file changed, so a workflow that failed to parse or an incomplete
-        // scan blocks every write; the report then shows the original findings.
+        // A workflow that failed to parse or an incomplete scan blocks every write, so those
+        // runs leave every file as it was and report the original findings. A failed write
+        // still exits 2, after the other files were written.
         let blocked = if !failures.is_empty() {
             Some("not written because a workflow failed to parse".to_owned())
         } else if incomplete {
@@ -394,10 +397,17 @@ pub fn run() -> ExitCode {
                 && let Some(error) = &file.unwritten
             {
                 report::error(format_args!("{}: {error}", file.path.display()));
-                write_failed = true;
+                failures.push(report::FileError {
+                    path: Some(file.path.clone()),
+                    message: error.clone(),
+                });
             }
         }
     }
+    failures.extend(skipped.into_iter().map(|message| report::FileError {
+        path: None,
+        message,
+    }));
     if let Some(target) = &args.sarif_file
         && let Err(error) = std::fs::write(target, report::sarif(&files, &repository, &failures))
     {
@@ -415,7 +425,7 @@ pub fn run() -> ExitCode {
         "{}",
         report::render(format, &files, &repository, &failures, args.fix)
     );
-    if !failures.is_empty() || incomplete || write_failed {
+    if !failures.is_empty() {
         return ExitCode::from(2);
     }
 

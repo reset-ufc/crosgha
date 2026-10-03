@@ -71,10 +71,12 @@ impl FileReport {
     }
 }
 
-/// A workflow that could not be read or parsed; the text formats print it on stderr as it
-/// happens, JSON and SARIF carry it so CI consumers see the failure.
+/// What kept the run from checking or fixing everything, which makes it exit 2: a workflow that
+/// could not be read, parsed, or written, or (`path` is `None`) a GitHub API failure whose online
+/// checks were skipped. The text formats print it on stderr as it happens; JSON and SARIF carry
+/// it so CI consumers see the failure.
 pub struct FileError {
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
     pub message: String,
 }
 
@@ -112,10 +114,17 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
         }
     }
     let fixed: usize = files.iter().map(FileReport::fixed).sum();
+    let failed = match errors.iter().filter(|error| error.path.is_some()).count() {
+        0 => String::new(),
+        failed => {
+            let level = style(Severity::Error);
+            format!(" ({level}{failed} failed{level:#})")
+        }
+    };
     if fixed > 0 {
         let changed = files.iter().filter(|file| file.fixed() > 0).count();
         output.push_str(&format!(
-            "{SUCCESS}Fixed{SUCCESS:#} {} in {}.\n",
+            "{SUCCESS}Fixed{SUCCESS:#} {} in {}{failed}.\n",
             count(fixed, "finding"),
             count(changed, "workflow file")
         ));
@@ -126,34 +135,36 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
                 breakdown(&shown)
             ));
         }
-        return output;
-    }
-    let mut checked = count(files.len(), "workflow file");
-    if !errors.is_empty() {
-        let level = style(Severity::Error);
-        checked.push_str(&format!(" ({level}{} failed{level:#})", errors.len()));
-    }
-    if shown.is_empty() {
+    } else if shown.is_empty() {
         let mark = match errors.is_empty() {
             true => format!("{SUCCESS}✓{SUCCESS:#} "),
             false => String::new(),
         };
-        output.push_str(&format!("{mark}Checked {checked}: no findings.\n"));
-        return output;
-    }
-    output.push_str(&format!(
-        "Checked {checked}: {}{}.\n",
-        count(shown.len(), "finding"),
-        breakdown(&shown)
-    ));
-    let fixable = shown.iter().filter(|finding| finding.fix.is_some()).count();
-    if fixable > 0 && !fix {
+        let checked = count(files.len(), "workflow file");
+        output.push_str(&format!("{mark}Checked {checked}{failed}: no findings.\n"));
+    } else {
         output.push_str(&format!(
-            "{} a fix: rerun with {BOLD}--fix{BOLD:#}.\n",
-            match fixable {
-                1 => "1 finding has".to_owned(),
-                _ => format!("{fixable} findings have"),
-            }
+            "Checked {}{failed}: {}{}.\n",
+            count(files.len(), "workflow file"),
+            count(shown.len(), "finding"),
+            breakdown(&shown)
+        ));
+        let fixable = shown.iter().filter(|finding| finding.fix.is_some()).count();
+        if fixable > 0 && !fix {
+            output.push_str(&format!(
+                "{} a fix: rerun with {BOLD}--fix{BOLD:#}.\n",
+                match fixable {
+                    1 => "1 finding has".to_owned(),
+                    _ => format!("{fixable} findings have"),
+                }
+            ));
+        }
+    }
+    if errors.iter().any(|error| error.path.is_none()) {
+        let level = style(Severity::Error);
+        output.push_str(&format!(
+            "{level}The scan is incomplete:{level:#} online checks that needed a failed GitHub \
+             API request did not run.\n"
         ));
     }
     output
@@ -434,7 +445,10 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[FileError]) -> S
         .collect();
     let errors: Vec<Value> = errors
         .iter()
-        .map(|error| json!({ "path": error.path.display().to_string(), "message": error.message }))
+        .map(|error| {
+            let path = error.path.as_ref().map(|path| path.display().to_string());
+            json!({ "path": path, "message": error.message })
+        })
         .collect();
     let report = json!({
         "version": 1,
@@ -578,19 +592,20 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
             })
         })
         .collect();
-    // Files that failed to parse are tool execution notifications, not results.
+    // Run failures are tool execution notifications, not results.
     let notifications: Vec<Value> = errors
         .iter()
         .map(|error| {
-            json!({
+            let mut notification = json!({
                 "level": "error",
                 "message": { "text": error.message },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": artifact_uri(&error.path) },
-                    },
-                }],
-            })
+            });
+            if let Some(path) = &error.path {
+                notification["locations"] = json!([{
+                    "physicalLocation": { "artifactLocation": { "uri": artifact_uri(path) } },
+                }]);
+            }
+            notification
         })
         .collect();
     let report = json!({

@@ -393,6 +393,17 @@ fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
         "API rate limit exceeded for installation ID 1.",
     )]);
     let limited = scan(&batch, true, Some(&api), None);
+    let requests = log.lock().unwrap().len();
+    let sarif = batch.join("report.sarif");
+    let text = bin()
+        .args(["--persona", "auditor", "--no-config", "--gh-token", TOKEN])
+        .args(["--gh-hostname", &api, "--sarif-file"])
+        .arg(&sarif)
+        .arg(&batch)
+        .output()
+        .unwrap();
+    let sarif: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&sarif).unwrap()).unwrap();
     let after: Vec<String> = [
         "online-impostor-commit.before.yml",
         "rules-persist-credentials.before.yml",
@@ -410,7 +421,6 @@ fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
     assert_eq!(before, after, "an incomplete scan must not write fixes");
     // Each of the 3 workflows pins several actions; only requests already in flight when the
     // first refusal arrived may reach the server, at most one per parallel workflow.
-    let requests = log.lock().unwrap().len();
     assert!(
         (1..=3).contains(&requests),
         "{requests} requests despite the rate limit"
@@ -418,7 +428,28 @@ fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
 
     let report: serde_json::Value = serde_json::from_slice(&limited.stdout).unwrap();
     assert_eq!(report["summary"]["files"], 3, "{report:#}");
-    assert_eq!(report["summary"]["errors"], 0, "{report:#}");
+    // Every format says the scan is incomplete instead of reporting a clean success.
+    let errors = report["errors"].as_array().unwrap();
+    assert_eq!(report["summary"]["errors"], errors.len(), "{report:#}");
+    assert!(
+        errors.iter().any(|error| error["path"].is_null()
+            && error["message"]
+                .as_str()
+                .unwrap()
+                .contains("API rate limit exceeded")),
+        "{report:#}"
+    );
+    let invocation = &sarif["runs"][0]["invocations"][0];
+    assert_eq!(invocation["executionSuccessful"], false, "{invocation:#}");
+    assert!(
+        !invocation["toolExecutionNotifications"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(!text.contains('✓'), "{text}");
+    assert!(text.contains("The scan is incomplete"), "{text}");
     // Offline mode adds the archived-action stand-in, which the online rule replaces, and only
     // github.com gets the hosted-runner checks of `retired-runtime`, not the fake host.
     let offline: serde_json::Value = serde_json::from_slice(&offline.stdout).unwrap();

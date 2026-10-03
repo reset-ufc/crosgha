@@ -126,7 +126,9 @@ the findings that remain after fixes.
 
 Input, parse, config, API, and write errors exit with status 2. A workflow that fails to parse is
 reported on stderr while the others are still checked and reported; `--fix` then writes nothing. JSON lists
-such files under `errors` and SARIF as `toolExecutionNotifications` of the invocation. Exit codes
+such files, files whose fix could not be written, and API failures that skipped online checks under
+`errors`; SARIF lists them as `toolExecutionNotifications` with `executionSuccessful: false`, and the
+text summary drops its ✓ and says when the scan is incomplete. Exit codes
 deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only for non-zero.
 
 A GitHub API failure (rate limit, server error, network, rejected token) skips only the online checks
