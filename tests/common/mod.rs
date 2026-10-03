@@ -20,6 +20,7 @@ pub fn bin() -> Command {
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .env_remove("GITHUB_ACTIONS")
+        .env_remove("GITHUB_REPOSITORY")
         .env_remove("FORCE_COLOR");
     isolate_git(&mut command);
     command

@@ -20,7 +20,9 @@ fn fixtures() -> PathBuf {
 
 fn bin() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_crosgha"));
-    command.env_remove("GITHUB_ACTIONS");
+    command
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("GITHUB_REPOSITORY");
     command
 }
 
