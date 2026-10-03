@@ -39,6 +39,8 @@ jobs:
       - run: ruff check .
       - name: Build
         run: pip install zizmor && npm ci && npm run build
+      - name: Audit for the dashboard
+        run: zizmor --format=json .
   audit:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

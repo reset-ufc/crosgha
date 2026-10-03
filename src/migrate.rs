@@ -388,9 +388,20 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             }
             (Tool::Zizmor, "--config") => Some(("config", value())),
             (Tool::Zizmor, "--gh-token") => Some(("token", value())),
-            (Tool::Zizmor, "--format") => match value().as_deref() {
-                Some("github") => Some(("annotations", Some("true".to_owned()))),
-                _ => None,
+            // The Action prints text (zizmor's `plain`) or annotations, and keeps SARIF in a file;
+            // a step whose log carries JSON or SARIF would lose it.
+            (Tool::Zizmor, "--format") => match value() {
+                Some(format) if format == "plain" => None,
+                Some(format) if format == "github" => {
+                    Some(("annotations", Some("true".to_owned())))
+                }
+                Some(format) => {
+                    return Err(format!(
+                        "`--format {format}` has no crosgha Action input; the Action prints text \
+                         and writes SARIF to its `output-file` output"
+                    ));
+                }
+                None => None,
             },
             (Tool::Zizmor, "--color" | "--cache-dir") => {
                 if inline.is_none() && flag == "--cache-dir" {
@@ -400,7 +411,14 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             }
             (Tool::Zizmor, "-q" | "--quiet" | "-v" | "--verbose" | "--no-progress") => None,
             (Tool::Actionlint, "-color" | "-no-color" | "-verbose" | "-debug" | "-oneline") => None,
-            (Tool::Actionlint, "-format" | "-shellcheck" | "-pyflakes") => {
+            (Tool::Actionlint, "-format") => {
+                return Err(
+                    "`-format` has no crosgha Action input; the Action prints text and writes \
+                     SARIF to its `output-file` output"
+                        .to_owned(),
+                );
+            }
+            (Tool::Actionlint, "-shellcheck" | "-pyflakes") => {
                 value();
                 None
             }

@@ -119,7 +119,8 @@ crosgha hook uninstall
   accepts zizmor-action's inputs); actionlint steps lose theirs.
 - **Shell steps:** steps that only install the tool are removed, unless a step of the same job still runs it. Steps
   that only run it become crosgha Action steps, with CLI flags translated to inputs. Steps that install or run the
-  tool next to other commands stay in place and are listed for a manual change.
+  tool next to other commands, or with a flag the Action has no input for (such as `--format json`), stay in place
+  and are listed for a manual change.
 - **Config:** `zizmor.yml` becomes `crosgha.yml` next to it, with rule keys renamed where the match is one to one and
   keys without a crosgha rule dropped. `actionlint.yaml` self-hosted runner labels become
   `rules.self-hosted-runner.config.labels`. The original config stays in place.

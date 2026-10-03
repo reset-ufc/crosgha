@@ -882,6 +882,11 @@ fn migrate_converts_configs_and_shell_steps() {
                         "{line}: {stderr}"
                     );
                 }
+                assert!(
+                    stderr.lines().any(|note| note.contains("ci.yml:37")
+                        && note.contains("`--format json` has no crosgha Action input")),
+                    "{stderr}"
+                );
             }
             _ => {
                 assert!(stderr.contains("`config-variables`"), "{stderr}");
