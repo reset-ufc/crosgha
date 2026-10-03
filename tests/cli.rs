@@ -1695,6 +1695,55 @@ fn github_actions_runs_default_to_annotations_unless_a_format_is_given() {
     assert!(scan(&["--format", "plain"]).contains("[script-injection]"));
 }
 
+/// A report that cannot reach stdout is an error, not a panic: a full disk exits 2 with a
+/// message, and a reader that closed the pipe early (`| head`) ends the run quietly.
+#[cfg(target_os = "linux")]
+#[test]
+fn unwritable_stdout_is_reported_without_a_panic() {
+    let full = |args: &[&str]| {
+        let device = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        bin().args(args).stdout(device).output().unwrap()
+    };
+    for args in [
+        &["--list-rules", "-f", "json"][..],
+        &["--list-rules"][..],
+        &[
+            "--offline",
+            "--no-config",
+            "-f",
+            "sarif",
+            "--fail-on",
+            "none",
+        ][..],
+    ] {
+        let mut args = args.to_vec();
+        let workflow = fixture("checkout-credentials.before.yml");
+        if !args.contains(&"--list-rules") {
+            args.push(workflow.to_str().unwrap());
+        }
+        let output = full(&args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(stderr.contains("cannot write the report"), "{stderr}");
+        assert!(!stderr.contains("panicked"), "{stderr}");
+    }
+
+    let mut child = bin()
+        .args(["--list-rules", "-f", "json"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(stderr.is_empty(), "{stderr}");
+}
+
 #[test]
 fn rule_catalog_as_json_matches_the_text_catalog() {
     let list = |format: &[&str]| {

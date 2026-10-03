@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    io::Write,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -167,15 +168,14 @@ pub fn run() -> ExitCode {
         return run_hook(action);
     }
     if args.list_rules {
-        match args.format {
-            None | Some(report::Format::Text) => anstream::print!("{}", report::rules()),
-            Some(report::Format::Json) => print!("{}", report::rules_json()),
+        return match args.format {
+            None | Some(report::Format::Text) => emit(&report::rules(), ExitCode::SUCCESS),
+            Some(report::Format::Json) => emit(&report::rules_json(), ExitCode::SUCCESS),
             Some(_) => {
                 report::error("--list-rules prints text or json");
-                return ExitCode::from(2);
+                ExitCode::from(2)
             }
-        }
-        return ExitCode::SUCCESS;
+        };
     }
     // Each workflow, `.github`, and Dependabot file is paired with the index of its input path.
     let (dependabot, inputs): (Vec<_>, Vec<_>) = args
@@ -421,14 +421,6 @@ pub fn run() -> ExitCode {
             report::Format::Text
         },
     );
-    anstream::print!(
-        "{}",
-        report::render(format, &files, &repository, &failures, args.fix)
-    );
-    if !failures.is_empty() {
-        return ExitCode::from(2);
-    }
-
     let should_fail = files.iter().any(|file| {
         file.shown()
             .1
@@ -439,10 +431,31 @@ pub fn run() -> ExitCode {
         || repository
             .iter()
             .any(|located| args.fail_on.matches(located.finding.severity));
-    if should_fail {
+    let status = if !failures.is_empty() {
+        ExitCode::from(2)
+    } else if should_fail {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    };
+    let report = report::render(format, &files, &repository, &failures, args.fix);
+    emit(&report, status)
+}
+
+/// Prints `text` and returns `status`. A reader that closed the pipe (`| head`) wanted no more
+/// output, so that ends the run quietly; any other write failure exits 2.
+fn emit(text: &str, status: ExitCode) -> ExitCode {
+    let mut stdout = anstream::stdout();
+    match stdout
+        .write_all(text.as_bytes())
+        .and_then(|()| stdout.flush())
+    {
+        Ok(()) => status,
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => status,
+        Err(error) => {
+            report::error(format_args!("cannot write the report: {error}"));
+            ExitCode::from(2)
+        }
     }
 }
 
