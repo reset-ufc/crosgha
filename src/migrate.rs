@@ -82,9 +82,11 @@ pub fn run(
         let mut edits = Vec::new();
         let mut steps = 0;
         for job in common::jobs(&workflow) {
-            // An install step goes only when no step of its job still runs the tool.
+            // An install step goes only when a crosgha step replaced the tool in its job and no step
+            // still runs it; the tool may also run indirectly (`pre-commit run`).
             let mut installs = Vec::new();
             let mut kept = false;
+            let steps_before = steps;
             for step in common::steps(&job) {
                 let place = || -> Result<String, String> {
                     let line = common::line(&workflow, &step.anchor())?;
@@ -107,7 +109,7 @@ pub fn run(
                 match classify(script, tool) {
                     Shell::Unrelated => {}
                     Shell::Install => {
-                        installs.push((removal(&workflow, &step.route)?, String::new()))
+                        installs.push((removal(&workflow, &step.route)?, place()?));
                     }
                     Shell::Invoke(Ok(inputs)) if step.value.get("working-directory").is_none() => {
                         edits.extend(shell_to_action(&workflow, &step, &replacement, &inputs)?);
@@ -139,8 +141,20 @@ pub fn run(
                     }
                 }
             }
-            if !kept {
-                edits.extend(installs);
+            if !kept && steps > steps_before {
+                edits.extend(
+                    installs
+                        .into_iter()
+                        .map(|(range, _)| (range, String::new())),
+                );
+            } else {
+                for (_, place) in installs {
+                    summary.notes.push(format!(
+                        "{place}: installs {}, which a step that was not migrated may still use; \
+                         the step was kept",
+                        tool.name()
+                    ));
+                }
             }
         }
         if edits.is_empty() {

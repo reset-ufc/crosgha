@@ -1102,6 +1102,13 @@ fn migrate_converts_configs_and_shell_steps() {
                         "{line}: {stderr}"
                     );
                 }
+                // No crosgha step replaced zizmor in this job, so whatever runs it still needs it.
+                assert!(
+                    stderr
+                        .lines()
+                        .any(|note| note.contains("ci.yml:59") && note.contains("was kept")),
+                    "{stderr}"
+                );
             }
             _ => {
                 assert!(stderr.contains("`config-variables`"), "{stderr}");

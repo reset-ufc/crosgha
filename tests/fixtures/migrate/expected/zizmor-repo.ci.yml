@@ -59,3 +59,9 @@ jobs:
       - run: zizmor .; echo done
       - run: uvx zizmor --persona pedantic . 2>/dev/null
       - run: zizmor $(ls .github/workflows/*.yml)
+  hooks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: pip install zizmor
+      - run: pre-commit run --all-files
