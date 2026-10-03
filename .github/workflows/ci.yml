@@ -10,7 +10,9 @@ permissions: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # A push to master may become a release tag, so its run must finish; superseded PR runs may not.
+  # A running master push is never canceled, but a newer push still replaces one that is pending:
+  # a group holds one pending run, whatever cancel-in-progress says. Superseded PR runs are canceled.
+  # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/control-the-concurrency-of-workflows-and-jobs
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
