@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule, common, runner};
+use super::{Finding, Rule, common, expression, runner, shell};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -19,6 +19,7 @@ pub const SCHEMA: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("actionlint", "syntax-check"), ("actionlint", "expression")],
     configurable: false,
+    relational: false,
 };
 
 // ShellCheck SC2086 (unquoted expansion), limited to GitHub's environment file variables:
@@ -31,6 +32,7 @@ pub const SCRIPT_LINT: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("actionlint", "shellcheck")],
     configurable: false,
+    relational: false,
 };
 
 // zizmor `insecure-url-scheme` and GASH "Unsecured Protocol".
@@ -42,6 +44,7 @@ pub const INSECURE_PROTOCOL: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "insecure-url-scheme")],
     configurable: false,
+    relational: false,
 };
 
 const WORKFLOW_KEYS: &[&str] = &[
@@ -99,10 +102,10 @@ const STEP_KEYS: &[&str] = &[
     "parallel",
 ];
 
-/// `GITHUB_TOKEN` scopes from the workflow syntax reference, plus `models`
-/// (https://github.blog/ai-and-ml/generative-ai/automate-your-project-with-github-models-in-actions/)
-/// and `repository-projects`, which the current reference dropped without a documented removal
-/// (https://github.blog/changelog/2021-04-20-github-actions-control-permissions-for-github_token/).
+/// `GITHUB_TOKEN` scopes and the levels each accepts, from `permissions-mapping` in GitHub's
+/// published workflow schema (actions/languageservices `workflow-parser/src/workflow-v1.0.json`
+/// at 4043eda158e16579cc5fb1b0b07a4bce2a76f0b5). `read-all`, `write-all`, and `{}` are the only
+/// shorthands.
 const PERMISSION_SCOPES: &[&str] = &[
     "actions",
     "artifact-metadata",
@@ -110,8 +113,10 @@ const PERMISSION_SCOPES: &[&str] = &[
     "checks",
     "code-quality",
     "contents",
+    "copilot-requests",
     "deployments",
     "discussions",
+    "drives",
     "id-token",
     "issues",
     "models",
@@ -124,13 +129,10 @@ const PERMISSION_SCOPES: &[&str] = &[
     "vulnerability-alerts",
 ];
 
-/// Access levels a scope accepts. The workflow syntax reference lists `id-token: write|none`,
-/// `vulnerability-alerts: read|none`, and `read|write|none` for the rest; `read-all`,
-/// `write-all`, and `{}` are the only shorthands.
 fn permission_levels(scope: &str) -> &'static [&'static str] {
     match scope {
-        "id-token" => &["write", "none"],
-        "vulnerability-alerts" => &["read", "none"],
+        "copilot-requests" | "id-token" => &["write", "none"],
+        "models" | "vulnerability-alerts" => &["read", "none"],
         _ => &["read", "write", "none"],
     }
 }
@@ -375,7 +377,7 @@ fn undefined_references(job: &common::Job<'_>) -> Vec<(Route<'static>, String, S
 
     let mut expressions: Vec<(Route<'static>, &str)> = Vec::new();
     common::strings(job.value, &job.route, &mut |route, text| {
-        for expression in common::expressions(text) {
+        for expression in expression::expressions(text) {
             expressions.push((route.clone(), expression));
         }
     });
@@ -419,19 +421,21 @@ fn undefined_references(job: &common::Job<'_>) -> Vec<(Route<'static>, String, S
     problems
 }
 
-/// Property names read as `<context>.<name>` in an expression, outside string literals.
-pub(super) fn context_names<'a>(expression: &'a str, context: &str) -> Vec<&'a str> {
+/// Property names read as `<context>.<name>` or `<context>['<name>']` in an expression, outside
+/// other string literals.
+pub(super) fn context_names(expression: &str, context: &str) -> Vec<String> {
     let prefix = format!("{context}.");
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
-    expression
+    // Even parts are code; odd parts are the contents of string literals.
+    expression::dotted(expression)
         .split('\'')
         .step_by(2)
         .flat_map(|code| {
             code.match_indices(prefix.as_str())
-                .filter(|(index, _)| !code[..*index].ends_with(|c: char| is_name(c) || c == '.'))
-                .map(|(index, _)| {
-                    let rest = &code[index + prefix.len()..];
-                    &rest[..rest.find(|c: char| !is_name(c)).unwrap_or(rest.len())]
+                .filter(|(at, _)| !code[..*at].ends_with(|c: char| is_name(c) || c == '.'))
+                .map(|(at, _)| {
+                    let rest = &code[at + prefix.len()..];
+                    rest[..rest.find(|c: char| !is_name(c)).unwrap_or(rest.len())].to_owned()
                 })
                 .filter(|name| !name.is_empty())
                 .collect::<Vec<_>>()
@@ -498,9 +502,7 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 .and_then(Value::as_str)
                 .or(job_shell)
                 .unwrap_or("bash");
-            // A custom shell such as `/usr/bin/bash -e {0}` names its program by path.
-            let program = shell.split_whitespace().next().unwrap_or("");
-            let posix = matches!(program.rsplit('/').next(), Some("bash" | "sh"));
+            let posix = matches!(shell_program(shell), Some("bash" | "sh"));
             if posix && script.lines().any(unquoted_env_file) {
                 findings.push(common::finding(
                     workflow,
@@ -513,6 +515,13 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
+}
+
+/// The program a `shell` runs, by file name. A custom shell such as `/usr/bin/bash -e {0}` names
+/// it by path, and `/usr/bin/env [options] [NAME=value] bash {0}` looks it up.
+fn shell_program(shell: &str) -> Option<&str> {
+    let words: Vec<&str> = shell.split_whitespace().collect();
+    shell::program(&words).map(|program| program.name)
 }
 
 fn unquoted_env_file(line: &str) -> bool {

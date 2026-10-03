@@ -11,8 +11,7 @@ use serde_json::{Value, json};
 use crate::{
     engine::Inspection,
     policy::Severity,
-    rules::{self, Finding, Located, Rule},
-    workflow::BOM,
+    rules::{self, Finding, Located, Place, Rule},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -34,7 +33,7 @@ pub fn render(
     format: Format,
     files: &[FileReport],
     repository: &[Located],
-    errors: &[FileError],
+    errors: &[RunError],
     fix: bool,
 ) -> String {
     match format {
@@ -49,8 +48,23 @@ pub fn render(
 pub struct FileReport {
     pub path: PathBuf,
     pub inspection: Inspection,
-    /// Why the verified fixes of this file were not written.
-    pub unwritten: Option<String>,
+    /// Why the verified fixes of this file are not on disk.
+    pub unwritten: Option<Unwritten>,
+}
+
+pub enum Unwritten {
+    /// The run did not write any fix.
+    Blocked(String),
+    /// Writing this file failed, which makes the run exit 2.
+    Failed(String),
+}
+
+impl Unwritten {
+    fn reason(&self) -> &str {
+        match self {
+            Unwritten::Blocked(reason) | Unwritten::Failed(reason) => reason,
+        }
+    }
 }
 
 impl FileReport {
@@ -58,7 +72,7 @@ impl FileReport {
     pub fn shown(&self) -> (&str, &[Finding]) {
         match (&self.inspection.fix, &self.unwritten) {
             (Some(outcome), None) => (&outcome.source, &outcome.remaining),
-            _ => (&self.inspection.source, &self.inspection.findings),
+            _ => (&self.inspection.source.text, &self.inspection.findings),
         }
     }
 
@@ -71,51 +85,71 @@ impl FileReport {
     }
 }
 
-/// A workflow that could not be read or parsed; the text formats print it on stderr as it
-/// happens, JSON and SARIF carry it so CI consumers see the failure.
-pub struct FileError {
-    pub path: PathBuf,
-    pub message: String,
+/// What kept the run from checking everything, which makes it exit 2. The text formats print it
+/// on stderr as it happens; JSON and SARIF carry it so CI consumers see the failure.
+pub enum RunError {
+    /// A workflow that could not be read or parsed.
+    File { path: PathBuf, message: String },
+    /// A GitHub API failure whose online checks were skipped.
+    Skipped(String),
+}
+
+/// Everything that makes the run exit 2, with the file it concerns: the run errors and the
+/// fixes that failed to write.
+pub fn failures<'a>(
+    files: &'a [FileReport],
+    errors: &'a [RunError],
+) -> Vec<(Option<&'a Path>, &'a str)> {
+    let unreadable = errors.iter().filter_map(|error| match error {
+        RunError::File { path, message } => Some((Some(path.as_path()), message.as_str())),
+        RunError::Skipped(_) => None,
+    });
+    let unwritten = files.iter().filter_map(|file| match &file.unwritten {
+        Some(Unwritten::Failed(message)) => Some((Some(file.path.as_path()), message.as_str())),
+        _ => None,
+    });
+    let skipped = errors.iter().filter_map(|error| match error {
+        RunError::Skipped(message) => Some((None, message.as_str())),
+        RunError::File { .. } => None,
+    });
+    unreadable.chain(unwritten).chain(skipped).collect()
 }
 
 /// rustc-style diagnostics with the offending source line, then a summary. The styles are
 /// ANSI codes that `anstream` strips unless stdout is a color terminal.
-fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix: bool) -> String {
+fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: bool) -> String {
     let mut output = String::new();
     let mut shown = Vec::new();
-    for (path, source, findings) in workflows(files) {
-        for finding in findings {
-            diagnostic(&mut output, path, Some(source), finding);
-            shown.push(finding);
-        }
+    for item in reported(files, repository) {
+        diagnostic(&mut output, item.path, item.source, item.finding);
+        shown.push(item.finding);
     }
-    for located in repository {
-        let source = std::fs::read_to_string(&located.path).ok();
-        diagnostic(
-            &mut output,
-            &located.path,
-            source.as_deref(),
-            &located.finding,
-        );
-        shown.push(&located.finding);
-    }
-    for (path, finding, _, reason) in attempts(files) {
-        if let Some(reason) = reason {
+    for attempt in attempts(files) {
+        if let Some(reason) = attempt.reason {
+            let finding = attempt.finding;
             let _ = writeln!(
                 output,
                 "Not fixed: {}:{}:{} [{}]: {reason}",
-                path.display(),
+                attempt.path.display(),
                 finding.line,
-                finding.column,
+                char_column(Some(attempt.source), finding.line, finding.column),
                 finding.rule.id
             );
         }
     }
     let fixed: usize = files.iter().map(FileReport::fixed).sum();
+    let failures = failures(files, errors);
+    let failed = match failures.iter().filter(|(path, _)| path.is_some()).count() {
+        0 => String::new(),
+        failed => {
+            let level = style(Severity::Error);
+            format!(" ({level}{failed} failed{level:#})")
+        }
+    };
     if fixed > 0 {
         let changed = files.iter().filter(|file| file.fixed() > 0).count();
         output.push_str(&format!(
-            "{SUCCESS}Fixed{SUCCESS:#} {} in {}.\n",
+            "{SUCCESS}Fixed{SUCCESS:#} {} in {}{failed}.\n",
             count(fixed, "finding"),
             count(changed, "workflow file")
         ));
@@ -126,34 +160,39 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
                 breakdown(&shown)
             ));
         }
-        return output;
-    }
-    let mut checked = count(files.len(), "workflow file");
-    if !errors.is_empty() {
-        let level = style(Severity::Error);
-        checked.push_str(&format!(" ({level}{} failed{level:#})", errors.len()));
-    }
-    if shown.is_empty() {
-        let mark = match errors.is_empty() {
+    } else if shown.is_empty() {
+        let mark = match failures.is_empty() {
             true => format!("{SUCCESS}✓{SUCCESS:#} "),
             false => String::new(),
         };
-        output.push_str(&format!("{mark}Checked {checked}: no findings.\n"));
-        return output;
-    }
-    output.push_str(&format!(
-        "Checked {checked}: {}{}.\n",
-        count(shown.len(), "finding"),
-        breakdown(&shown)
-    ));
-    let fixable = shown.iter().filter(|finding| finding.fix.is_some()).count();
-    if fixable > 0 && !fix {
+        let checked = count(files.len(), "workflow file");
+        output.push_str(&format!("{mark}Checked {checked}{failed}: no findings.\n"));
+    } else {
         output.push_str(&format!(
-            "{} a fix: rerun with {BOLD}--fix{BOLD:#}.\n",
-            match fixable {
-                1 => "1 finding has".to_owned(),
-                _ => format!("{fixable} findings have"),
-            }
+            "Checked {}{failed}: {}{}.\n",
+            count(files.len(), "workflow file"),
+            count(shown.len(), "finding"),
+            breakdown(&shown)
+        ));
+        let fixable = shown.iter().filter(|finding| finding.fix.is_some()).count();
+        if fixable > 0 && !fix {
+            output.push_str(&format!(
+                "{} a fix: rerun with {BOLD}--fix{BOLD:#}.\n",
+                match fixable {
+                    1 => "1 finding has".to_owned(),
+                    _ => format!("{fixable} findings have"),
+                }
+            ));
+        }
+    }
+    if errors
+        .iter()
+        .any(|error| matches!(error, RunError::Skipped(_)))
+    {
+        let level = style(Severity::Error);
+        output.push_str(&format!(
+            "{level}The scan is incomplete:{level:#} online checks that needed a failed GitHub \
+             API request did not run.\n"
         ));
     }
     output
@@ -214,7 +253,7 @@ fn diagnostic(output: &mut String, path: &Path, source: Option<&str>, finding: &
                 "{pad}{GUTTER}-->{GUTTER:#} {}:{}:{}",
                 path.display(),
                 finding.line,
-                finding.column
+                char_column(source, finding.line, finding.column)
             );
         }
     }
@@ -332,6 +371,7 @@ pub fn rules_json() -> String {
                 "scope": scope,
                 "summary": rule.summary,
                 "equivalents": equivalents(rule),
+                "configurable": rule.configurable,
             })
         })
         .collect();
@@ -343,52 +383,86 @@ pub fn rules_json() -> String {
     format!("{report:#}\n")
 }
 
-/// Each workflow's reported findings with the source their lines point into.
-fn workflows(files: &[FileReport]) -> impl Iterator<Item = (&Path, &str, &[Finding])> {
-    files.iter().map(|file| {
+/// A reported finding and where it points.
+struct Reported<'a> {
+    path: &'a Path,
+    finding: &'a Finding,
+    /// The text the finding's lines point into; `None` for a repository-wide finding.
+    source: Option<&'a str>,
+    /// The workflow and text a repository-wide finding is placed on in annotations and SARIF.
+    anchor: Option<(&'a Path, &'a str)>,
+}
+
+/// Every reported finding: what remains after `--fix`, or everything found.
+fn reported<'a>(files: &'a [FileReport], repository: &'a [Located]) -> Vec<Reported<'a>> {
+    let workflows = files.iter().flat_map(|file| {
         let (source, findings) = file.shown();
-        (file.path.as_path(), source, findings)
-    })
+        findings.iter().map(move |finding| Reported {
+            path: &file.path,
+            finding,
+            source: Some(source),
+            anchor: None,
+        })
+    });
+    let repository = repository.iter().map(|located| {
+        let (source, anchor) = match &located.place {
+            Place::File(source) => (Some(source.as_str()), None),
+            Place::Repository { anchor } => {
+                let anchor = anchor.as_ref().and_then(|anchor| {
+                    let file = files.iter().find(|file| file.path == *anchor)?;
+                    Some((file.path.as_path(), file.shown().0))
+                });
+                (None, anchor)
+            }
+        };
+        Reported {
+            path: &located.path,
+            finding: &located.finding,
+            source,
+            anchor,
+        }
+    });
+    workflows.chain(repository).collect()
 }
 
-/// Every reported finding with its path: what remains after `--fix`, or everything found.
-fn reported<'a>(
-    files: &'a [FileReport],
-    repository: &'a [Located],
-) -> Vec<(&'a Path, &'a Finding)> {
-    workflows(files)
-        .flat_map(|(path, _, findings)| findings.iter().map(move |finding| (path, finding)))
-        .chain(
-            repository
-                .iter()
-                .map(|located| (located.path.as_path(), &located.finding)),
-        )
-        .collect()
+/// A proposed fix, its status, and why it is not in the file.
+struct FixReport<'a> {
+    path: &'a Path,
+    /// The source `finding`'s lines point into.
+    source: &'a str,
+    finding: &'a Finding,
+    status: &'static str,
+    reason: Option<&'a str>,
 }
 
-/// Every proposed fix with its finding in the original source, its status, and why it is not
-/// in the file.
-fn attempts(
-    files: &[FileReport],
-) -> impl Iterator<Item = (&Path, &Finding, &'static str, Option<&str>)> {
+/// Every proposed fix. A rejected fix in a written file points at its finding among the remaining
+/// ones, whose lines an applied fix above it may have moved; any other at the original source.
+fn attempts(files: &[FileReport]) -> impl Iterator<Item = FixReport<'_>> {
     files.iter().flat_map(|file| {
-        file.inspection
-            .fix
-            .iter()
-            .flat_map(|outcome| &outcome.attempts)
-            .map(|attempt| {
+        file.inspection.fix.iter().flat_map(move |outcome| {
+            outcome.attempts.iter().map(move |attempt| {
                 let (status, reason) = match (&attempt.rejected, &file.unwritten) {
                     (Some(reason), _) => ("rejected", Some(reason.as_str())),
-                    (None, Some(reason)) => ("not-written", Some(reason.as_str())),
+                    (None, Some(unwritten)) => ("not-written", Some(unwritten.reason())),
                     (None, None) => ("applied", None),
                 };
-                (
-                    file.path.as_path(),
-                    &file.inspection.findings[attempt.finding],
+                let moved = attempt.remaining.filter(|_| file.unwritten.is_none());
+                let (source, finding) = match moved {
+                    Some(index) => (outcome.source.as_str(), &outcome.remaining[index]),
+                    None => (
+                        file.inspection.source.text.as_str(),
+                        &file.inspection.findings[attempt.finding],
+                    ),
+                };
+                FixReport {
+                    path: &file.path,
+                    source,
+                    finding,
                     status,
                     reason,
-                )
+                }
             })
+        })
     })
 }
 
@@ -400,19 +474,20 @@ fn equivalents(rule: &Rule) -> Value {
 }
 
 /// A stable, versioned JSON report for scripts and the Action.
-fn json(files: &[FileReport], repository: &[Located], errors: &[FileError]) -> String {
+fn json(files: &[FileReport], repository: &[Located], errors: &[RunError]) -> String {
     let findings: Vec<Value> = reported(files, repository)
         .into_iter()
-        .map(|(path, finding)| {
+        .map(|item| {
+            let finding = item.finding;
             json!({
                 "rule": finding.rule.id,
                 "tag": finding.rule.tag,
                 "severity": finding.severity.as_str(),
-                "path": path.display().to_string(),
+                "path": item.path.display().to_string(),
                 "line": finding.line,
-                "column": finding.column,
+                "column": char_column(item.source, finding.line, finding.column),
                 "end_line": finding.end_line,
-                "end_column": finding.end_column,
+                "end_column": char_column(item.source, finding.end_line, finding.end_column),
                 "location": finding.location,
                 "message": finding.message,
                 "equivalents": equivalents(finding.rule),
@@ -420,21 +495,25 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[FileError]) -> S
         })
         .collect();
     let fixes: Vec<Value> = attempts(files)
-        .map(|(path, finding, status, reason)| {
+        .map(|attempt| {
+            let finding = attempt.finding;
             json!({
                 "rule": finding.rule.id,
-                "path": path.display().to_string(),
+                "path": attempt.path.display().to_string(),
                 "line": finding.line,
-                "column": finding.column,
+                "column": char_column(Some(attempt.source), finding.line, finding.column),
                 "location": finding.location,
-                "status": status,
-                "reason": reason,
+                "status": attempt.status,
+                "reason": attempt.reason,
             })
         })
         .collect();
-    let errors: Vec<Value> = errors
-        .iter()
-        .map(|error| json!({ "path": error.path.display().to_string(), "message": error.message }))
+    let errors: Vec<Value> = failures(files, errors)
+        .into_iter()
+        .map(|(path, message)| {
+            let path = path.map(|path| path.display().to_string());
+            json!({ "path": path, "message": message })
+        })
         .collect();
     let report = json!({
         "version": 1,
@@ -473,7 +552,7 @@ const QUALITY_TAGS: &[&str] = &[
 /// SARIF 2.1.0 with the fields GitHub code scanning requires:
 /// https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support
 /// `partialFingerprints` is left to `upload-sarif`, which computes GitHub's line hash.
-pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError]) -> String {
+pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[RunError]) -> String {
     let catalog: Vec<&Rule> = rules::all().map(|(rule, _)| rule).collect();
     let descriptors: Vec<Value> = catalog
         .iter()
@@ -521,54 +600,56 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
             })
         })
         .collect();
-    let repository_sources: Vec<Option<String>> = repository
-        .iter()
-        .map(|located| std::fs::read_to_string(&located.path).ok())
-        .collect();
-    let workflow_findings = workflows(files).flat_map(|(path, source, findings)| {
-        findings
-            .iter()
-            .map(move |finding| (path, Some(source), finding))
-    });
-    let repository_findings = repository
-        .iter()
-        .zip(&repository_sources)
-        .map(|(located, source)| (located.path.as_path(), source.as_deref(), &located.finding));
-    let results: Vec<Value> = workflow_findings
-        .chain(repository_findings)
-        .map(|(path, source, finding)| {
+    let results: Vec<Value> = reported(files, repository)
+        .into_iter()
+        .map(|item| {
+            let finding = item.finding;
             let index = catalog
                 .iter()
                 .position(|rule| rule.id == finding.rule.id)
                 .unwrap_or_default();
-            // A repository-wide finding has no file to point at, like the spec's example of a
-            // missing `main` (SARIF 2.1.0 section 3.27.12), so it names the directory instead.
-            let (message, locations) = match path.is_dir() {
-                true => (
+            let (message, location) = match (item.source, item.anchor) {
+                (Some(source), _) => (
+                    format!("{}: {}", finding.location, finding.message),
+                    Some(json!({
+                        "artifactLocation": { "uri": artifact_uri(item.path) },
+                        "region": {
+                            "startLine": finding.line,
+                            "startColumn": utf16_column(Some(source), finding.line, finding.column),
+                            "endLine": finding.end_line,
+                            "endColumn":
+                                utf16_column(Some(source), finding.end_line, finding.end_column),
+                        },
+                    })),
+                ),
+                // A repository-wide finding names its directory in the message. GitHub needs a
+                // file location anyway ("At least one location is required for code scanning to
+                // display a result", per the page above), so it points at line 1 of its anchor.
+                (None, anchor) => (
                     format!(
                         "{}: {}: {}",
-                        relative(path),
+                        relative(item.path),
                         finding.location,
                         finding.message
                     ),
-                    json!([]),
-                ),
-                false => (
-                    format!("{}: {}", finding.location, finding.message),
-                    json!([{
-                        "physicalLocation": {
-                            "artifactLocation": { "uri": artifact_uri(path) },
+                    anchor.map(|(workflow, source)| {
+                        let line = source.lines().next().unwrap_or_default();
+                        json!({
+                            "artifactLocation": { "uri": artifact_uri(workflow) },
                             "region": {
-                                "startLine": finding.line,
-                                "startColumn": utf16_column(source, finding.line, finding.column),
-                                "endLine": finding.end_line,
-                                "endColumn":
-                                    utf16_column(source, finding.end_line, finding.end_column),
+                                "startLine": 1,
+                                "startColumn": 1,
+                                "endLine": 1,
+                                "endColumn": line.encode_utf16().count() + 1,
                             },
-                        },
-                    }]),
+                        })
+                    }),
                 ),
             };
+            let locations: Vec<Value> = location
+                .into_iter()
+                .map(|location| json!({ "physicalLocation": location }))
+                .collect();
             json!({
                 "ruleId": finding.rule.id,
                 "ruleIndex": index,
@@ -578,19 +659,21 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
             })
         })
         .collect();
-    // Files that failed to parse are tool execution notifications, not results.
-    let notifications: Vec<Value> = errors
+    // Run failures are tool execution notifications, not results.
+    let failures = failures(files, errors);
+    let notifications: Vec<Value> = failures
         .iter()
-        .map(|error| {
-            json!({
+        .map(|(path, message)| {
+            let mut notification = json!({
                 "level": "error",
-                "message": { "text": error.message },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": artifact_uri(&error.path) },
-                    },
-                }],
-            })
+                "message": { "text": message },
+            });
+            if let Some(path) = path {
+                notification["locations"] = json!([{
+                    "physicalLocation": { "artifactLocation": { "uri": artifact_uri(path) } },
+                }]);
+            }
+            notification
         })
         .collect();
     let report = json!({
@@ -607,7 +690,7 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
             },
             "columnKind": "utf16CodeUnits",
             "invocations": [{
-                "executionSuccessful": errors.is_empty(),
+                "executionSuccessful": failures.is_empty(),
                 "toolExecutionNotifications": notifications,
             }],
             "results": results,
@@ -627,26 +710,51 @@ fn github(files: &[FileReport], repository: &[Located]) -> String {
     let property = |text: &str| data(text).replace(':', "%3A").replace(',', "%2C");
     reported(files, repository)
         .into_iter()
-        .map(|(path, finding)| {
+        .map(|item| {
+            let finding = item.finding;
             let command = match finding.severity {
                 crate::policy::Severity::Error => "error",
                 crate::policy::Severity::Warning => "warning",
                 crate::policy::Severity::Note => "notice",
             };
+            let message = format!(
+                "{}: {}{}",
+                finding.location,
+                finding.message,
+                finding.rule.equivalents_suffix()
+            );
+            // A repository-wide finding points at the workflow its SARIF result uses, since a
+            // directory is not a file; its message names the directory instead.
+            if item.source.is_none() {
+                let file = item
+                    .anchor
+                    .map(|(workflow, _)| {
+                        format!("file={},line=1,endLine=1,", property(&relative(workflow)))
+                    })
+                    .unwrap_or_default();
+                return format!(
+                    "::{command} {file}title={}::{}\n",
+                    property(finding.rule.id),
+                    data(&format!("{}: {message}", relative(item.path))),
+                );
+            }
+            // actions/toolkit: columns "cannot be sent when startLine and endLine are different
+            // values".
+            let columns = match finding.line == finding.end_line {
+                true => format!(
+                    ",col={},endColumn={}",
+                    char_column(item.source, finding.line, finding.column),
+                    char_column(item.source, finding.end_line, finding.end_column)
+                ),
+                false => String::new(),
+            };
             format!(
-                "::{command} file={},line={},endLine={},col={},endColumn={},title={}::{}\n",
-                property(&relative(path)),
+                "::{command} file={},line={},endLine={}{columns},title={}::{}\n",
+                property(&relative(item.path)),
                 finding.line,
                 finding.end_line,
-                finding.column,
-                finding.end_column,
                 property(finding.rule.id),
-                data(&format!(
-                    "{}: {}{}",
-                    finding.location,
-                    finding.message,
-                    finding.rule.equivalents_suffix()
-                )),
+                data(&message),
             )
         })
         .collect()
@@ -657,12 +765,13 @@ fn github(files: &[FileReport], repository: &[Located]) -> String {
 fn agent(files: &[FileReport], repository: &[Located]) -> String {
     reported(files, repository)
         .into_iter()
-        .map(|(path, finding)| {
+        .map(|item| {
+            let finding = item.finding;
             let line = format!(
                 "{}:{}:{}: {} {}: {}: {}{} help: {}",
-                relative(path),
+                relative(item.path),
                 finding.line,
-                finding.column,
+                char_column(item.source, finding.line, finding.column),
                 finding.severity.as_str(),
                 finding.rule.id,
                 finding.location,
@@ -687,10 +796,15 @@ fn relative(path: &Path) -> String {
 }
 
 /// A URI reference for `path` with every byte outside RFC 3986's unreserved characters and `/`
-/// percent-encoded, so no character in a file name is read as URI syntax.
+/// percent-encoded, so no character in a file name is read as URI syntax. A path outside the
+/// working directory stays absolute and becomes a `file:` URI (RFC 8089).
 fn artifact_uri(path: &Path) -> String {
-    let mut uri = String::new();
-    for byte in relative(path).bytes() {
+    let path = relative(path);
+    let mut uri = match path.starts_with('/') {
+        true => "file://".to_owned(),
+        false => String::new(),
+    };
+    for byte in path.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 uri.push(char::from(byte));
@@ -703,11 +817,20 @@ fn artifact_uri(path: &Path) -> String {
     uri
 }
 
-/// SARIF's `columnKind` is `utf16CodeUnits`, while finding columns count UTF-8 bytes.
+/// SARIF's `columnKind` is `utf16CodeUnits`.
 fn utf16_column(source: Option<&str>, line: usize, column: usize) -> usize {
+    recount(source, line, column, |text| text.encode_utf16().count())
+}
+
+/// The other formats count characters, as GitHub's annotations do.
+fn char_column(source: Option<&str>, line: usize, column: usize) -> usize {
+    recount(source, line, column, |text| text.chars().count())
+}
+
+/// Finding columns count UTF-8 bytes; `unit` measures the text before one in another unit.
+fn recount(source: Option<&str>, line: usize, column: usize, unit: fn(&str) -> usize) -> usize {
     source
-        .map(|source| source.strip_prefix(BOM).unwrap_or(source))
         .and_then(|source| source.lines().nth(line.checked_sub(1)?))
         .and_then(|text| text.get(..column.checked_sub(1)?))
-        .map_or(column, |before| before.encode_utf16().count() + 1)
+        .map_or(column, |before| unit(before) + 1)
 }

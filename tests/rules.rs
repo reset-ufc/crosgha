@@ -4,7 +4,7 @@
 //! `CROSGHA_BLESS=1 cargo test --test rules`), and the hand-written `.clean.yml` must not be
 //! reported. Online rules run against a local server that replays `tests/fixtures/online/api.json`.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -20,7 +20,9 @@ fn fixtures() -> PathBuf {
 
 fn bin() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_crosgha"));
-    command.env_remove("GITHUB_ACTIONS");
+    command
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("GITHUB_REPOSITORY");
     command
 }
 
@@ -36,9 +38,17 @@ fn logged_github() -> (String, Arc<Mutex<Vec<String>>>) {
 /// every path), the status line, extra header lines, and GitHub's `message`.
 type Failure = (&'static str, &'static str, &'static str, &'static str);
 
-/// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.
-/// The log holds every requested path in arrival order.
 fn failing_github(failures: &'static [Failure]) -> (String, Arc<Mutex<Vec<String>>>) {
+    github_server(failures, false)
+}
+
+/// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.
+/// With `ignore_page`, every `page=` answers like page 1, as a proxy that drops the parameter.
+/// The log holds every requested path in arrival order.
+fn github_server(
+    failures: &'static [Failure],
+    ignore_page: bool,
+) -> (String, Arc<Mutex<Vec<String>>>) {
     let log = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::clone(&log);
     let routes: serde_json::Map<String, serde_json::Value> =
@@ -67,7 +77,11 @@ fn failing_github(failures: &'static [Failure]) -> (String, Arc<Mutex<Vec<String
             let failure = failures
                 .iter()
                 .find(|(failing, ..)| *failing == "*" || *failing == path);
-            let (status, headers, body) = match (failure, routes.get(&path)) {
+            let route = match path.split_once("&page=") {
+                Some((before, _)) if ignore_page => format!("{before}&page=1"),
+                _ => path.clone(),
+            };
+            let (status, headers, body) = match (failure, routes.get(&route)) {
                 _ if !authorized => (
                     "401 Unauthorized",
                     "",
@@ -110,24 +124,23 @@ fn scan(path: &Path, fix: bool, api: Option<&str>, config: Option<&Path>) -> Out
     command.arg(path).output().unwrap()
 }
 
-fn expected_lines(source: &str, rule: &str) -> BTreeSet<usize> {
+/// Line → number of findings of `rule` on it. A rule listed twice (`# expect: a, a`) must be
+/// reported twice on that line.
+type Lines = BTreeMap<usize, usize>;
+
+fn expected_lines(source: &str, rule: &str) -> Lines {
     source
         .lines()
         .enumerate()
-        .filter(|(_, line)| {
-            line.split_once("# expect: ")
-                .is_some_and(|(_, ids)| ids.split(',').any(|id| id.trim() == rule))
+        .filter_map(|(index, line)| {
+            let (_, ids) = line.split_once("# expect: ")?;
+            let count = ids.split(',').filter(|id| id.trim() == rule).count();
+            (count > 0).then_some((index + 1, count))
         })
-        .map(|(index, _)| index + 1)
         .collect()
 }
 
-fn reported_lines(
-    path: &Path,
-    rule: &str,
-    api: Option<&str>,
-    config: Option<&Path>,
-) -> BTreeSet<usize> {
+fn reported_lines(path: &Path, rule: &str, api: Option<&str>, config: Option<&Path>) -> Lines {
     let output = scan(path, false, api, config);
     assert!(
         output.status.success(),
@@ -137,13 +150,15 @@ fn reported_lines(
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    report["findings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|finding| finding["rule"] == rule)
-        .map(|finding| finding["line"].as_u64().unwrap() as usize)
-        .collect()
+    let mut lines = Lines::new();
+    for finding in report["findings"].as_array().unwrap() {
+        if finding["rule"] == rule {
+            *lines
+                .entry(finding["line"].as_u64().unwrap() as usize)
+                .or_default() += 1;
+        }
+    }
+    lines
 }
 
 fn check_fixtures(directory: &str, api: Option<&str>) {
@@ -170,7 +185,7 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         let reported = reported_lines(&path, rule, api, config);
         if reported != expected {
             failures.push(format!(
-                "{name}: expected lines {expected:?}, reported {reported:?}"
+                "{name}: expected {{line: count}} {expected:?}, reported {reported:?}"
             ));
         }
 
@@ -179,13 +194,11 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         fs::copy(&path, &copy).unwrap();
         scan(&copy, true, api, config);
         let fixed_source = fs::read_to_string(&copy).unwrap();
-        let fixed = reported_lines(&copy, rule, api, config).len();
+        let fixed: usize = reported_lines(&copy, rule, api, config).values().sum();
         fs::remove_file(&copy).unwrap();
-        if fixed != 0 && fixed != expected.len() {
-            failures.push(format!(
-                "{name}: --fix left {fixed} of {} findings",
-                expected.len()
-            ));
+        let total: usize = expected.values().sum();
+        if fixed != 0 && fixed != total {
+            failures.push(format!("{name}: --fix left {fixed} of {total} findings"));
         }
 
         // `.after.yml` records what `--fix` really writes, so it is compared byte for byte and
@@ -382,6 +395,17 @@ fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
         "API rate limit exceeded for installation ID 1.",
     )]);
     let limited = scan(&batch, true, Some(&api), None);
+    let requests = log.lock().unwrap().len();
+    let sarif = batch.join("report.sarif");
+    let text = bin()
+        .args(["--persona", "auditor", "--no-config", "--gh-token", TOKEN])
+        .args(["--gh-hostname", &api, "--sarif-file"])
+        .arg(&sarif)
+        .arg(&batch)
+        .output()
+        .unwrap();
+    let sarif: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&sarif).unwrap()).unwrap();
     let after: Vec<String> = [
         "online-impostor-commit.before.yml",
         "rules-persist-credentials.before.yml",
@@ -399,7 +423,6 @@ fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
     assert_eq!(before, after, "an incomplete scan must not write fixes");
     // Each of the 3 workflows pins several actions; only requests already in flight when the
     // first refusal arrived may reach the server, at most one per parallel workflow.
-    let requests = log.lock().unwrap().len();
     assert!(
         (1..=3).contains(&requests),
         "{requests} requests despite the rate limit"
@@ -407,7 +430,28 @@ fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
 
     let report: serde_json::Value = serde_json::from_slice(&limited.stdout).unwrap();
     assert_eq!(report["summary"]["files"], 3, "{report:#}");
-    assert_eq!(report["summary"]["errors"], 0, "{report:#}");
+    // Every format says the scan is incomplete instead of reporting a clean success.
+    let errors = report["errors"].as_array().unwrap();
+    assert_eq!(report["summary"]["errors"], errors.len(), "{report:#}");
+    assert!(
+        errors.iter().any(|error| error["path"].is_null()
+            && error["message"]
+                .as_str()
+                .unwrap()
+                .contains("API rate limit exceeded")),
+        "{report:#}"
+    );
+    let invocation = &sarif["runs"][0]["invocations"][0];
+    assert_eq!(invocation["executionSuccessful"], false, "{invocation:#}");
+    assert!(
+        !invocation["toolExecutionNotifications"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(!text.contains('✓'), "{text}");
+    assert!(text.contains("The scan is incomplete"), "{text}");
     // Offline mode adds the archived-action stand-in, which the online rule replaces, and only
     // github.com gets the hosted-runner checks of `retired-runtime`, not the fake host.
     let offline: serde_json::Value = serde_json::from_slice(&offline.stdout).unwrap();
@@ -415,6 +459,75 @@ fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
     expected.retain(|(_, rule, _)| rule != "archived-action" && rule != "retired-runtime");
     assert!(!expected.is_empty());
     assert_eq!(finding_keys(&report), expected);
+}
+
+/// A rejected token fails every request alike, so the first 401 stops the rest and is named once.
+#[test]
+fn a_rejected_token_stops_further_requests() {
+    let batch = mixed_batch("bad-token");
+    let (api, log) = logged_github();
+    let rejected = bin()
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .args(["--persona", "auditor", "--fail-on", "none", "--no-config"])
+        .args(["--gh-token", "revoked-token", "--gh-hostname", &api])
+        .arg(&batch)
+        .output()
+        .unwrap();
+    fs::remove_dir_all(&batch).unwrap();
+
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert_eq!(rejected.status.code(), Some(2), "{stderr}");
+    assert_eq!(stderr.matches("HTTP 401").count(), 1, "{stderr}");
+    // Only requests already in flight when the first 401 arrived, one per parallel workflow.
+    let requests = log.lock().unwrap().len();
+    assert!(
+        (1..=3).contains(&requests),
+        "{requests} requests with a rejected token"
+    );
+}
+
+/// A server that ignores `page` answers every tag page with the first one; the walk must stop
+/// instead of requesting forever, and the check that needed the tags is skipped.
+#[test]
+fn a_tag_page_that_repeats_stops_the_walk() {
+    let (api, log) = github_server(&[], true);
+    let mut child = bin()
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .args(["--persona", "auditor", "--fail-on", "none", "--no-config"])
+        .args(["--gh-token", TOKEN, "--gh-hostname", &api])
+        .arg(fixtures().join("online/impostor-commit.before.yml"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(60) {
+            child.kill().unwrap();
+            panic!("the tag walk never ended");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let output = child.wait_with_output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert_eq!(stderr.matches("repeats page 1").count(), 1, "{stderr}");
+    let pages = log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|path| path.starts_with("/repos/example/many-tags/tags"))
+        .count();
+    assert_eq!(pages, 2);
+    // Without the tags, the commit cannot be called an impostor.
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("cdcdcdcd"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }
 
 /// A server error on one path skips only the check that needed it, on every workflow that asks,
@@ -445,8 +558,8 @@ fn a_failing_api_path_skips_only_the_checks_that_need_it() {
     let healthy: serde_json::Value = serde_json::from_slice(&healthy.stdout).unwrap();
     let failing: serde_json::Value = serde_json::from_slice(&failing.stdout).unwrap();
     let mut expected = finding_keys(&healthy);
-    // Line 12 pins the SHA whose comparison fails.
-    expected.retain(|(_, rule, line)| !(rule == "impostor-commit" && *line == 12));
+    // Line 13 pins the SHA whose comparison fails.
+    expected.retain(|(_, rule, line)| !(rule == "impostor-commit" && *line == 13));
     assert_eq!(finding_keys(&failing), expected);
 }
 
@@ -518,7 +631,7 @@ fn unreadable_repository_settings_skip_only_that_rule() {
 }
 
 #[test]
-fn repository_settings_are_read_for_the_named_repository() {
+fn repo_org_settings_are_read_for_the_named_repository() {
     let workflow = fixtures().join("online/archived-action.clean.yml");
     let api = fake_github();
     let output = bin()
@@ -576,33 +689,82 @@ fn repository_settings_are_read_for_the_named_repository() {
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("401"));
 }
 
-#[test]
-fn every_registered_rule_has_a_fixture() {
+/// `(rule, scope)` for every rule in the catalog.
+fn catalog() -> Vec<(String, String)> {
     let output = bin().arg("--list-rules").output().unwrap();
     assert!(output.status.success());
-    let tests: String = ["tests/cli.rs", "tests/rules.rs"]
-        .iter()
-        .map(|file| {
-            fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap()
-        })
-        .collect();
-    let missing: Vec<String> = String::from_utf8(output.stdout)
+    String::from_utf8(output.stdout)
         .unwrap()
         .lines()
-        .filter_map(|line| {
+        .map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            let (rule, scope) = (fields[0], fields[fields.len() - 1]);
-            let covered = match scope {
-                "workflow" => fixtures().join(format!("rules/{rule}.before.yml")).exists(),
-                "online" => fixtures()
-                    .join(format!("online/{rule}.before.yml"))
-                    .exists(),
-                _ => tests.contains(&format!("\"{rule}\"")) || tests.contains(&format!("[{rule}]")),
-            };
-            (!covered).then(|| format!("{rule} ({scope})"))
+            (fields[0].to_owned(), fields[fields.len() - 1].to_owned())
         })
+        .collect()
+}
+
+#[test]
+fn every_registered_rule_has_a_fixture() {
+    let missing: Vec<String> = catalog()
+        .into_iter()
+        .filter(|(rule, scope)| {
+            let fixture = match scope.as_str() {
+                "workflow" => format!("rules/{rule}.before.yml"),
+                "online" => format!("online/{rule}.before.yml"),
+                _ => format!("repos/{rule}"),
+            };
+            !fixtures().join(fixture).exists()
+        })
+        .map(|(rule, scope)| format!("{rule} ({scope})"))
         .collect();
     assert!(missing.is_empty(), "rules without fixtures: {missing:?}");
+}
+
+/// Each `repos/<rule>` repository reports its rule, offline (where github.com-only rules run) or
+/// against the fake API (where `repo-org-settings` reads the settings). Its workflows only `run`,
+/// so the online rules ask the API for nothing else.
+#[test]
+fn every_repository_rule_reports_its_fixture_repository() {
+    let api = fake_github();
+    let online = [
+        "--repository",
+        "example/project",
+        "--gh-token",
+        TOKEN,
+        "--gh-hostname",
+        &api,
+    ];
+    for (rule, _) in catalog()
+        .into_iter()
+        .filter(|(_, scope)| scope == "repository")
+    {
+        let reported = [&["--offline"][..], &online[..]].iter().any(|mode| {
+            let output = bin()
+                .env_remove("GH_TOKEN")
+                .env_remove("GITHUB_TOKEN")
+                .args([
+                    "--persona",
+                    "auditor",
+                    "--fail-on",
+                    "none",
+                    "--format",
+                    "json",
+                ])
+                .args(*mode)
+                .arg(fixtures().join(format!("repos/{rule}")))
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{rule} {mode:?}: {stderr}");
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            report["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding["rule"] == rule.as_str())
+        });
+        assert!(reported, "{rule}: not reported by its fixture repository");
+    }
 }
 
 #[test]

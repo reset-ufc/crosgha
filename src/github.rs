@@ -49,8 +49,8 @@ pub struct GitHub {
     token: String,
     agent: ureq::Agent,
     cache: Mutex<HashMap<String, Slot>>,
-    /// The rate-limit failure that stops every later request; retrying before the reset only
-    /// spends more of the limit.
+    /// The rate-limit or rejected-token (401) failure that stops every later request: retrying
+    /// before the reset only spends more of the limit, and a bad token fails every path alike.
     halted: Mutex<Option<ApiError>>,
 }
 
@@ -86,6 +86,25 @@ impl GitHub {
         let answer = self.request(path);
         *slot = Some(answer.clone());
         answer
+    }
+
+    /// Caches `path` as failed although it was answered, because the answer is unusable (a page
+    /// that repeats the previous one). Like any failure, it is named once.
+    pub fn reject(&self, path: &str, detail: &str) -> ApiError {
+        let error = ApiError {
+            status: None,
+            rate_limited: false,
+            message: format!("GitHub API {path}: {detail}"),
+        };
+        let slot = Arc::clone(
+            self.cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(path.to_owned())
+                .or_default(),
+        );
+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(Err(error.clone()));
+        error
     }
 
     /// Distinct failures of cached requests, in path order.
@@ -173,8 +192,10 @@ impl GitHub {
             ));
         }
         let error = failed(Some(status), rate_limited, detail);
-        if rate_limited {
-            *self.halted.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.clone());
+        if rate_limited || status == 401 {
+            // Requests already in flight report the first failure, so it is named once.
+            let mut halted = self.halted.lock().unwrap_or_else(PoisonError::into_inner);
+            return Err(halted.get_or_insert(error).clone());
         }
         Err(error)
     }

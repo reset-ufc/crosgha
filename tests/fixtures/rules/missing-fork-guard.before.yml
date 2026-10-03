@@ -60,3 +60,52 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: make cleanup
+  mixed-case-guarded:
+    if: GitHub.Repository == 'example/project'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  reversed-guarded:
+    if: ${{ 'example/project' == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  fork-flag-false:
+    if: github.event.repository.fork == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  schedule-or-success: # expect: missing-fork-guard
+    needs: guarded
+    if: success() || github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  fork-only: # expect: missing-fork-guard
+    if: github.repository != 'example/project'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  not-fork-flag: # expect: missing-fork-guard
+    if: github.event.repository.fork
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  negated-guard: # expect: missing-fork-guard
+    if: ${{ !(github.repository == 'example/project') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  negated-fork-only:
+    if: ${{ !(github['repository'] != 'example/project') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly

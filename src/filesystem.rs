@@ -1,11 +1,11 @@
 use std::{
     fs,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::workflow::BOM;
+const BOM: &str = "\u{feff}";
 
 /// Workflow files of a file input, or the `.yml`/`.yaml` files directly inside a directory.
 /// GitHub reads workflows only from `.github/workflows` itself: "You must store workflow files in
@@ -65,7 +65,6 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
             .file_type()
             .map_err(|error| format!("cannot inspect `{}`: {error}", entry.path().display()))?;
 
-        // Symlinked files are scanned like direct paths.
         let is_file = entry_type.is_file()
             || (entry_type.is_symlink()
                 && entry.path().metadata().is_ok_and(|meta| meta.is_file()));
@@ -89,6 +88,12 @@ pub fn identity(path: &Path) -> PathBuf {
     }
 }
 
+/// The `identity` of the file a symbolic link resolves to; `None` for any other path.
+pub fn link_target(path: &Path) -> Option<PathBuf> {
+    let link = fs::symlink_metadata(path).ok()?.file_type().is_symlink();
+    link.then(|| fs::canonicalize(path).ok()).flatten()
+}
+
 /// A Dependabot config shares the `.yml` extension but is not a workflow.
 pub fn is_dependabot(path: &Path) -> bool {
     path.is_file()
@@ -104,28 +109,39 @@ fn is_yaml_file(path: &Path) -> bool {
     )
 }
 
-pub fn read(path: &Path, fix: bool) -> Result<String, String> {
-    if fix
-        && fs::symlink_metadata(path)
-            .map_err(|error| error.to_string())?
-            .file_type()
-            .is_symlink()
-    {
-        return Err("refusing to replace a symbolic link".to_owned());
+/// A YAML file's text without its UTF-8 BOM. GitHub accepts the BOM, but the YAML scanner counts
+/// it as a column and then rejects a key on the first line, so it is read off here and `replace`
+/// puts it back.
+pub struct Source {
+    pub text: String,
+    pub bom: bool,
+}
+
+pub fn read(path: &Path) -> io::Result<Source> {
+    let text = fs::read_to_string(path)?;
+    Ok(match text.strip_prefix(BOM) {
+        Some(rest) => Source {
+            text: rest.to_owned(),
+            bom: true,
+        },
+        None => Source { text, bom: false },
+    })
+}
+
+/// Renaming over a link would replace it with a regular file and leave its target unfixed.
+pub fn refuse_link(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        true => Err("refusing to replace a symbolic link".to_owned()),
+        false => Ok(()),
     }
-    fs::read_to_string(path).map_err(|error| format!("cannot read workflow: {error}"))
 }
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
-pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
-    // Renaming over a link would replace it with a regular file and leave its target unfixed.
-    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        return Err("refusing to replace a symbolic link".to_owned());
-    }
-    let bom = fs::read(path)
-        .is_ok_and(|old| old.starts_with(BOM.encode_utf8(&mut [0; 3]).as_bytes()))
-        && !source.starts_with(BOM);
+/// Writes `text` to `path` with the BOM `original` had, unless `path` no longer holds `original`,
+/// the content `text` was computed from.
+pub fn replace(path: &Path, original: &Source, text: &str) -> Result<(), String> {
+    refuse_link(path)?;
     let name = path
         .file_name()
         .ok_or("workflow has no filename")?
@@ -135,24 +151,31 @@ pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
         ".{name}.crosgha-{}-{sequence}.tmp",
         std::process::id()
     ));
-    let result = (|| -> Result<(), std::io::Error> {
+    let bom = if original.bom { BOM } else { "" };
+    let cannot = |error: io::Error| format!("cannot write verified fix: {error}");
+    let result = (|| -> Result<(), String> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&temporary)?;
-        file.set_permissions(fs::metadata(path)?.permissions())?;
-        if bom {
-            write!(file, "{BOM}")?;
+            .open(&temporary)
+            .map_err(cannot)?;
+        file.set_permissions(fs::metadata(path).map_err(cannot)?.permissions())
+            .map_err(cannot)?;
+        file.write_all(bom.as_bytes()).map_err(cannot)?;
+        file.write_all(text.as_bytes()).map_err(cannot)?;
+        file.sync_all().map_err(cannot)?;
+        // An edit saved during the scan would be lost. An edit between this check and the rename
+        // still is; only a lock every editor honors could close that window.
+        let current = fs::read(path).map_err(cannot)?;
+        if current.strip_prefix(bom.as_bytes()) != Some(original.text.as_bytes()) {
+            return Err("file changed since it was read".to_owned());
         }
-        file.write_all(source.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)?;
-        Ok(())
+        fs::rename(&temporary, path).map_err(cannot)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    result.map_err(|error| format!("cannot write verified fix: {error}"))
+    result
 }
 
 /// The `.github` directory that owns a scanned `.github/workflows` directory or repository root.

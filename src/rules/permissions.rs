@@ -6,6 +6,7 @@ use yamlpath::Route;
 use super::{
     Finding, Rule,
     common::{self, EXTERNAL_TRIGGERS},
+    expression,
 };
 use crate::{
     policy::{Persona, Severity},
@@ -23,6 +24,7 @@ pub const EXCESSIVE: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "excessive-permissions")],
     configurable: false,
+    relational: false,
 };
 
 // ghalint 005 (workflow-level secrets in env) and zizmor `overprovisioned-secrets`
@@ -35,6 +37,7 @@ pub const SECRETS_EXPOSURE: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "overprovisioned-secrets")],
     configurable: false,
+    relational: false,
 };
 
 // actionlint `credentials` and zizmor `hardcoded-container-credentials`, plus token formats
@@ -50,6 +53,7 @@ pub const HARDCODED: Rule = Rule {
         ("actionlint", "credentials"),
     ],
     configurable: false,
+    relational: false,
 };
 
 // Trajan `oidc-token-not-narrowed`: `id-token: write` granted beyond the job that deploys,
@@ -63,6 +67,7 @@ pub const OIDC: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 fn permissions_route() -> Route<'static> {
@@ -135,7 +140,7 @@ pub fn secrets_exposure(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             let (Some(name), Some(text)) = (name.as_str(), value.as_str()) else {
                 continue;
             };
-            if common::expressions(text)
+            if expression::expressions(text)
                 .iter()
                 .any(|expression| expression.contains("secrets."))
             {
@@ -153,7 +158,7 @@ pub fn secrets_exposure(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut seen = BTreeSet::new();
     let mut flagged = Vec::new();
     common::strings(&workflow.value, &Route::default(), &mut |route, text| {
-        let broad = common::expressions(text).into_iter().any(|expression| {
+        let broad = expression::expressions(text).into_iter().any(|expression| {
             let compact: String = expression
                 .chars()
                 .filter(|character| !character.is_whitespace())

@@ -67,3 +67,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo j
+  k:
+    strategy:
+      matrix:
+        config: [{ os: ubuntu-24.04 }, { os: self-hosted }]
+    runs-on: ${{ matrix.config.os }} # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo k
+  l:
+    strategy:
+      matrix:
+        config: [{ os: ubuntu-24.04 }]
+        include:
+          - config: { os: windows-2025 }
+    runs-on: ${{ matrix.config.os }}
+    timeout-minutes: 10
+    steps:
+      - run: echo l

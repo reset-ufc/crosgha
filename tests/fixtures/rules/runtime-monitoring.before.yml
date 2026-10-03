@@ -7,6 +7,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: { persist-credentials: false }
   hardened:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -15,6 +16,7 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: { persist-credentials: false }
   reuse:
     uses: ./.github/workflows/reusable.yml
   # harden-runner needs sudo on the VM, so it cannot monitor a container job on a hosted runner:

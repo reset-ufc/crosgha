@@ -1,9 +1,10 @@
 use yaml_serde::{Mapping, Value};
-use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
 use super::{
-    ChangeKind, Finding, ProposedFix, Rule, common, correctness, online, repository, runner,
+    Finding, Rule, common, correctness,
+    expression::{self, Operator},
+    shell,
 };
 use crate::{
     policy::{Persona, Severity},
@@ -19,6 +20,7 @@ pub const ERROR_SUPPRESSION: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-06/KZ-07, and zizmor `concurrency-limits`.
@@ -30,6 +32,7 @@ pub const CONCURRENCY: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("zizmor", "concurrency-limits")],
     configurable: false,
+    relational: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-08, and Semgrep `github-action-push-without-branches`.
@@ -41,6 +44,7 @@ pub const BROAD_TRIGGER: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-09 "Avoid executing scheduled workflows on forks".
@@ -52,6 +56,7 @@ pub const FORK_GUARD: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-19/KZ-22: CI on a single OS or language version.
@@ -63,6 +68,7 @@ pub const MATRIX: Rule = Rule {
     persona: Persona::Auditor,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-17 "Use cache parameter instead of cache option".
@@ -74,6 +80,7 @@ pub const CACHE_MISUSE: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // GASH (VEM 2024) "Code Replica": a step repeated verbatim within one job.
@@ -85,6 +92,7 @@ pub const DUPLICATED_STEPS: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: true,
 };
 
 // GASH (VEM 2024) "Long Code Blocks" and "unnecessary complexity"; Khatami et al. KZ-18.
@@ -96,6 +104,7 @@ pub const COMPLEXITY: Rule = Rule {
     persona: Persona::Auditor,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // zizmor `anonymous-definition` and Khatami et al. (SCAM 2024), KZ-16 "Name run steps".
@@ -107,40 +116,7 @@ pub const READABILITY: Rule = Rule {
     persona: Persona::Auditor,
     equivalents: &[("zizmor", "anonymous-definition")],
     configurable: false,
-};
-
-// GitHub disabled `set-env`/`add-path` and deprecated `set-output`/`save-state`:
-// https://github.blog/changelog/2020-10-01-github-actions-deprecating-set-env-and-add-path-commands/
-// https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
-// GitHub removed the `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` opt-out along with Node 20:
-// https://github.blog/changelog/2026-09-23-node-20-is-no-longer-available-in-github-actions/
-// Hosted runner images, action versions, and action inputs that GitHub or the action removed, so the
-// job no longer runs. Sources are next to each list below.
-pub const REMOVED: Rule = Rule {
-    id: "removed-feature",
-    summary: "Retired runner images, shut-down action versions, and removed action inputs must not be used.",
-    tag: "deprecated-command/feature",
-    severity: Severity::Error,
-    persona: Persona::Regular,
-    equivalents: &[
-        ("actionlint", "runner-label"),
-        ("actionlint", "action"),
-        ("actionlint", "deprecated-inputs"),
-    ],
-    configurable: false,
-};
-
-pub const DEPRECATED: Rule = Rule {
-    id: "deprecated-command",
-    summary: "Deprecated workflow commands and removed opt-out variables must not be used.",
-    tag: "deprecated-command/feature",
-    severity: Severity::Warning,
-    persona: Persona::Regular,
-    equivalents: &[
-        ("zizmor", "insecure-commands"),
-        ("actionlint", "deprecated-commands"),
-    ],
-    configurable: false,
+    relational: false,
 };
 
 pub fn error_suppression(workflow: &Workflow) -> Result<Vec<Finding>, String> {
@@ -222,12 +198,45 @@ pub fn broad_trigger(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 
 // Scheduled runs carry the repository object in `github.event` since
 // https://github.blog/changelog/2022-09-27-github-actions-additional-information-available-in-github-event-payload-for-scheduled-workflow-runs/
+/// Context paths (and their prefixes, as in `github.repository_owner`) that keep a job in one
+/// repository when compared with `==`; `!=` would run it only in forks.
 const FORK_GUARDS: &[&str] = &[
     "github.repository",
-    "github.event.repository.fork",
     "github.event.repository.full_name",
     "github.event.repository.owner",
 ];
+const FORK_FLAG: &str = "github.event.repository.fork";
+
+/// Whether `condition` runs the job only in its own repository. Context names are
+/// case-insensitive: https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+fn guards_fork(condition: &str) -> bool {
+    let text = expression::dotted(&condition.to_ascii_lowercase());
+    expression::context_paths(&text)
+        .into_iter()
+        .any(|(start, end)| {
+            let path = &text[start..end];
+            let test = expression::test(&text, start, end);
+            if path == FORK_FLAG {
+                let boolean = |value: &str| match value {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                };
+                let runs_in_forks = match test.operator {
+                    Operator::Truthy => Some(true),
+                    Operator::Equals(value) => boolean(value),
+                    Operator::Differs(value) => boolean(value).map(|value| !value),
+                };
+                return runs_in_forks == Some(test.negated);
+            }
+            FORK_GUARDS.iter().any(|guard| path.starts_with(guard))
+                && match test.operator {
+                    Operator::Equals(_) => !test.negated,
+                    Operator::Differs(_) => test.negated,
+                    Operator::Truthy => false,
+                }
+        })
+}
 
 /// "If a job fails or is skipped, all jobs that need it are skipped unless the jobs use a
 /// conditional expression that causes the job to continue."
@@ -244,12 +253,16 @@ fn fork_guarded(
     }
     visited.push(job.name.to_owned());
     let condition = job.get("if").and_then(Value::as_str).unwrap_or("");
-    if FORK_GUARDS.iter().any(|guard| condition.contains(guard)) {
+    if guards_fork(condition) {
         return true;
     }
+    // A status function replaces the implicit `success()`; `success() || ...` still runs when the
+    // needed job was skipped.
+    let lowered = condition.to_ascii_lowercase();
     if ["always()", "failure()", "cancelled()"]
         .iter()
-        .any(|status| condition.contains(status))
+        .any(|status| lowered.contains(status))
+        || lowered.contains("success()") && lowered.contains("||")
     {
         return false;
     }
@@ -297,25 +310,25 @@ fn runs_tests(job: &common::Job<'_>) -> bool {
     common::steps(job)
         .iter()
         .filter_map(|step| step.run())
-        .any(|script| {
-            script
-                .split(['\n', ';', '&', '|', '(', ')', '`'])
-                .any(|command| {
-                    // `test` in command position is the shell's condition builtin, not a test runner.
-                    let mut words = command
-                        .split_whitespace()
-                        .skip_while(|word| {
-                            matches!(
-                                *word,
-                                "if" | "then" | "elif" | "while" | "until" | "do" | "!" | "{"
-                            )
-                        })
-                        .peekable();
-                    words.next_if_eq(&"test");
-                    words.any(|word| {
-                        word.split(|c: char| !c.is_ascii_alphanumeric())
-                            .any(|word| TEST_COMMANDS.contains(&word))
-                    })
+        .flat_map(shell::commands)
+        .any(|command| {
+            let Some(program) = shell::program(&command.words) else {
+                return false;
+            };
+            // `test` and `[` are the shell's condition builtins, and installing a test tool does
+            // not run it.
+            let installs = program.name == "install"
+                || program.args.contains(&"install")
+                || matches!(program.name, "npm" | "pnpm" | "yarn" | "bun")
+                    && matches!(program.args.first(), Some(&("add" | "i")));
+            if installs || matches!(program.name, "test" | "[") {
+                return false;
+            }
+            std::iter::once(program.path)
+                .chain(program.args.iter().copied())
+                .any(|word| {
+                    word.split(|c: char| !c.is_ascii_alphanumeric())
+                        .any(|word| TEST_COMMANDS.contains(&word))
                 })
         })
 }
@@ -410,7 +423,7 @@ pub fn cache_misuse(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         let covered: Vec<&str> = steps
             .iter()
             .flat_map(|step| {
-                let version = versioned_action(workflow, step).map(|(_, version)| version);
+                let version = common::versioned_action(workflow, step).map(|(_, version)| version);
                 SETUP_CACHES
                     .iter()
                     .filter(move |(setup, since, _)| {
@@ -451,23 +464,23 @@ pub fn cache_misuse(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-/// Step `id`s a job reads as `steps.<id>`, in `${{ }}` expressions or bare `if` conditions.
+/// Step `id`s a job reads as `steps.<id>`, in `${{ }}` expressions or bare `if` conditions. Other
+/// text without `${{` is not evaluated, so a `steps.<id>` there reads nothing.
 fn read_step_ids(job: &common::Job<'_>) -> Vec<String> {
-    let mut ids = Vec::new();
+    let mut expressions = Vec::new();
     common::strings(job.value, &job.route, &mut |_, text| {
-        let expressions = match common::expressions(text) {
-            found if found.is_empty() => vec![text],
-            found => found,
-        };
-        for expression in expressions {
-            ids.extend(
-                correctness::context_names(expression, "steps")
-                    .into_iter()
-                    .map(str::to_ascii_lowercase),
-            );
-        }
+        expressions.extend(expression::expressions(text));
     });
-    ids
+    let conditions = std::iter::once(job.value)
+        .chain(common::steps(job).into_iter().map(|step| step.value))
+        .filter_map(|value| value.get("if").and_then(Value::as_str))
+        .filter(|condition| !condition.contains("${{"));
+    expressions.extend(conditions);
+    expressions
+        .into_iter()
+        .flat_map(|expression| correctness::context_names(expression, "steps"))
+        .map(|id| id.to_ascii_lowercase())
+        .collect()
 }
 
 pub fn duplicated_steps(workflow: &Workflow) -> Result<Vec<Finding>, String> {
@@ -587,367 +600,6 @@ pub fn readability(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     step.location.clone(),
                     "`run` step has no `name`",
                 )?);
-            }
-        }
-    }
-    Ok(findings)
-}
-
-const DEPRECATED_COMMANDS: &[&str] = &["::set-output", "::save-state", "::set-env", "::add-path"];
-
-const OPT_OUTS: &[(&str, &str)] = &[
-    (
-        "ACTIONS_ALLOW_UNSECURE_COMMANDS",
-        "re-enables the disabled `set-env` and `add-path` commands",
-    ),
-    (
-        "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION",
-        "the Node 20 opt-out was removed; update the action to one that runs on Node 24",
-    ),
-];
-
-pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let mut findings = Vec::new();
-    let mut scopes = vec![(Route::default(), "workflow".to_owned(), &workflow.value)];
-    for job in common::jobs(workflow) {
-        scopes.push((job.route.clone(), job.location(), job.value));
-        for step in common::steps(&job) {
-            if let Some(command) = step.run().and_then(|script| {
-                DEPRECATED_COMMANDS
-                    .iter()
-                    .find(|command| script.contains(*command))
-            }) {
-                findings.push(common::finding(
-                    workflow,
-                    &DEPRECATED,
-                    step.key("run"),
-                    step.location.clone(),
-                    format!("`{command}` is a deprecated workflow command"),
-                )?);
-            }
-            scopes.push((step.route.clone(), step.location.clone(), step.value));
-        }
-    }
-    for (route, location, scope) in scopes {
-        for (variable, message) in OPT_OUTS {
-            // Only `true` opts out; `false` keeps the default.
-            let value = scope.get("env").and_then(|env| env.get(variable));
-            if matches!(value, Some(Value::Bool(true)))
-                || value.and_then(Value::as_str) == Some("true")
-            {
-                findings.push(common::finding(
-                    workflow,
-                    &DEPRECATED,
-                    route.with_key("env").with_key(*variable),
-                    location.clone(),
-                    *message,
-                )?);
-            }
-        }
-    }
-    Ok(findings)
-}
-
-/// Hosted images and the date GitHub fully retired them:
-/// https://github.com/actions/runner-images/issues/6002 (ubuntu-18.04)
-/// https://github.blog/changelog/2025-01-15-github-actions-ubuntu-20-runner-image-brownout-dates-and-other-breaking-changes/
-/// https://github.blog/changelog/2025-04-15-upcoming-breaking-changes-and-releases-for-github-actions/ (windows-2019)
-/// https://github.blog/changelog/2025-07-11-upcoming-changes-to-macos-hosted-runners-macos-latest-migration-and-xcode-support-policy-updates/
-// ponytail: a fixed list with no runtime lookup; add each image when GitHub retires it.
-const RETIRED_RUNNERS: &[(&str, &str)] = &[
-    // https://github.com/actions/runner-images/issues/3287
-    ("ubuntu-16.04", "2021-09-20"),
-    // https://github.com/actions/runner-images/issues/4312
-    ("windows-2016", "2022-03-15"),
-    // https://github.com/actions/runner-images/issues/5583
-    ("macos-10.15", "2022-12-01"),
-    // https://github.blog/changelog/2024-05-20-actions-upcoming-changes-to-github-hosted-macos-runners/
-    ("macos-11", "2024-06-28"),
-    // https://github.com/actions/runner-images/issues/10721
-    ("macos-12", "2024-12-03"),
-    ("ubuntu-18.04", "2023-04-03"),
-    ("ubuntu-20.04", "2025-04-15"),
-    ("windows-2019", "2025-06-30"),
-    ("macos-13", "2025-12-04"),
-];
-
-/// Why an action version no longer runs, from its `major.minor` numbers.
-fn shut_down(action: &str, version: &[u64]) -> Option<&'static str> {
-    match (action, version) {
-        // https://github.blog/changelog/2024-04-16-deprecation-notice-v3-of-the-artifact-actions/
-        ("actions/upload-artifact" | "actions/download-artifact", [major, ..]) if *major <= 3 => {
-            Some("artifact actions v3 and older stopped working on 2025-01-30; use v4 or later")
-        }
-        // https://github.com/actions/cache/blob/main/README.md: "upgrade to the recommended
-        // versions `v4.2.0` or `v3.4.0`", else "workflow runs ... will fail".
-        ("actions/cache", [major, ..]) if *major <= 2 => Some(
-            "actions/cache below v3.4.0 fails since the cache service moved; use v4.2.0 or later",
-        ),
-        ("actions/cache", [3, minor, ..]) if *minor < 4 => Some(
-            "actions/cache below v3.4.0 fails since the cache service moved; use v4.2.0 or later",
-        ),
-        ("actions/cache", [4, minor, ..]) if *minor < 2 => Some(
-            "actions/cache below v4.2.0 fails since the cache service moved; use v4.2.0 or later",
-        ),
-        _ => None,
-    }
-}
-
-/// setup-java v6 removed the AdoptOpenJDK distributions: "Use `temurin` instead of `adopt` or
-/// `adopt-hotspot`, and `semeru` instead of `adopt-openj9`."
-/// https://github.com/actions/setup-java/blob/main/README.md
-const ADOPT_SUCCESSORS: &[(&str, &str)] = &[
-    ("adopt", "temurin"),
-    ("adopt-hotspot", "temurin"),
-    ("adopt-openj9", "semeru"),
-];
-
-/// `owner/repo` (lowercased, as GitHub resolves it) and the `major.minor...` numbers of a step's
-/// action, when its ref names a version.
-pub(super) fn versioned_action(
-    workflow: &Workflow,
-    step: &common::Step<'_>,
-) -> Option<(String, Vec<u64>)> {
-    let action = step.uses().and_then(common::parse_uses)?;
-    let version = online::ref_version(workflow, &step.key("uses"), action.git_ref)?;
-    let name = format!("{}/{}", action.owner, action.repo).to_ascii_lowercase();
-    Some((name, online::numbers(&version)))
-}
-
-/// github.com facts: retired hosted-runner images and action versions its services no longer
-/// serve. Registered in `HOSTED`, so another `--gh-hostname` skips it.
-pub fn removed_hosted(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let mut findings = Vec::new();
-    for job in common::jobs(workflow) {
-        // Labels of a runner group or of a self-hosted runner name a machine, not a hosted image.
-        let grouped = job
-            .get("runs-on")
-            .is_some_and(|runs_on| runs_on.get("group").is_some());
-        let labels = runner::job_labels(&job);
-        let retired = if grouped || labels.contains(&"self-hosted") {
-            None
-        } else {
-            labels
-                .iter()
-                .find_map(|label| RETIRED_RUNNERS.iter().find(|(name, _)| name == label))
-        };
-        if let Some((label, date)) = retired {
-            findings.push(common::finding(
-                workflow,
-                &REMOVED,
-                job.route.with_key("runs-on"),
-                job.location(),
-                format!("the `{label}` hosted runner image was retired on {date}"),
-            )?);
-        }
-        for step in common::steps(&job) {
-            let Some((name, version)) = versioned_action(workflow, &step) else {
-                continue;
-            };
-            if let Some(reason) = shut_down(&name, &version) {
-                findings.push(common::finding(
-                    workflow,
-                    &REMOVED,
-                    step.key("uses"),
-                    step.location.clone(),
-                    reason,
-                )?);
-            }
-        }
-    }
-    Ok(findings)
-}
-
-/// Majors of GitHub's own JavaScript actions whose latest release declares a retired Node.js
-/// runtime (`repository::RUNTIME`), read from `runs.using` in each major's newest `vX.Y.Z` tag on
-/// 2026-09-27. A major is the unit because `@vN` follows its newest release.
-// ponytail: `actions/*` only and major granularity, so a pin to an older minor of a node24 major
-// (setup-go v6.0.0) is missed; per-release data or more owners would close both gaps.
-const RETIRED_RUNTIME_MAJORS: &[(&str, &[(u64, &str)])] = &[
-    ("actions/add-to-project", &[(0, "node20"), (1, "node20")]),
-    (
-        "actions/cache",
-        &[
-            (0, "node12"),
-            (1, "node12"),
-            (2, "node12"),
-            (3, "node16"),
-            (4, "node20"),
-        ],
-    ),
-    (
-        "actions/checkout",
-        &[(2, "node12"), (3, "node16"), (4, "node20")],
-    ),
-    (
-        "actions/configure-pages",
-        &[
-            (0, "node16"),
-            (1, "node16"),
-            (2, "node16"),
-            (3, "node16"),
-            (4, "node20"),
-            (5, "node20"),
-        ],
-    ),
-    (
-        "actions/create-github-app-token",
-        &[(1, "node20"), (2, "node20")],
-    ),
-    ("actions/create-release", &[(1, "node12")]),
-    (
-        "actions/dependency-review-action",
-        &[(1, "node16"), (2, "node16"), (3, "node16"), (4, "node20")],
-    ),
-    (
-        "actions/deploy-pages",
-        &[(1, "node16"), (2, "node16"), (3, "node20"), (4, "node20")],
-    ),
-    (
-        "actions/download-artifact",
-        &[(2, "node12"), (4, "node20"), (5, "node20"), (6, "node20")],
-    ),
-    (
-        "actions/github-script",
-        &[
-            (1, "node12"),
-            (2, "node12"),
-            (3, "node12"),
-            (4, "node12"),
-            (5, "node12"),
-            (6, "node16"),
-            (7, "node20"),
-        ],
-    ),
-    (
-        "actions/labeler",
-        &[(2, "node12"), (3, "node12"), (4, "node16"), (5, "node20")],
-    ),
-    (
-        "actions/setup-dotnet",
-        &[(1, "node12"), (2, "node16"), (3, "node16"), (4, "node20")],
-    ),
-    (
-        "actions/setup-go",
-        &[
-            (1, "node12"),
-            (2, "node12"),
-            (3, "node16"),
-            (4, "node16"),
-            (5, "node20"),
-        ],
-    ),
-    (
-        "actions/setup-java",
-        &[(1, "node12"), (2, "node12"), (3, "node16"), (4, "node20")],
-    ),
-    (
-        "actions/setup-node",
-        &[(1, "node12"), (2, "node12"), (3, "node16"), (4, "node20")],
-    ),
-    (
-        "actions/setup-python",
-        &[
-            (1, "node12"),
-            (2, "node12"),
-            (3, "node16"),
-            (4, "node16"),
-            (5, "node20"),
-        ],
-    ),
-    ("actions/setup-ruby", &[(1, "node12")]),
-    (
-        "actions/stale",
-        &[
-            (1, "node12"),
-            (2, "node12"),
-            (3, "node12"),
-            (4, "node12"),
-            (5, "node16"),
-            (6, "node16"),
-            (7, "node16"),
-            (8, "node16"),
-            (9, "node20"),
-        ],
-    ),
-    (
-        "actions/upload-artifact",
-        &[(2, "node12"), (4, "node20"), (5, "node20")],
-    ),
-    ("actions/upload-release-asset", &[(1, "node12")]),
-];
-
-/// Steps that use a version of an `actions/*` action built for a retired Node.js runtime.
-pub fn retired_runtime(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let mut findings = Vec::new();
-    for job in common::jobs(workflow) {
-        for step in common::steps(&job) {
-            let Some((name, version)) = versioned_action(workflow, &step) else {
-                continue;
-            };
-            let runtime = RETIRED_RUNTIME_MAJORS
-                .iter()
-                .find(|(action, _)| *action == name)
-                .and_then(|(_, majors)| {
-                    majors
-                        .iter()
-                        .find(|(major, _)| Some(major) == version.first())
-                });
-            if let Some((major, runtime)) = runtime {
-                findings.push(common::finding(
-                    workflow,
-                    &repository::RUNTIME,
-                    step.key("uses"),
-                    step.location.clone(),
-                    format!(
-                        "{name} v{major} declares `{runtime}`, which GitHub retired; runners force it onto Node 24, so use a release built for `node24`"
-                    ),
-                )?);
-            }
-        }
-    }
-    Ok(findings)
-}
-
-/// Inputs an action's newer major removed, whatever host runs it.
-pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let mut findings = Vec::new();
-    for job in common::jobs(workflow) {
-        for step in common::steps(&job) {
-            let Some((name, version)) = versioned_action(workflow, &step) else {
-                continue;
-            };
-            let successor = step
-                .value
-                .get("with")
-                .and_then(|with| with.get("distribution"))
-                .and_then(Value::as_str)
-                .and_then(|distribution| {
-                    ADOPT_SUCCESSORS
-                        .iter()
-                        .find(|(adopt, _)| *adopt == distribution)
-                });
-            if name == "actions/setup-java"
-                && version.first().is_some_and(|major| *major >= 6)
-                && let Some((adopt, successor)) = successor
-            {
-                let input = step.key("with").with_key("distribution");
-                let mut finding = common::finding(
-                    workflow,
-                    &REMOVED,
-                    step.key("uses"),
-                    step.location.clone(),
-                    format!("setup-java v6 removed the `{adopt}` distribution; use `{successor}`"),
-                )?;
-                finding.fix = Some(ProposedFix {
-                    patch: Patch {
-                        route: input.clone(),
-                        operation: Op::Replace(Value::String((*successor).to_owned())),
-                    },
-                    changed_route: input,
-                    change: ChangeKind::Replace,
-                });
-                findings.push(finding);
             }
         }
     }

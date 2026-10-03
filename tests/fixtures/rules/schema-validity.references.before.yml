@@ -21,6 +21,8 @@ jobs:
       - run: echo "${{ steps.metadata.outputs.version }}" # expect: schema-validity
       - if: steps.meta.outcome == 'success' && !contains('steps.nothing', 'x')
         run: echo ok
+      - run: echo "${{ steps['meta'].outputs.version }}"
+      - run: echo "${{ steps['metadata'].outputs.version }}" # expect: schema-validity
   dynamic:
     strategy:
       matrix: ${{ fromJSON(vars.MATRIX) }}

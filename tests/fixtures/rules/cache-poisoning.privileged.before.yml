@@ -36,6 +36,22 @@ jobs:
         with:
           path: ~/.npm
           key: npm
+  # setup-node caches by default from v5 when the checked-out package.json names a package
+  # manager, which the pull request controls.
+  automatic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v5 # expect: cache-poisoning
+      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
+        with:
+          package-manager-cache: false
+      - run: npm ci && npm test
   label:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

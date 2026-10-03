@@ -13,7 +13,11 @@ use clap::ValueEnum;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use crate::{filesystem, rules, rules::common, workflow::Workflow};
+use crate::{
+    filesystem, rules,
+    rules::{common, expression},
+    workflow::Workflow,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Tool {
@@ -77,14 +81,18 @@ pub fn run(
     let mut rewrites = Vec::new();
     for file in filesystem::discover(path)? {
         let located = |error: String| format!("{}: {error}", file.display());
-        let source = filesystem::read(&file, true).map_err(located)?;
-        let workflow = Workflow::parse(source).map_err(located)?;
+        // A symbolic link is refused only when it needs an edit, below.
+        let source = filesystem::read(&file)
+            .map_err(|error| located(format!("cannot read workflow: {error}")))?;
+        let workflow = Workflow::parse(source.text.clone()).map_err(located)?;
         let mut edits = Vec::new();
         let mut steps = 0;
         for job in common::jobs(&workflow) {
-            // An install step goes only when no step of its job still runs the tool.
+            // An install step goes only when a crosgha step replaced the tool in its job and no step
+            // still runs it; the tool may also run indirectly (`pre-commit run`).
             let mut installs = Vec::new();
             let mut kept = false;
+            let steps_before = steps;
             for step in common::steps(&job) {
                 let place = || -> Result<String, String> {
                     let line = common::line(&workflow, &step.anchor())?;
@@ -107,7 +115,7 @@ pub fn run(
                 match classify(script, tool) {
                     Shell::Unrelated => {}
                     Shell::Install => {
-                        installs.push((removal(&workflow, &step.route)?, String::new()))
+                        installs.push((removal(&workflow, &step.route)?, place()?));
                     }
                     Shell::Invoke(Ok(inputs)) if step.value.get("working-directory").is_none() => {
                         edits.extend(shell_to_action(&workflow, &step, &replacement, &inputs)?);
@@ -139,19 +147,32 @@ pub fn run(
                     }
                 }
             }
-            if !kept {
-                edits.extend(installs);
+            if !kept && steps > steps_before {
+                edits.extend(
+                    installs
+                        .into_iter()
+                        .map(|(range, _)| (range, String::new())),
+                );
+            } else {
+                for (_, place) in installs {
+                    summary.notes.push(format!(
+                        "{place}: installs {}, which a step that was not migrated may still use; \
+                         the step was kept",
+                        tool.name()
+                    ));
+                }
             }
         }
         if edits.is_empty() {
             continue;
         }
+        filesystem::refuse_link(&file).map_err(located)?;
         summary.steps += steps;
         summary.files += 1;
         let migrated = apply(workflow.document.source(), edits);
         Workflow::parse(migrated.clone())
             .map_err(|error| located(format!("migration produced invalid YAML: {error}")))?;
-        rewrites.push((file, migrated));
+        rewrites.push((file, source, migrated));
     }
 
     let config = match filesystem::github_dir(path) {
@@ -163,8 +184,8 @@ pub fn run(
     };
 
     // Every file is migrated in memory before any is written.
-    for (file, migrated) in rewrites {
-        filesystem::write_verified(&file, &migrated)
+    for (file, source, migrated) in rewrites {
+        filesystem::replace(&file, &source, &migrated)
             .map_err(|error| format!("{}: {error}", file.display()))?;
     }
     if let Some((target, text)) = config {
@@ -361,8 +382,11 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
     while index < args.len() {
         let arg = args[index].as_str();
         index += 1;
-        if arg.starts_with(['>', '|', '&', ';']) {
-            return Err(format!("`{arg}` redirects the output"));
+        if shell_syntax(arg) {
+            return Err(format!(
+                "`{arg}` uses shell syntax (a chain, pipe, redirect, or expansion) that Action \
+                 inputs cannot express"
+            ));
         }
         if !arg.starts_with('-') {
             inputs.push(arg.to_owned());
@@ -453,6 +477,18 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
     Ok(ordered)
 }
 
+/// Whether the word holds shell syntax anywhere (`.;`, `2>/dev/null`, `$(...)`, `$VAR`); an
+/// Action input would pass it on literally. `${{ ... }}` is expanded by Actions, not the shell.
+fn shell_syntax(word: &str) -> bool {
+    let expressions = expression::spans(word);
+    word.char_indices().any(|(index, char)| {
+        ";><|&`$".contains(char)
+            && !expressions
+                .iter()
+                .any(|&(start, end)| (start..end).contains(&index))
+    })
+}
+
 /// Replaces the step's `run:` with `uses:` and `with:`, and drops `shell:`, which `uses`
 /// steps cannot have.
 fn shell_to_action(
@@ -535,7 +571,8 @@ fn zizmor_config(
         .flatten()
         .filter_map(|(id, _)| id.as_str().map(str::to_owned))
         .collect();
-    for id in ids {
+    for id in &ids {
+        let id = id.clone();
         let route = Route::default().with_key("rules").with_key(id.clone());
         let Some((rule, _)) = rules::all().find(|(rule, _)| rule.answers_to(&id)) else {
             notes.push(format!(
@@ -554,7 +591,13 @@ fn zizmor_config(
             .count();
         // A key for part of a rule (`unpinned-images`) keeps its zizmor name, which crosgha
         // applies to that part only.
-        if zizmor_ids == 1 {
+        if zizmor_ids == 1 && ids.iter().any(|other| other == rule.id) {
+            // A second key with the same name would make the config invalid YAML for crosgha.
+            notes.push(format!(
+                "`{id}` was not renamed: `{}` is already set; merge the two by hand",
+                rule.id
+            ));
+        } else if zizmor_ids == 1 {
             let key = config
                 .document
                 .query_key_only(&route)

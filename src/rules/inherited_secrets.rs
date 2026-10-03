@@ -16,6 +16,7 @@ pub const RULE: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("zizmor", "secrets-inherit")],
     configurable: false,
+    relational: false,
 };
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {

@@ -3,8 +3,6 @@ use std::{collections::HashMap, sync::Mutex};
 use yaml_serde::Value;
 use yamlpath::{Document, FeatureKind, Route};
 
-pub const BOM: char = '\u{feff}';
-
 pub struct Workflow {
     pub document: Document,
     pub value: Value,
@@ -15,12 +13,8 @@ pub struct Workflow {
 
 impl Workflow {
     /// Parses any YAML file, such as `dependabot.yml`, without workflow validation.
-    pub fn parse_yaml(mut source: String) -> Result<Self, String> {
-        // GitHub accepts a UTF-8 BOM, but the YAML scanner counts it as a column and then rejects
-        // a key on the first line; `filesystem::write_verified` puts it back.
-        if source.starts_with(BOM) {
-            source.drain(..BOM.len_utf8());
-        }
+    /// `source` comes from `filesystem::read`, without a BOM.
+    pub fn parse_yaml(source: String) -> Result<Self, String> {
         let document = Document::new(source).map_err(|error| error.to_string())?;
         let value = yaml_serde::from_str(document.source()).map_err(|error| error.to_string())?;
         Ok(Self {

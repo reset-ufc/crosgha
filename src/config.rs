@@ -3,10 +3,14 @@
 //! https://docs.zizmor.sh/configuration/
 
 use std::{
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
+use serde::{
+    Deserialize, Deserializer,
+    de::{MapAccess, Visitor},
+};
 use yaml_serde::Value;
 
 use crate::{
@@ -29,6 +33,9 @@ struct RuleConfig {
     options: Option<Value>,
 }
 
+/// Per directory, `.github/` comes before the directory itself, as zizmor's discovery orders
+/// `.github/zizmor.yml` before `zizmor.yml` (https://docs.zizmor.sh/configuration/#discovery);
+/// crosgha's own file wins over zizmor's.
 const NAMES: &[&str] = &[
     ".github/crosgha.yml",
     ".github/crosgha.yaml",
@@ -61,23 +68,128 @@ fn ignore_entry(entry: &str) -> Option<(String, Option<usize>)> {
     parts.next().is_none().then_some((file, line))
 }
 
+// zizmor rejects unknown keys at every level of its schema
+// (https://docs.zizmor.sh/configuration/#json-schema), so a typo cannot leave a rule silently
+// enabled. `null` is read as an absent key.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a mapping with a `rules` key")]
+struct File {
+    rules: Option<Rules>,
+}
+
+/// Rule entries in file order, so the first key that names a rule wins.
+struct Rules(Vec<(String, Option<Settings>)>);
+
+impl<'de> Deserialize<'de> for Rules {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Entries;
+        impl<'de> Visitor<'de> for Entries {
+            type Value = Rules;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a mapping of rule IDs")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Rules, A::Error> {
+                let mut rules = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    rules.push(entry);
+                }
+                Ok(Rules(rules))
+            }
+        }
+        deserializer.deserialize_map(Entries)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a mapping of rule settings")]
+struct Settings {
+    disable: Option<bool>,
+    ignore: Option<Vec<Ignore>>,
+    remap: Option<Remap>,
+    config: Option<yaml_serde::Mapping>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Remap {
+    severity: Option<Remapped>,
+}
+
+#[derive(Deserialize)]
+#[serde(try_from = "Value")]
+struct Remapped(Severity);
+
+impl TryFrom<Value> for Remapped {
+    type Error = String;
+
+    fn try_from(value: Value) -> Result<Self, String> {
+        value
+            .as_str()
+            .and_then(severity)
+            .map(Remapped)
+            .ok_or_else(|| "`severity` must be informational, low, medium, or high".to_owned())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(try_from = "Value")]
+struct Ignore((String, Option<usize>));
+
+impl TryFrom<Value> for Ignore {
+    type Error = String;
+
+    fn try_from(value: Value) -> Result<Self, String> {
+        let entry = value.as_str().ok_or("entries must be strings")?;
+        ignore_entry(entry).map(Ignore).ok_or_else(|| {
+            format!("entry `{entry}` is not `file`, `file:line`, or `file:line:column`")
+        })
+    }
+}
+
+impl From<Settings> for RuleConfig {
+    fn from(settings: Settings) -> Self {
+        RuleConfig {
+            disable: settings.disable.unwrap_or(false),
+            ignore: settings
+                .ignore
+                .into_iter()
+                .flatten()
+                .map(|Ignore(entry)| entry)
+                .collect(),
+            severity: settings
+                .remap
+                .and_then(|remap| remap.severity)
+                .map(|Remapped(severity)| severity),
+            options: settings.config.map(Value::Mapping),
+        }
+    }
+}
+
 impl Config {
     /// The first config file found walking up from `input`, stopping at the Git root. A
-    /// `.github/workflows` directory, or a file in it, starts two levels up so a workflow named
-    /// `zizmor.yml` is never read as configuration.
+    /// repository root, its `.github`, its `.github/workflows`, and a workflow in it all start at
+    /// the root, so the config never depends on how inputs are spelled or ordered, and a workflow
+    /// named `zizmor.yml` is never read as configuration.
     pub fn discover(input: &Path) -> Result<Option<(PathBuf, Self)>, String> {
-        let input = fs::canonicalize(input)
-            .map_err(|error| format!("cannot resolve `{}`: {error}", input.display()))?;
+        // A symlinked workflow belongs to the directory that holds the link.
         let directory = if input.is_dir() {
-            Some(input.as_path())
+            input
         } else {
-            input.parent()
+            input
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new("."))
         };
-        let mut current = match directory {
-            Some(workflows) if workflows.ends_with(".github/workflows") => {
-                workflows.parent().and_then(Path::parent)
-            }
-            other => other,
+        let directory = fs::canonicalize(directory)
+            .map_err(|error| format!("cannot resolve `{}`: {error}", input.display()))?;
+        let mut current = if directory.ends_with(".github/workflows") {
+            directory.parent().and_then(Path::parent)
+        } else if directory.ends_with(".github") {
+            directory.parent()
+        } else {
+            Some(directory.as_path())
         };
         while let Some(directory) = current {
             if let Some(path) = NAMES
@@ -99,44 +211,17 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self, String> {
         let describe = |error: String| format!("config `{}`: {error}", path.display());
         let source = fs::read_to_string(path).map_err(|error| describe(error.to_string()))?;
-        let value: Value =
+        let file: Option<File> =
             yaml_serde::from_str(&source).map_err(|error| describe(error.to_string()))?;
-        let mut config = Self::default();
-        let Some(rules) = value.get("rules").and_then(Value::as_mapping) else {
-            return Ok(config);
-        };
-        for (id, settings) in rules {
-            let Some(id) = id.as_str() else { continue };
-            let ignore = settings
-                .get("ignore")
-                .and_then(Value::as_sequence)
+        let rules = file
+            .and_then(|file| file.rules)
+            .map_or_else(Vec::new, |Rules(rules)| rules);
+        Ok(Self {
+            rules: rules
                 .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(|entry| {
-                    ignore_entry(entry).ok_or_else(|| {
-                        describe(format!(
-                            "`rules.{id}.ignore` entry `{entry}` is not `file`, `file:line`, or \
-                             `file:line:column`"
-                        ))
-                    })
-                })
-                .collect::<Result<_, _>>()?;
-            let remapped = settings
-                .get("remap")
-                .and_then(|remap| remap.get("severity"))
-                .and_then(Value::as_str);
-            config.rules.push((
-                id.to_owned(),
-                RuleConfig {
-                    disable: settings.get("disable").and_then(Value::as_bool) == Some(true),
-                    ignore,
-                    severity: remapped.and_then(severity),
-                    options: settings.get("config").cloned(),
-                },
-            ));
-        }
-        Ok(config)
+                .map(|(id, settings)| (id, settings.map(RuleConfig::from).unwrap_or_default()))
+                .collect(),
+        })
     }
 
     fn entries(&self, rule: &'static Rule) -> impl Iterator<Item = &RuleConfig> {

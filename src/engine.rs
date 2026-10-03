@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    filesystem,
+    filesystem::{self, Source},
     fix::{self, FixOutcome},
     policy::Settings,
     rules::{self, Finding},
@@ -15,7 +15,7 @@ use crate::{
 
 pub struct Inspection {
     /// The source the findings' lines point into.
-    pub source: String,
+    pub source: Source,
     pub findings: Vec<Finding>,
     pub fix: Option<FixOutcome>,
     /// Local actions the workflow calls, for the repository rules.
@@ -23,15 +23,16 @@ pub struct Inspection {
 }
 
 pub fn inspect(
-    source: String,
+    source: Source,
     apply_fixes: bool,
     settings: &Settings,
     file: &str,
 ) -> Result<Inspection, String> {
-    let workflow = Workflow::parse(source.clone())?;
+    let workflow = Workflow::parse(source.text.clone())?;
     let findings = rules::detect_all(&workflow, settings, file)?;
     let local_actions = rules::local_actions(&workflow);
-    let fix = if apply_fixes && !findings.is_empty() {
+    // Without a proposal the fix pass would only scan the same source again.
+    let fix = if apply_fixes && findings.iter().any(|finding| finding.fix.is_some()) {
         Some(fix::apply(workflow, &findings, settings, file)?)
     } else {
         None
@@ -56,7 +57,8 @@ pub fn inspect_files(
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         // A symbolic link is refused only if a fix has to be written through it.
-        filesystem::read(path, false)
+        filesystem::read(path)
+            .map_err(|error| format!("cannot read workflow: {error}"))
             .and_then(|source| inspect(source, apply_fixes, settings, &file))
     })
 }

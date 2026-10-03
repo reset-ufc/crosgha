@@ -51,3 +51,20 @@ jobs:
     permissions:
       content: write # expect: schema-validity
     uses: ./.github/workflows/release.yml
+  ai:
+    permissions:
+      models: write # expect: schema-validity
+      copilot-requests: write
+      drives: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo ai
+  copilot:
+    permissions:
+      copilot-requests: read # expect: schema-validity
+      drives: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo copilot

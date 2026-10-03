@@ -21,6 +21,7 @@ pub const RULE: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("zizmor", "unpinned-uses"), ("zizmor", "unpinned-images")],
     configurable: true,
+    relational: false,
 };
 
 /// zizmor's `rules.unpinned-uses.config.policies`: pattern -> `hash-pin`, `ref-pin`, or `any`.

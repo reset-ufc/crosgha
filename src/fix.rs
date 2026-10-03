@@ -28,6 +28,16 @@ pub struct Attempt {
     pub finding: usize,
     /// Why validation refused the fix; `None` when it is part of `FixOutcome::source`.
     pub rejected: Option<String>,
+    /// Index of a rejected fix's finding in `FixOutcome::remaining`, whose lines the applied
+    /// fixes may have moved.
+    pub remaining: Option<usize>,
+}
+
+/// What every patch is checked against: the findings of the file as read, and how they were found.
+struct Context<'a> {
+    original: &'a [Finding],
+    settings: &'a Settings,
+    file: &'a str,
 }
 
 /// Applies every proposal that passes validation. A rejected proposal leaves the source as it
@@ -38,50 +48,44 @@ pub fn apply(
     settings: &Settings,
     file: &str,
 ) -> Result<FixOutcome, String> {
-    // yamlpatch writes `\n` line breaks and ends the file with one, so the file is patched in
-    // that form and converted back. YAML normalizes line breaks in scalars, so neither
-    // conversion changes a value.
-    let source = workflow.document.source();
-    let crlf = source.contains("\r\n") && !source.replace("\r\n", "\n").contains('\r');
-    let unterminated = !source.ends_with('\n');
-    let mut normalized = match crlf {
-        true => source.replace("\r\n", "\n"),
-        false => source.to_owned(),
+    let context = Context {
+        original: findings,
+        settings,
+        file,
     };
-    if unterminated {
-        normalized.push('\n');
-    }
-    let (mut current, crlf, unterminated) = match crlf || unterminated {
-        true => match Workflow::parse(normalized) {
-            Ok(normalized) => (normalized, crlf, unterminated),
-            Err(_) => (workflow, false, false),
-        },
-        false => (workflow, false, false),
+    let normalized = LineBreaks::normalize(workflow.document.source())
+        .and_then(|(lf, breaks)| Some((Workflow::parse(lf).ok()?, breaks)));
+    let (mut current, mut breaks) = match normalized {
+        Some((parsed, breaks)) => (parsed, Some(breaks)),
+        None => (workflow, None),
     };
     // Findings of `current`. The caller's findings describe it until the source is normalized;
     // after that, each accepted patch's validation has already found them.
     let mut known: Option<Vec<Finding>> = None;
-    let normalized = crlf || unterminated;
     let mut attempts = Vec::new();
     for (index, finding) in findings.iter().enumerate() {
         let Some(proposal) = &finding.fix else {
             continue;
         };
-        if normalized && known.is_none() {
+        if breaks.is_some() && known.is_none() {
             match rules::detect_all(&current, settings, file) {
                 Ok(found) => known = Some(found),
                 Err(reason) => {
                     attempts.push(Attempt {
                         finding: index,
                         rejected: Some(reason),
+                        remaining: None,
                     });
                     continue;
                 }
             }
         }
         let before = known.as_deref().unwrap_or(findings);
-        let rejected = match patch(&current, finding, proposal, before, settings, file) {
+        let rejected = match patch(&current, finding, proposal, before, &context) {
             Ok((next, after)) => {
+                if let Some(breaks) = &mut breaks {
+                    breaks.carry(current.document.source(), next.document.source());
+                }
                 current = next;
                 known = Some(after);
                 None
@@ -91,66 +95,174 @@ pub fn apply(
         attempts.push(Attempt {
             finding: index,
             rejected,
+            remaining: None,
         });
     }
     let remaining = match known {
         Some(found) => found,
         None => rules::detect_all(&current, settings, file)?,
     };
-    let mut source = current.document.source();
-    if unterminated {
-        source = source.strip_suffix('\n').unwrap_or(source);
+    let mut taken = vec![false; remaining.len()];
+    for attempt in attempts
+        .iter_mut()
+        .filter(|attempt| attempt.rejected.is_some())
+    {
+        let original = &findings[attempt.finding];
+        attempt.remaining = (0..remaining.len())
+            .find(|&index| !taken[index] && same_target(&remaining[index], original));
+        if let Some(index) = attempt.remaining {
+            taken[index] = true;
+        }
     }
+    let source = match &breaks {
+        None => current.document.source().to_owned(),
+        Some(breaks) => breaks.restore(current.document.source()),
+    };
     Ok(FixOutcome {
-        source: match crlf {
-            true => source.replace('\n', "\r\n"),
-            false => source.to_owned(),
-        },
+        source,
         attempts,
         remaining,
     })
 }
 
-/// The patched workflow and its findings, once the patch passes validation.
+/// yamlpatch writes `\n` line breaks and ends the file with one, so a file with `\r\n` breaks or
+/// no final break is patched in that form and each line gets its own break back. YAML normalizes
+/// line breaks in scalars, so neither conversion changes a value.
+struct LineBreaks {
+    /// The break (`\r\n` or `\n`) ending each line; a last line without one takes the break of
+    /// the line before it.
+    ends: Vec<&'static str>,
+    unterminated: bool,
+}
+
+impl LineBreaks {
+    /// `source` in yamlpatch's form and the breaks to restore, or `None` when it already is.
+    fn normalize(source: &str) -> Option<(String, Self)> {
+        let unterminated = !source.ends_with('\n');
+        if !unterminated && !source.contains("\r\n") {
+            return None;
+        }
+        let mut lf = source.replace("\r\n", "\n");
+        if unterminated {
+            lf.push('\n');
+        }
+        let mut ends: Vec<&'static str> = Vec::new();
+        for line in source.split_inclusive('\n') {
+            ends.push(match line {
+                _ if line.ends_with("\r\n") => "\r\n",
+                _ if line.ends_with('\n') => "\n",
+                _ => ends.last().copied().unwrap_or("\n"),
+            });
+        }
+        Some((lf, Self { ends, unterminated }))
+    }
+
+    /// Moves the breaks of `before`'s lines onto `after`'s, which differ in one region: lines
+    /// around it keep their break, a changed line keeps the break of the line it replaces, and an
+    /// added line takes the break of the line before it.
+    fn carry(&mut self, before: &str, after: &str) {
+        let old: Vec<&str> = before.split_inclusive('\n').collect();
+        let new: Vec<&str> = after.split_inclusive('\n').collect();
+        let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+        let suffix = old[prefix..]
+            .iter()
+            .rev()
+            .zip(new[prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let replaced = old.len() - prefix - suffix;
+        let mut carried = self.ends[..prefix].to_vec();
+        for index in 0..new.len() - prefix - suffix {
+            let end = match index < replaced {
+                true => self.ends[prefix + index],
+                false => carried
+                    .last()
+                    .or(self.ends.get(prefix))
+                    .copied()
+                    .unwrap_or("\n"),
+            };
+            carried.push(end);
+        }
+        carried.extend_from_slice(&self.ends[old.len() - suffix..]);
+        self.ends = carried;
+    }
+
+    /// `lf`, the patched source, with the file's own breaks.
+    fn restore(&self, lf: &str) -> String {
+        let mut restored = String::with_capacity(lf.len() + self.ends.len());
+        for (line, end) in lf.split_inclusive('\n').zip(&self.ends) {
+            restored.push_str(line.strip_suffix('\n').unwrap_or(line));
+            restored.push_str(end);
+        }
+        if self.unterminated {
+            restored.truncate(restored.trim_end_matches(['\r', '\n']).len());
+        }
+        restored
+    }
+}
+
+/// The patched workflow and its findings, once the patch passes validation. `before` holds the
+/// findings of `current`.
 fn patch(
     current: &Workflow,
     finding: &Finding,
     proposal: &ProposedFix,
     before: &[Finding],
-    settings: &Settings,
-    file: &str,
+    context: &Context,
 ) -> Result<(Workflow, Vec<Finding>), String> {
     let patched = apply_yaml_patches(&current.document, std::slice::from_ref(&proposal.patch))
         .map_err(|error| error.to_string())?;
-    let next = Workflow::parse(patched.source().to_owned())?;
-    let after = validate_change(current, &next, finding, proposal, before, settings, file)?;
+    let mut source = patched.source().to_owned();
+    if matches!(proposal.change, ChangeKind::Add)
+        && let Some(moved) = after_trailing_whitespace(current.document.source(), &source)
+    {
+        source = moved;
+    }
+    let next = Workflow::parse(source)?;
+    let after = rules::detect_all(&next, context.settings, context.file)?;
+    compare_findings(finding, before, &after, context.original)?;
+    validate_change(current, &next, proposal)?;
     Ok((next, after))
+}
+
+/// The target must disappear and no other finding may change, except that findings of
+/// `relational` rules may disappear, or come back when the file as read had them.
+fn compare_findings(
+    target: &Finding,
+    old: &[Finding],
+    new: &[Finding],
+    original: &[Finding],
+) -> Result<(), String> {
+    let compared = |findings: &[Finding]| {
+        findings
+            .iter()
+            .filter(|finding| !finding.rule.relational)
+            .count()
+    };
+    if new.iter().any(|finding| same_target(finding, target)) || compared(new) + 1 != compared(old)
+    {
+        return Err("fix did not remove exactly the targeted finding".to_owned());
+    }
+    let known = |finding: &Finding| {
+        let restored = match finding.rule.relational {
+            true => original,
+            false => &[],
+        };
+        old.iter()
+            .chain(restored)
+            .any(|old| same_target(old, finding))
+    };
+    if !new.iter().all(known) {
+        return Err("fix introduced a new finding".to_owned());
+    }
+    Ok(())
 }
 
 fn validate_change(
     before: &Workflow,
     after: &Workflow,
-    target: &Finding,
     proposal: &ProposedFix,
-    old_findings: &[Finding],
-    settings: &Settings,
-    file: &str,
-) -> Result<Vec<Finding>, String> {
-    let new_findings = rules::detect_all(after, settings, file)?;
-    if new_findings
-        .iter()
-        .any(|finding| same_target(finding, target))
-        || new_findings.len() + 1 != old_findings.len()
-    {
-        return Err("fix did not remove exactly the targeted finding".to_owned());
-    }
-    if new_findings
-        .iter()
-        .any(|finding| !old_findings.iter().any(|old| same_target(old, finding)))
-    {
-        return Err("fix introduced a new finding".to_owned());
-    }
-
+) -> Result<(), String> {
     let route = &proposal.changed_route;
     let only_target = match proposal.change {
         ChangeKind::Add => {
@@ -202,7 +314,34 @@ fn validate_change(
     if !only_target {
         return Err("fix changed YAML outside the intended node".to_owned());
     }
-    Ok(new_findings)
+    Ok(())
+}
+
+/// yamlpatch adds block lines right after the last value, before that line's trailing spaces,
+/// which then end the added line instead. This moves such an insertion to the next line
+/// boundary, so the existing line keeps its bytes.
+fn after_trailing_whitespace(before: &str, after: &str) -> Option<String> {
+    let length = after.len().checked_sub(before.len())?;
+    let at = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let rest = before.get(at..)?;
+    let lines = after.get(at..at + length)?.strip_prefix('\n')?;
+    let line_end = rest.find('\n')?;
+    let trailing = rest[..line_end]
+        .bytes()
+        .all(|byte| matches!(byte, b' ' | b'\t'));
+    if line_end == 0 || !trailing || after[at + length..] != *rest {
+        return None;
+    }
+    let boundary = at + line_end + 1;
+    Some(format!(
+        "{}{lines}\n{}",
+        &before[..boundary],
+        &before[boundary..]
+    ))
 }
 
 /// `end` without the blank and comment lines that close `source[start..end]`: the parser counts
@@ -234,12 +373,22 @@ fn inserts_only(before: &str, after: &str, node: std::ops::Range<usize>) -> bool
         .zip(new.iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
-    // When the insertion repeats its surroundings, it can start anywhere in `lowest..=prefix`.
+    // When the insertion repeats its surroundings, it can start anywhere in `lowest..=highest`.
     let lowest = (old.len() - suffix).max(node.end.saturating_sub(length));
-    let start = prefix.min(node.start);
-    if prefix + suffix < old.len() || start < lowest {
+    let highest = prefix.min(node.start);
+    if prefix + suffix < old.len() || highest < lowest {
         return false;
     }
+    // Added lines must be whole lines, so every line around them keeps its bytes.
+    let start = match new[highest..highest + length].contains(&b'\n') {
+        false => highest,
+        true => match (lowest..=highest)
+            .find(|&at| (at == 0 || new[at - 1] == b'\n') && new[at + length - 1] == b'\n')
+        {
+            Some(at) => at,
+            None => return false,
+        },
+    };
     let mut commas = 0;
     new[start..node.start]
         .iter()

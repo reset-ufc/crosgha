@@ -1,9 +1,9 @@
-//! Workflow traversal shared by the rules: jobs, steps, triggers, expressions, and `uses` refs.
+//! Workflow traversal shared by the rules: jobs, steps, triggers, and `uses` refs.
 
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule};
+use super::{Finding, Rule, online};
 use crate::workflow::Workflow;
 
 pub struct Job<'a> {
@@ -176,132 +176,6 @@ pub const EXTERNAL_TRIGGERS: &[&str] = &[
     "workflow_run",
 ];
 
-/// The bodies of every `${{ ... }}` expression in `text`.
-pub fn expressions(text: &str) -> Vec<&str> {
-    let mut found = Vec::new();
-    let mut rest = text;
-    while let Some(start) = rest.find("${{") {
-        let after = &rest[start + 3..];
-        let Some(end) = after.find("}}") else {
-            break;
-        };
-        found.push(after[..end].trim());
-        rest = &after[end + 2..];
-    }
-    found
-}
-
-/// Context paths GitHub documents as attacker-controllable: `github.head_ref` and
-/// `github.event.*` values ending in one of these names.
-/// https://docs.github.com/en/actions/concepts/security/script-injections
-const UNTRUSTED_SUFFIXES: &[&str] = &[
-    "body",
-    "default_branch",
-    "email",
-    "head_ref",
-    "label",
-    "message",
-    "name",
-    "page_name",
-    "ref",
-    "title",
-    // `workflow_run.head_branch` is the head_ref of the run's pull request under another name.
-    "head_branch",
-];
-
-/// Event payload objects that carry the free text above; `toJSON` of one, or of `github` or
-/// `github.event` as a whole, serializes that text into the script.
-const FREE_TEXT_OBJECTS: &[&str] = &[
-    "comment",
-    "commits",
-    "discussion",
-    "head_commit",
-    "issue",
-    "pages",
-    "pull_request",
-    "review",
-    "workflow_run",
-];
-
-/// Untrusted context paths read by `expression`, lowercased and in dotted form. Contexts accept
-/// `github['event']` as well as `github.event`:
-/// https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
-/// and the runner looks keys up case-insensitively (`StringComparer.OrdinalIgnoreCase` in
-/// actions/runner `DictionaryContextData.cs` at d7bc179baf11a02110b46cfbbc4040f74ac3f60a).
-pub fn untrusted_contexts(expression: &str) -> Vec<String> {
-    let expression = dotted(&expression.to_ascii_lowercase());
-    let bytes = expression.as_bytes();
-    let mut found = Vec::new();
-    let mut start = 0;
-    while let Some(offset) = expression[start..].find("github") {
-        let begin = start + offset;
-        let preceded = begin > 0 && (is_context_char(bytes[begin - 1]) || bytes[begin - 1] == b'.');
-        let mut end = begin;
-        while end < bytes.len() && (is_context_char(bytes[end]) || b".[]*".contains(&bytes[end])) {
-            end += 1;
-        }
-        start = end.max(begin + 1);
-        let path = &expression[begin..end];
-        let segments: Vec<&str> = path
-            .split('.')
-            .map(|segment| segment.split('[').next().unwrap_or(segment))
-            .filter(|segment| !segment.is_empty() && *segment != "*")
-            .collect();
-        if preceded || segments.first() != Some(&"github") {
-            continue;
-        }
-        let whole_object = expression[..begin].trim_end().ends_with("tojson(")
-            && match segments.as_slice() {
-                ["github"] | ["github", "event"] => true,
-                ["github", "event", object, ..] => FREE_TEXT_OBJECTS.contains(object),
-                _ => false,
-            };
-        let untrusted = segments.as_slice() == ["github", "head_ref"]
-            || (segments.len() > 2
-                && segments[1] == "event"
-                && UNTRUSTED_SUFFIXES.contains(segments.last().unwrap()))
-            || whole_object;
-        if untrusted {
-            found.push(path.to_owned());
-        }
-    }
-    found
-}
-
-/// Rewrites index syntax with a literal name (`['body']`) to property syntax (`.body`).
-fn dotted(expression: &str) -> String {
-    let mut out = String::with_capacity(expression.len());
-    let mut rest = expression;
-    while let Some(open) = rest.find("['") {
-        out.push_str(&rest[..open]);
-        let after = &rest[open + 2..];
-        match after.find("']") {
-            Some(close) if after[..close].bytes().all(is_context_char) => {
-                out.push('.');
-                out.push_str(&after[..close]);
-                rest = &after[close + 2..];
-            }
-            _ => {
-                out.push_str("['");
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn is_context_char(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
-}
-
-pub fn untrusted_in_text(text: &str) -> Vec<String> {
-    expressions(text)
-        .into_iter()
-        .flat_map(untrusted_contexts)
-        .collect()
-}
-
 /// Visits every string scalar below `value`, with the route of the key that holds it.
 pub fn strings<'a>(
     value: &'a Value,
@@ -323,6 +197,31 @@ pub fn strings<'a>(
             }
         }
         _ => {}
+    }
+}
+
+/// `owner/repo` (lowercased, as GitHub resolves it) and the `major.minor...` numbers of a step's
+/// action, when its ref names a version.
+pub fn versioned_action(workflow: &Workflow, step: &Step<'_>) -> Option<(String, Vec<u64>)> {
+    let action = step.uses().and_then(parse_uses)?;
+    let version = online::ref_version(workflow, &step.key("uses"), action.git_ref)?;
+    let name = format!("{}/{}", action.owner, action.repo).to_ascii_lowercase();
+    Some((name, online::numbers(&version)))
+}
+
+/// The major version of a step's action, when its ref names one.
+pub fn action_major(workflow: &Workflow, step: &Step<'_>) -> Option<u64> {
+    versioned_action(workflow, step)?.1.first().copied()
+}
+
+/// A boolean action input or variable: a YAML boolean, or `true`/`false` in any case with
+/// surrounding whitespace, as actions read them (`getInput` trims).
+pub fn input_bool(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(value) => Some(*value),
+        Value::String(text) if text.trim().eq_ignore_ascii_case("true") => Some(true),
+        Value::String(text) if text.trim().eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
     }
 }
 

@@ -24,3 +24,20 @@ jobs:
       - run: | # expect: unverified-remote-script
           curl -fsSL https://example.com/install.sh |
             python3 - --prefix /opt/tool
+      - run: curl -fsSLo get.sh https://example.com/get.sh && sh get.sh # expect: unverified-remote-script
+      - run: | # expect: unverified-remote-script
+          wget -q -O /tmp/install.sh https://example.com/install.sh
+          sudo bash /tmp/install.sh --yes
+      - run: curl -fsSLO https://example.com/setup.sh && chmod +x setup.sh && ./setup.sh # expect: unverified-remote-script
+      - run: wget https://example.com/bootstrap.py; python3 bootstrap.py # expect: unverified-remote-script
+      - run: curl -s https://example.com/install.pl | perl -I/usr/share/perl5 # expect: unverified-remote-script
+      - run: curl -s https://example.com/install.pl | perl -MEnglish # expect: unverified-remote-script
+      - run: curl -s https://api.example.com/status | perl -Ilib -ne 'print if /ready/'
+      - run: |
+          # Never do this: curl -fsSL https://example.com/install.sh | sh
+          echo "pinned installer only"
+      - run: curl -fsSLo tool.tgz https://example.com/tool.tgz && tar xzf tool.tgz && ./tool/bin/tool --version
+      - run: |
+          curl -fsSLo get.sh https://example.com/get.sh
+          echo "3b1f...  get.sh" | sha256sum -c -
+          sh get.sh

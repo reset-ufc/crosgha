@@ -40,6 +40,17 @@ jobs:
       - run: npm install some-cli@1 # expect: unpinned-package
       - run: npm install 'some-cli@>=1.0.0 <2' # expect: unpinned-package
       - run: npm install some-cli@1.2.3-beta.1
+      - run: npm install "typescript@5.4.5" 'eslint@9.9.0'
+      - run: npm install "typescript@5" # expect: unpinned-package
+      - run: npm install --workspace packages/app lodash@4.17.21
+      - run: npm install -w packages/app --save-dev lodash # expect: unpinned-package
+      - run: pnpm install --loglevel warn --frozen-lockfile
+      - run: npm install --omit dev --include optional
+      - run: npm install --tag beta
+      - run: pnpm install --filter hangar
+      - run: npm install ../pkg/${{ steps.pack.outputs.tarball }}
+      - run: npm install -g ${{ inputs.tool }} prettier # expect: unpinned-package
+      - run: npm install -g ${{ inputs.tool || 'prettier' }}@3.3.3
       - parallel:
           - run: npm install eslint # expect: unpinned-package
           - run: npm install eslint@9.9.0

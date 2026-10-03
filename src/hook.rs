@@ -1,16 +1,63 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const MARKER: &str =
     "# Installed by `crosgha hook install`; remove it with `crosgha hook uninstall`.";
 
 /// Writes the pre-push hook, replacing only a hook crosgha installed itself.
 pub fn install(args: &[String]) -> Result<PathBuf, String> {
-    let hook = hook_path()?;
+    let (hook, repository) = locate()?;
+    let dir = hook.parent().unwrap_or(&hook);
+    let resolved = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    if !repository.iter().any(|root| resolved.starts_with(root)) {
+        return Err(format!(
+            "git resolves hooks to {}, outside this repository (core.hooksPath is probably set \
+             globally); a hook there would run crosgha on every push from every repository \
+             that shares it. Set a hooks directory for this repository, such as \
+             `git config core.hooksPath .githooks`, or call crosgha from the shared hook yourself",
+            dir.display()
+        ));
+    }
     refuse_foreign(&hook)?;
-    let args: Vec<String> = args.iter().map(|arg| quote(arg)).collect();
+    fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    fs::write(&hook, script(args)).map_err(|error| format!("{}: {error}", hook.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
+            .map_err(|error| format!("{}: {error}", hook.display()))?;
+    }
+    Ok(hook)
+}
+
+/// Removes the pre-push hook if crosgha installed it; `None` when there was none.
+pub fn uninstall() -> Result<Option<PathBuf>, String> {
+    let (hook, _) = locate()?;
+    if fs::symlink_metadata(&hook).is_err() {
+        return Ok(None);
+    }
+    refuse_foreign(&hook)?;
+    fs::remove_file(&hook).map_err(|error| format!("{}: {error}", hook.display()))?;
+    Ok(Some(hook))
+}
+
+/// Every script crosgha has installed, oldest first, over the quoted arguments; `install` writes
+/// the last. A release that changes the script appends a template, so hooks that earlier releases
+/// installed are still recognized, upgraded, and removed.
+const TEMPLATES: &[fn(&str) -> String] = &[first];
+
+fn script(args: &[String]) -> String {
+    let args: String = args.iter().map(|arg| format!(" {}", quote(arg))).collect();
+    TEMPLATES[TEMPLATES.len() - 1](&args)
+}
+
+fn first(args: &str) -> String {
     // ponytail: scans the working tree, not the pushed commits, so uncommitted edits count.
     // Upgrade path: read the pushed refs from stdin and scan each in a temporary worktree.
-    let script = format!(
+    format!(
         r#"#!/bin/sh
 {MARKER}
 if ! command -v crosgha >/dev/null 2>&1; then
@@ -24,38 +71,15 @@ if [ "$status" -eq 1 ]; then
   echo "pre-push: fix the findings above ('crosgha --fix' applies the verified fixes) or skip them with 'git push --no-verify'" >&2
 fi
 exit "$status"
-"#,
-        args = args.iter().map(|arg| format!(" {arg}")).collect::<String>()
-    );
-    if let Some(dir) = hook.parent() {
-        fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
-    }
-    fs::write(&hook, script).map_err(|error| format!("{}: {error}", hook.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
-            .map_err(|error| format!("{}: {error}", hook.display()))?;
-    }
-    Ok(hook)
+"#
+    )
 }
 
-/// Removes the pre-push hook if crosgha installed it; `None` when there was none.
-pub fn uninstall() -> Result<Option<PathBuf>, String> {
-    let hook = hook_path()?;
-    if fs::symlink_metadata(&hook).is_err() {
-        return Ok(None);
-    }
-    refuse_foreign(&hook)?;
-    fs::remove_file(&hook).map_err(|error| format!("{}: {error}", hook.display()))?;
-    Ok(Some(hook))
-}
-
-fn refuse_foreign(hook: &std::path::Path) -> Result<(), String> {
+fn refuse_foreign(hook: &Path) -> Result<(), String> {
     // Anything that exists but cannot be read as our script (non-UTF-8, a directory,
     // unreadable, a dangling symlink) is someone else's hook too.
     match fs::read_to_string(hook) {
-        Ok(script) if script.contains(MARKER) => Ok(()),
+        Ok(script) if is_ours(&script) => Ok(()),
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound
                 && fs::symlink_metadata(hook).is_err() =>
@@ -69,17 +93,65 @@ fn refuse_foreign(hook: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// Git resolves `core.hooksPath` and worktrees; the path is relative to the current directory.
-fn hook_path() -> Result<PathBuf, String> {
+/// Only the stored arguments vary, so a copy the user edited, marker included, is theirs.
+fn is_ours(content: &str) -> bool {
+    let Some(args) = content
+        .lines()
+        .find_map(|line| line.strip_prefix("crosgha"))
+        .filter(|args| unquote(args).is_some())
+    else {
+        return false;
+    };
+    TEMPLATES.iter().any(|template| template(args) == content)
+}
+
+/// Inverse of `quote` over a line of ` '…'` words; `None` for anything `quote` cannot produce.
+fn unquote(mut rest: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    while !rest.is_empty() {
+        rest = rest.strip_prefix(" '")?;
+        let mut arg = String::new();
+        loop {
+            let end = rest.find('\'')?;
+            arg.push_str(&rest[..end]);
+            rest = &rest[end + 1..];
+            match rest.strip_prefix(r"\''") {
+                Some(next) => {
+                    arg.push('\'');
+                    rest = next;
+                }
+                None => break,
+            }
+        }
+        args.push(arg);
+    }
+    Some(args)
+}
+
+/// The pre-push hook git would run, after `core.hooksPath` and worktrees, and the directories
+/// that belong to this repository: its working tree and the git directory worktrees share.
+fn locate() -> Result<(PathBuf, Vec<PathBuf>), String> {
     let output = Command::new("git")
-        .args(["rev-parse", "--git-path", "hooks"])
+        .args([
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "hooks",
+            "--show-toplevel",
+            "--git-common-dir",
+        ])
         .output()
         .map_err(|error| format!("cannot run git: {error}"))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
     }
-    let hooks = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    Ok(PathBuf::from(hooks).join("pre-push"))
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut paths = stdout.lines().map(PathBuf::from);
+    let hook = paths.next().unwrap_or_default().join("pre-push");
+    let repository = paths
+        .map(|root| fs::canonicalize(&root).unwrap_or(root))
+        .collect();
+    Ok((hook, repository))
 }
 
 fn quote(arg: &str) -> String {
