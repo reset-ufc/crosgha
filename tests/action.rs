@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{release, serve, temp_dir};
+use common::{broken_release, release, serve, temp_dir};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -26,6 +26,7 @@ fn run_action(base: &str, inputs: &str, extra: &[(&str, &str)]) -> Run {
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
         .env("RUNNER_OS", "Linux")
+        .env("RUNNER_ARCH", "X64")
         .env("GITHUB_ACTIONS", "true")
         .env("RUNNER_TEMP", &temp)
         .env("GITHUB_OUTPUT", &outputs)
@@ -157,4 +158,38 @@ fn action_uses_plain_http_only_for_a_bare_loopback_origin() {
     assert_eq!(run.outputs, "");
     fs::remove_dir_all(&run.temp).unwrap();
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn action_fails_without_outputs_when_crosgha_cannot_run_or_crashes() {
+    // Nothing listens on port 9: the runner check must fail before any download.
+    let arm = run_action("http://127.0.0.1:9", ".", &[("RUNNER_ARCH", "ARM64")]);
+    assert!(!arm.output.status.success());
+    assert!(String::from_utf8_lossy(&arm.output.stderr).contains("X64"));
+    assert_eq!(arm.outputs, "");
+    fs::remove_dir_all(&arm.temp).unwrap();
+
+    for (code, message) in [
+        (101, "thread 'main' panicked"),
+        (126, "cannot execute binary file: Exec format error"),
+    ] {
+        let root = broken_release(
+            env!("CARGO_PKG_VERSION"),
+            &format!("#!/bin/sh\necho \"{message}\" >&2\nexit {code}\n"),
+        );
+        let base = serve(root.clone());
+        let run = run_action(&base, ".", &[]);
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&run.output.stdout),
+            String::from_utf8_lossy(&run.output.stderr)
+        );
+        assert!(!run.output.status.success(), "{output}");
+        assert!(output.contains(message), "{output}");
+        assert!(output.contains(&format!("exit status {code}")), "{output}");
+        assert_eq!(run.outputs, "", "exit {code}");
+        assert_eq!(run.summary, "", "exit {code}");
+        fs::remove_dir_all(&run.temp).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 }

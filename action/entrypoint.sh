@@ -16,7 +16,9 @@ boolean() {
     esac
 }
 
-[[ "${RUNNER_OS:-}" == Linux ]] || fail "crosgha Action supports Linux runners only"
+# The release ships one asset, crosgha-x86_64-unknown-linux-gnu.
+[[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == X64 ]] \
+    || fail "crosgha Action supports Linux X64 runners only, not ${RUNNER_OS:-?} ${RUNNER_ARCH:-?}"
 
 case "${CROSGHA_PERSONA:-regular}" in
     regular|pedantic|auditor) ;;
@@ -133,7 +135,9 @@ if [[ "$code" == 2 ]] && grep -q "no .yml or .yaml workflow files found" "$RUNNE
     echo "exit-code=0" >> "$GITHUB_OUTPUT"
     exit 0
 fi
-[[ "$code" == 2 ]] && fail "crosgha could not complete the scan"
+# 0 is clean and 1 is findings. Anything else (2, a panic's 101, a binary that cannot execute's
+# 126) leaves no complete report or SARIF to publish.
+[[ "$code" == 0 || "$code" == 1 ]] || fail "crosgha could not complete the scan (exit status $code)"
 
 # The SARIF renderer writes one `ruleId` key per result.
 findings="$(grep -c '"ruleId":' "$sarif" || true)"
