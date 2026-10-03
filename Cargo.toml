@@ -1,6 +1,6 @@
 [package]
 name = "crosgha"
-version = "0.11.2"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.97.0"
 description = "GitHub Actions workflow smell tool"
