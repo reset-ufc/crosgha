@@ -262,8 +262,8 @@ code. **Config** marks rules that read `rules.<id>.config`.
 | `complex-job` | `long-job/complexity` | note | auditor | workflow |  |  |
 | `readability` | `readability` | note | auditor | workflow | zizmor: `anonymous-definition` |  |
 | `deprecated-command` | `deprecated-command/feature` | warning | regular | workflow | zizmor: `insecure-commands`; actionlint: `deprecated-commands` |  |
-| `removed-feature` | `deprecated-command/feature` | error | regular | workflow |  |  |
-| `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check` |  |
+| `removed-feature` | `deprecated-command/feature` | error | regular | workflow | actionlint: `runner-label`, `action`, `deprecated-inputs` |  |
+| `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check`, `expression` |  |
 | `embedded-script-lint` | `embedded-script-lint` | note | pedantic | workflow | actionlint: `shellcheck` |  |
 | `insecure-protocol` | `insecure-protocol` | warning | regular | workflow | zizmor: `insecure-url-scheme` |  |
 | `unpinned-action` | `unpinned-action` | warning | pedantic | workflow | zizmor: `unpinned-uses`, `unpinned-images` | yes |
@@ -276,7 +276,7 @@ code. **Config** marks rules that read `rules.<id>.config`.
 | `archived-action` | `untrusted-3rd-party-action` | warning | regular | online | zizmor: `archived-uses` |  |
 | `missing-release-cooldown` | `missing-release-cooldown` | note | pedantic | repository | zizmor: `dependabot-cooldown` | yes |
 | `missing-security-tooling` | `missing-security-tooling` | note | auditor | repository |  |  |
-| `retired-runtime` | `deprecated-command/feature` | warning | regular | repository |  |  |
+| `retired-runtime` | `deprecated-command/feature` | warning | regular | repository | actionlint: `action` |  |
 | `repo-org-settings` | `repo-org-settings` | warning | pedantic | repository |  |  |
 
 ## Development

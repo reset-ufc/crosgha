@@ -194,7 +194,7 @@ pub const RUNTIME: Rule = Rule {
     tag: "deprecated-command/feature",
     severity: Severity::Warning,
     persona: Persona::Regular,
-    equivalents: &[],
+    equivalents: &[("actionlint", "action")],
     configurable: false,
 };
 

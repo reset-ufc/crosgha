@@ -17,7 +17,7 @@ pub const SCHEMA: Rule = Rule {
     tag: "syntax/schema-validity",
     severity: Severity::Error,
     persona: Persona::Regular,
-    equivalents: &[("actionlint", "syntax-check")],
+    equivalents: &[("actionlint", "syntax-check"), ("actionlint", "expression")],
     configurable: false,
 };
 

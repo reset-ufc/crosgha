@@ -122,7 +122,11 @@ pub const REMOVED: Rule = Rule {
     tag: "deprecated-command/feature",
     severity: Severity::Error,
     persona: Persona::Regular,
-    equivalents: &[],
+    equivalents: &[
+        ("actionlint", "runner-label"),
+        ("actionlint", "action"),
+        ("actionlint", "deprecated-inputs"),
+    ],
     configurable: false,
 };
 
