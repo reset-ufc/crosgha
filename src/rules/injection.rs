@@ -223,24 +223,36 @@ pub fn prompt_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
+/// References to the pull request's code: its head (in the fork), the merge commit GitHub
+/// builds from it, or the run's head for `workflow_run`.
 const HEAD_REFS: &[&str] = &[
     "github.event.pull_request.head.",
+    "github.event.pull_request.merge_commit_sha",
     "github.head_ref",
     "refs/pull/",
     "github.event.workflow_run.head_",
 ];
 
-/// Whether a step checks out or fetches the pull request's head, whose code the author controls.
+/// Whether a step checks out or fetches the pull request's code, which the author controls.
+/// Any ref of the fork repository counts, so `repository` alone is enough.
 fn checks_out_head(step: &common::Step) -> bool {
     let mentions_head = |text: &str| HEAD_REFS.iter().any(|head| text.contains(head));
     let checkout = step
         .uses()
         .is_some_and(|uses| uses.to_ascii_lowercase().starts_with("actions/checkout@"))
-        && step.input_str("ref").is_some_and(mentions_head);
+        && ["ref", "repository"]
+            .iter()
+            .any(|input| step.input_str(input).is_some_and(mentions_head));
     let fetch = step.run().is_some_and(|script| {
-        script.contains("gh pr checkout")
-            || (script.contains("git fetch") && script.contains("pull/"))
-            || (script.contains("git checkout") && mentions_head(script))
+        script
+            .replace("\\\n", " ")
+            .split(['\n', ';', '&', '|'])
+            .any(|command| {
+                command.contains("gh pr checkout")
+                    || (command.contains("git fetch")
+                        && (command.contains("pull/") || mentions_head(command)))
+                    || (command.contains("git checkout") && mentions_head(command))
+            })
     });
     checkout || fetch
 }
