@@ -100,7 +100,7 @@ pub fn unpinned_package(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     step.key("run"),
                     step.location.clone(),
                     format!(
-                        "`{}` installs a package without a version",
+                        "`{}` installs a package without an exact version",
                         command.join(" ")
                     ),
                 )?);
