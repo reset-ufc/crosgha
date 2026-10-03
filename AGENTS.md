@@ -7,6 +7,7 @@ preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSco
 - **Rules:** 48 cover every tag of the curated taxonomy: 39 per workflow, 4 per repository, and 5 that query the
   GitHub API.
 - **Fixes:** only `persist-credentials` and `removed-feature` (setup-java distributions) have verified fixes so far.
+  `persist-credentials` stays unfixed when `true` is explicit, a later step pushes with the token, or checkout predates v2.
 - **zizmor compatibility:** personas, ignore comments, `zizmor.yml` (including per-rule options), and
   `crosgha migrate` follow zizmor so users can switch tools without rewriting configuration. Reports name the
   equivalent zizmor or actionlint rule.
@@ -25,7 +26,7 @@ It is listed in `.git/info/exclude` and never committed.
 | One-time hook setup after cloning | `make setup` (sets `core.hooksPath=.githooks`) |
 | Build / run | `cargo build --release` · `cargo run` |
 | Everything the pre-push hook checks | `.githooks/pre-push` or `make check` (fmt, clippy `-D warnings`, tests, dogfood) |
-| Rule catalog (id, tag, severity, persona, scope) | `cargo run -- --list-rules` (`-f json` adds summaries and equivalents) |
+| Rule catalog (id, tag, severity, persona, scope) | `cargo run -- --list-rules` (`-f json` adds summaries, equivalents, and `configurable`) |
 | Release plan preview (offline) | `.tools/bin/dist plan` |
 
 ## Rules
