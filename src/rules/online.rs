@@ -171,7 +171,10 @@ pub fn vulnerable(
             pin.repo,
             version.trim_start_matches('v')
         );
-        let advisories = github.get(&path)?.unwrap_or_default();
+        let Ok(advisories) = github.get(&path) else {
+            continue;
+        };
+        let advisories = advisories.unwrap_or_default();
         let ids: Vec<&str> = advisories
             .as_array()
             .into_iter()
@@ -202,10 +205,12 @@ pub fn outdated(
         let Some(version) = &pin.version else {
             continue;
         };
-        let latest = github.get(&format!(
+        let Ok(latest) = github.get(&format!(
             "/repos/{}/{}/releases/latest",
             pin.owner, pin.repo
-        ))?;
+        )) else {
+            continue;
+        };
         let Some(latest) = latest
             .as_ref()
             .and_then(|release| release.get("tag_name")?.as_str())
@@ -238,10 +243,12 @@ pub fn comment_mismatch(
         let (Some(sha), Some(version)) = (pin.sha, &pin.version) else {
             continue;
         };
-        let tagged = github.get(&format!(
+        let Ok(tagged) = github.get(&format!(
             "/repos/{}/{}/commits/{version}",
             pin.owner, pin.repo
-        ))?;
+        )) else {
+            continue;
+        };
         let message = match tagged
             .as_ref()
             .and_then(|commit| commit.get("sha")?.as_str())
@@ -271,7 +278,7 @@ pub fn impostor(
     let mut findings = Vec::new();
     for pin in pins(workflow) {
         let Some(sha) = pin.sha else { continue };
-        let Some(repository) = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo))? else {
+        let Ok(Some(repository)) = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo)) else {
             continue;
         };
         let Some(branch) = repository
@@ -282,25 +289,32 @@ pub fn impostor(
         };
         // ponytail: Checks the default branch and the first page of tags; walk every
         // branch when release branches produce false positives.
-        let comparison = github.get(&format!(
+        let Ok(comparison) = github.get(&format!(
             "/repos/{}/{}/compare/{branch}...{sha}",
             pin.owner, pin.repo
-        ))?;
+        )) else {
+            continue;
+        };
         let on_branch = comparison
             .as_ref()
             .and_then(|comparison| comparison.get("status")?.as_str())
             .is_some_and(|status| matches!(status, "behind" | "identical"));
-        let tags = github
-            .get(&format!(
-                "/repos/{}/{}/tags?per_page=100",
-                pin.owner, pin.repo
-            ))?
-            .unwrap_or_default();
-        let tagged = tags.as_array().into_iter().flatten().any(|tag| {
-            tag.get("commit")
-                .and_then(|commit| commit.get("sha")?.as_str())
-                .is_some_and(|tagged| tagged.eq_ignore_ascii_case(sha))
-        });
+        let Ok(tags) = github.get(&format!(
+            "/repos/{}/{}/tags?per_page=100",
+            pin.owner, pin.repo
+        )) else {
+            continue;
+        };
+        let tagged = tags
+            .unwrap_or_default()
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|tag| {
+                tag.get("commit")
+                    .and_then(|commit| commit.get("sha")?.as_str())
+                    .is_some_and(|tagged| tagged.eq_ignore_ascii_case(sha))
+            });
         if !on_branch && !tagged {
             findings.push(common::finding(
                 workflow,
@@ -324,7 +338,9 @@ pub fn archived(
 ) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
-        let repository = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo))?;
+        let Ok(repository) = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo)) else {
+            continue;
+        };
         if repository
             .as_ref()
             .and_then(|repository| repository.get("archived")?.as_bool())

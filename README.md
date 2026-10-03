@@ -204,7 +204,7 @@ turns it off.
 |---|---|
 | 0 | No finding reaches `--fail-on`. |
 | 1 | A finding does. |
-| 2 | A path, workflow, config, write, or API call failed. No file is changed; findings in the workflows that did parse are still reported, and JSON and SARIF list the failed files. |
+| 2 | A path, workflow, config, write, or API call failed. No file is changed; findings in the workflows that did parse are still reported, and JSON and SARIF list the failed files. A failed API call skips only the online checks that needed it; stderr names it. |
 
 ## Fixes
 

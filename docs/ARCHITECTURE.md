@@ -36,7 +36,7 @@ The stages have these interfaces:
 | `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order. |
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
 | `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, expressions, untrusted contexts, and `uses` refs. |
-| `github` | API path | Cached read-only GitHub REST responses for online rules. Each path has its own lock, so parallel workflows request it once. |
+| `github` | API path | Cached read-only GitHub REST responses for online rules, failures included. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal no further request is sent. |
 | `engine` | Source and scan/fix mode | Findings and a prepared fix result. This is the main in-memory analysis interface. Workflows and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. |
 | `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. |
@@ -115,6 +115,11 @@ Input, parse, config, API, and write errors exit with status 2. A workflow that 
 reported on stderr while the others are still checked and reported; `--fix` then writes nothing. JSON lists
 such files under `errors` and SARIF as `toolExecutionNotifications` of the invocation. Exit codes
 deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only for non-zero.
+
+A GitHub API failure (rate limit, server error, network, rejected token) skips only the online checks
+that needed that answer; every other finding is reported in every format, and each failed request is
+named once on stderr. The scan is incomplete, so it exits 2 and `--fix` writes nothing: a CI gate must
+not pass on checks that never ran.
 
 ## GitHub Action path
 

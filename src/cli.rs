@@ -301,6 +301,24 @@ pub fn run() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // A GitHub API failure (rate limit, 5xx, network, bad token) skips only the online checks that
+    // needed the answer; the rest is still reported. The scan is then incomplete and exits 2
+    // without writing fixes, so CI does not pass on checks that never ran.
+    let mut incomplete = false;
+    if let Some(github) = &settings.github {
+        for failure in github.failures() {
+            report::warning(format_args!(
+                "{failure}; online checks that needed it were skipped"
+            ));
+            incomplete = true;
+        }
+    }
+    if incomplete {
+        report::warning(
+            "the scan is incomplete: some online checks did not run; exiting with status 2",
+        );
+    }
+    let fix = fix && !incomplete;
 
     if fix {
         for file in &files {
@@ -331,7 +349,7 @@ pub fn run() -> ExitCode {
         "{}",
         report::render(format, &files, &repository, &failures, fix)
     );
-    if !failures.is_empty() {
+    if !failures.is_empty() || incomplete {
         return ExitCode::from(2);
     }
 

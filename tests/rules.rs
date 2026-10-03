@@ -28,9 +28,17 @@ fn fake_github() -> String {
     logged_github().0
 }
 
+fn logged_github() -> (String, Arc<Mutex<Vec<String>>>) {
+    failing_github(&[])
+}
+
+/// An API error the fake server answers instead of the recorded response: the path (`*` for
+/// every path), the status line, extra header lines, and GitHub's `message`.
+type Failure = (&'static str, &'static str, &'static str, &'static str);
+
 /// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.
 /// The log holds every requested path in arrival order.
-fn logged_github() -> (String, Arc<Mutex<Vec<String>>>) {
+fn failing_github(failures: &'static [Failure]) -> (String, Arc<Mutex<Vec<String>>>) {
     let log = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::clone(&log);
     let routes: serde_json::Map<String, serde_json::Value> =
@@ -56,17 +64,26 @@ fn logged_github() -> (String, Arc<Mutex<Vec<String>>>) {
                 authorized |=
                     header.to_ascii_lowercase().trim() == format!("authorization: bearer {TOKEN}");
             }
-            let (status, body) = match routes.get(&path) {
+            let failure = failures
+                .iter()
+                .find(|(failing, ..)| *failing == "*" || *failing == path);
+            let (status, headers, body) = match (failure, routes.get(&path)) {
                 _ if !authorized => (
                     "401 Unauthorized",
+                    "",
                     r#"{"message":"Bad credentials"}"#.to_owned(),
                 ),
-                Some(body) => ("200 OK", body.to_string()),
-                None => ("404 Not Found", r#"{"message":"Not Found"}"#.to_owned()),
+                (Some((_, status, headers, message)), _) => (
+                    *status,
+                    *headers,
+                    serde_json::json!({ "message": message }).to_string(),
+                ),
+                (None, Some(body)) => ("200 OK", "", body.to_string()),
+                (None, None) => ("404 Not Found", "", r#"{"message":"Not Found"}"#.to_owned()),
             };
             let _ = write!(
                 stream,
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
         }
@@ -308,6 +325,129 @@ fn online_rules_stay_silent_offline() {
             "{rule} ran offline"
         );
     }
+}
+
+/// `(file name, rule, line)` of every finding in a JSON report, sorted.
+fn finding_keys(report: &serde_json::Value) -> Vec<(String, String, u64)> {
+    let mut keys: Vec<(String, String, u64)> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| {
+            let path = Path::new(finding["path"].as_str().unwrap());
+            (
+                path.file_name().unwrap().to_str().unwrap().to_owned(),
+                finding["rule"].as_str().unwrap().to_owned(),
+                finding["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    keys.sort();
+    keys
+}
+
+/// A directory holding online fixtures next to a workflow fixture with an offline fix.
+fn mixed_batch(label: &str) -> PathBuf {
+    let batch = std::env::temp_dir().join(format!("crosgha-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&batch);
+    fs::create_dir_all(&batch).unwrap();
+    for fixture in [
+        "online/impostor-commit.before.yml",
+        "online/known-vulnerable-action.before.yml",
+        "rules/persist-credentials.before.yml",
+    ] {
+        let name = fixture.replace('/', "-");
+        fs::copy(fixtures().join(fixture), batch.join(name)).unwrap();
+    }
+    batch
+}
+
+/// A rate-limited token must not cost the offline findings: the online checks are skipped, the
+/// first refusal stops every later request, and the incomplete scan exits 2 without writing.
+#[test]
+fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
+    let batch = mixed_batch("rate-limit");
+    let before: Vec<String> = [
+        "online-impostor-commit.before.yml",
+        "rules-persist-credentials.before.yml",
+    ]
+    .iter()
+    .map(|name| fs::read_to_string(batch.join(name)).unwrap())
+    .collect();
+    let offline = scan(&batch, false, None, None);
+    let (api, log) = failing_github(&[(
+        "*",
+        "403 Forbidden",
+        "x-ratelimit-remaining: 0\r\nx-ratelimit-reset: 4102444800\r\n",
+        "API rate limit exceeded for installation ID 1.",
+    )]);
+    let limited = scan(&batch, true, Some(&api), None);
+    let after: Vec<String> = [
+        "online-impostor-commit.before.yml",
+        "rules-persist-credentials.before.yml",
+    ]
+    .iter()
+    .map(|name| fs::read_to_string(batch.join(name)).unwrap())
+    .collect();
+    fs::remove_dir_all(&batch).unwrap();
+
+    let stderr = String::from_utf8_lossy(&limited.stderr);
+    assert_eq!(limited.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("API rate limit exceeded"), "{stderr}");
+    assert!(stderr.contains("the rate limit resets in"), "{stderr}");
+    assert!(stderr.contains("incomplete"), "{stderr}");
+    assert_eq!(before, after, "an incomplete scan must not write fixes");
+    // Each of the 3 workflows pins several actions; only requests already in flight when the
+    // first refusal arrived may reach the server, at most one per parallel workflow.
+    let requests = log.lock().unwrap().len();
+    assert!(
+        (1..=3).contains(&requests),
+        "{requests} requests despite the rate limit"
+    );
+
+    let report: serde_json::Value = serde_json::from_slice(&limited.stdout).unwrap();
+    assert_eq!(report["summary"]["files"], 3, "{report:#}");
+    assert_eq!(report["summary"]["errors"], 0, "{report:#}");
+    // Offline mode adds the archived-action stand-in, which the online rule replaces, and only
+    // github.com gets the hosted-runner checks of `retired-runtime`, not the fake host.
+    let offline: serde_json::Value = serde_json::from_slice(&offline.stdout).unwrap();
+    let mut expected = finding_keys(&offline);
+    expected.retain(|(_, rule, _)| rule != "archived-action" && rule != "retired-runtime");
+    assert!(!expected.is_empty());
+    assert_eq!(finding_keys(&report), expected);
+}
+
+/// A server error on one path skips only the check that needed it, on every workflow that asks,
+/// and the path is requested once for the whole batch.
+#[test]
+fn a_failing_api_path_skips_only_the_checks_that_need_it() {
+    const FAILING: &str =
+        "/repos/actions/checkout/compare/main...2222222222222222222222222222222222222222";
+    let batch = mixed_batch("server-error");
+    for copy in 0..4 {
+        fs::copy(
+            fixtures().join("online/impostor-commit.before.yml"),
+            batch.join(format!("copy-{copy}.yml")),
+        )
+        .unwrap();
+    }
+    let healthy = scan(&batch, false, Some(&fake_github()), None);
+    let (api, log) = failing_github(&[(FAILING, "502 Bad Gateway", "", "Server Error")]);
+    let failing = scan(&batch, false, Some(&api), None);
+    fs::remove_dir_all(&batch).unwrap();
+
+    let stderr = String::from_utf8_lossy(&failing.stderr);
+    assert_eq!(failing.status.code(), Some(2), "{stderr}");
+    assert_eq!(stderr.matches("HTTP 502").count(), 1, "{stderr}");
+    let log = log.lock().unwrap();
+    assert_eq!(log.iter().filter(|path| *path == FAILING).count(), 1);
+
+    let healthy: serde_json::Value = serde_json::from_slice(&healthy.stdout).unwrap();
+    let failing: serde_json::Value = serde_json::from_slice(&failing.stdout).unwrap();
+    let mut expected = finding_keys(&healthy);
+    // Line 12 pins the SHA whose comparison fails.
+    expected.retain(|(_, rule, line)| !(rule == "impostor-commit" && *line == 12));
+    assert_eq!(finding_keys(&failing), expected);
 }
 
 #[test]
