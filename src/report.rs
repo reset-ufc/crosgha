@@ -12,6 +12,7 @@ use crate::{
     engine::Inspection,
     policy::Severity,
     rules::{self, Finding, Located, Rule},
+    workflow::BOM,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -520,29 +521,60 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
             })
         })
         .collect();
-    let results: Vec<Value> = reported(files, repository)
-        .into_iter()
-        .map(|(path, finding)| {
+    let repository_sources: Vec<Option<String>> = repository
+        .iter()
+        .map(|located| std::fs::read_to_string(&located.path).ok())
+        .collect();
+    let workflow_findings = workflows(files).flat_map(|(path, source, findings)| {
+        findings
+            .iter()
+            .map(move |finding| (path, Some(source), finding))
+    });
+    let repository_findings = repository
+        .iter()
+        .zip(&repository_sources)
+        .map(|(located, source)| (located.path.as_path(), source.as_deref(), &located.finding));
+    let results: Vec<Value> = workflow_findings
+        .chain(repository_findings)
+        .map(|(path, source, finding)| {
             let index = catalog
                 .iter()
                 .position(|rule| rule.id == finding.rule.id)
                 .unwrap_or_default();
+            // A repository-wide finding has no file to point at, like the spec's example of a
+            // missing `main` (SARIF 2.1.0 section 3.27.12), so it names the directory instead.
+            let (message, locations) = match path.is_dir() {
+                true => (
+                    format!(
+                        "{}: {}: {}",
+                        relative(path),
+                        finding.location,
+                        finding.message
+                    ),
+                    json!([]),
+                ),
+                false => (
+                    format!("{}: {}", finding.location, finding.message),
+                    json!([{
+                        "physicalLocation": {
+                            "artifactLocation": { "uri": artifact_uri(path) },
+                            "region": {
+                                "startLine": finding.line,
+                                "startColumn": utf16_column(source, finding.line, finding.column),
+                                "endLine": finding.end_line,
+                                "endColumn":
+                                    utf16_column(source, finding.end_line, finding.end_column),
+                            },
+                        },
+                    }]),
+                ),
+            };
             json!({
                 "ruleId": finding.rule.id,
                 "ruleIndex": index,
                 "level": finding.severity.as_str(),
-                "message": { "text": format!("{}: {}", finding.location, finding.message) },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": artifact_uri(path) },
-                        "region": {
-                            "startLine": finding.line,
-                            "startColumn": finding.column,
-                            "endLine": finding.end_line,
-                            "endColumn": finding.end_column,
-                        },
-                    },
-                }],
+                "message": { "text": message },
+                "locations": locations,
             })
         })
         .collect();
@@ -573,6 +605,7 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
                     "rules": descriptors,
                 },
             },
+            "columnKind": "utf16CodeUnits",
             "invocations": [{
                 "executionSuccessful": errors.is_empty(),
                 "toolExecutionNotifications": notifications,
@@ -602,7 +635,7 @@ fn github(files: &[FileReport], repository: &[Located]) -> String {
             };
             format!(
                 "::{command} file={},line={},endLine={},col={},endColumn={},title={}::{}\n",
-                property(&artifact_uri(path)),
+                property(&relative(path)),
                 finding.line,
                 finding.end_line,
                 finding.column,
@@ -653,6 +686,28 @@ fn relative(path: &Path) -> String {
         .to_owned()
 }
 
+/// A URI reference for `path` with every byte outside RFC 3986's unreserved characters and `/`
+/// percent-encoded, so no character in a file name is read as URI syntax.
 fn artifact_uri(path: &Path) -> String {
-    relative(path).replace('%', "%25").replace(' ', "%20")
+    let mut uri = String::new();
+    for byte in relative(path).bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(char::from(byte));
+            }
+            _ => {
+                let _ = write!(uri, "%{byte:02X}");
+            }
+        }
+    }
+    uri
+}
+
+/// SARIF's `columnKind` is `utf16CodeUnits`, while finding columns count UTF-8 bytes.
+fn utf16_column(source: Option<&str>, line: usize, column: usize) -> usize {
+    source
+        .map(|source| source.strip_prefix(BOM).unwrap_or(source))
+        .and_then(|source| source.lines().nth(line.checked_sub(1)?))
+        .and_then(|text| text.get(..column.checked_sub(1)?))
+        .map_or(column, |before| before.encode_utf16().count() + 1)
 }

@@ -1208,6 +1208,89 @@ fn every_format_reports_the_findings_of_the_text_report() {
     assert_eq!(rule("unpinned-action")["properties"]["precision"], "medium");
 }
 
+/// SARIF regions count UTF-16 code units (`columnKind`), file names become percent-encoded URI
+/// references, and a repository-wide finding has no file location.
+#[test]
+fn sarif_uses_utf16_columns_encoded_uris_and_no_location_for_repositories() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let repo = std::env::temp_dir().join(format!("crosgha-sarif-{}-{unique}", std::process::id()));
+    let workflows = repo.join(".github/workflows");
+    fs::create_dir_all(&workflows).unwrap();
+    fs::write(
+        workflows.join("ci build#1.yml"),
+        "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      \
+         - { name: \"été 🚀\", uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 }\n",
+    )
+    .unwrap();
+    let scan = |format: &str| {
+        let output = bin()
+            .current_dir(&repo)
+            .args([
+                "--persona",
+                "auditor",
+                "--offline",
+                "--no-config",
+                "-f",
+                format,
+            ])
+            .arg(".")
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let sarif = scan("sarif");
+    let annotations = scan("github");
+    fs::remove_dir_all(&repo).unwrap();
+
+    let sarif: serde_json::Value = serde_json::from_str(&sarif).unwrap();
+    let run = &sarif["runs"][0];
+    assert_eq!(run["columnKind"], "utf16CodeUnits");
+    let results = run["results"].as_array().unwrap();
+    let checkout = results
+        .iter()
+        .find(|result| result["ruleId"] == "persist-credentials")
+        .unwrap();
+    let location = &checkout["locations"][0]["physicalLocation"];
+    assert_eq!(
+        location["artifactLocation"]["uri"],
+        ".github/workflows/ci%20build%231.yml"
+    );
+    // `uses` follows 26 UTF-16 code units (the emoji is a surrogate pair) but 30 UTF-8 bytes.
+    assert_eq!(location["region"]["startColumn"], 27, "{location}");
+    assert_eq!(location["region"]["endColumn"], 31, "{location}");
+
+    let tooling: Vec<_> = results
+        .iter()
+        .filter(|result| result["ruleId"] == "missing-security-tooling")
+        .collect();
+    assert!(!tooling.is_empty(), "{run}");
+    for result in tooling {
+        assert_eq!(result["locations"], serde_json::json!([]), "{result}");
+        assert!(
+            result["message"]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with(".github: repository: repository has no "),
+            "{result}"
+        );
+    }
+
+    // Annotations name the file as a path, not as a URI.
+    assert!(
+        annotations.contains("file=.github/workflows/ci build#1.yml,line=6,"),
+        "{annotations}"
+    );
+}
+
 #[test]
 fn github_actions_runs_default_to_annotations_unless_a_format_is_given() {
     let scan = |format: &[&str]| {
