@@ -33,6 +33,13 @@ jobs:
       - run: conda install -c conda-forge -y pyyaml cmake # expect: unpinned-package
       - run: mamba install -c conda-forge -y pyyaml=6.0.2 cmake==3.30.5
       - run: micromamba install --file environment-lock.txt
+      - run: npm install -g some-cli@* # expect: unpinned-package
+      - run: npm install -g some-cli@^1.2.0 # expect: unpinned-package
+      - run: pnpm add -g some-cli@~1.2.0 # expect: unpinned-package
+      - run: npm install some-cli@1.x # expect: unpinned-package
+      - run: npm install some-cli@1 # expect: unpinned-package
+      - run: npm install 'some-cli@>=1.0.0 <2' # expect: unpinned-package
+      - run: npm install some-cli@1.2.3-beta.1
       - parallel:
           - run: npm install eslint # expect: unpinned-package
           - run: npm install eslint@9.9.0

@@ -251,17 +251,19 @@ fn is_local_or_url(argument: &str) -> bool {
             .any(|suffix| argument.ends_with(suffix))
 }
 
-/// A version or range after the name; a dist-tag such as `latest` or `next` moves.
+/// An exact `major.minor.patch` version after the name, with optional prerelease or build
+/// metadata. Dist-tags (`latest`), wildcards (`*`, `1.x`), partial versions, and ranges move.
 fn has_npm_version(package: &str) -> bool {
-    package
-        .rfind('@')
-        .filter(|index| *index > 0)
-        .is_some_and(|index| {
-            let version = &package[index + 1..];
-            !version.starts_with(|c: char| c.is_ascii_alphabetic())
-                || version.starts_with('v')
-                    && version[1..].starts_with(|c: char| c.is_ascii_digit())
-        })
+    let Some(index) = package.rfind('@').filter(|index| *index > 0) else {
+        return false;
+    };
+    let version = package[index + 1..].trim_start_matches(['v', '=']);
+    let core = version.split(['-', '+']).next().unwrap_or("");
+    let numbers: Vec<&str> = core.split('.').collect();
+    numbers.len() == 3
+        && numbers
+            .iter()
+            .all(|number| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {
