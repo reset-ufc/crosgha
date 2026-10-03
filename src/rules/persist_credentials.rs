@@ -32,10 +32,7 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         for step in common::steps(&job) {
             // ponytail: Handle literal first-party checkout refs and credential inputs;
             // add expression analysis when their runtime values can be proven.
-            if !step
-                .uses()
-                .is_some_and(|uses| uses.starts_with("actions/checkout@"))
-            {
+            if !step.uses_action("actions/checkout") {
                 continue;
             }
             let change = match step.value.get("with") {
