@@ -560,8 +560,10 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
                 .iter()
                 .position(|rule| rule.id == finding.rule.id)
                 .unwrap_or_default();
-            // A repository-wide finding has no file to point at, like the spec's example of a
-            // missing `main` (SARIF 2.1.0 section 3.27.12), so it names the directory instead.
+            // A repository-wide finding names its directory in the message. GitHub needs a file
+            // location anyway ("At least one location is required for code scanning to display
+            // a result", per the page above), so it points at line 1 of the first scanned
+            // workflow of that `.github` directory, in path order.
             let (message, locations) = match path.is_dir() {
                 true => (
                     format!(
@@ -570,7 +572,24 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
                         finding.location,
                         finding.message
                     ),
-                    json!([]),
+                    match first_workflow(path, files) {
+                        Some((workflow, source)) => {
+                            let line = source.strip_prefix(BOM).unwrap_or(source).lines().next();
+                            json!([{
+                                "physicalLocation": {
+                                    "artifactLocation": { "uri": artifact_uri(workflow) },
+                                    "region": {
+                                        "startLine": 1,
+                                        "startColumn": 1,
+                                        "endLine": 1,
+                                        "endColumn":
+                                            line.unwrap_or_default().encode_utf16().count() + 1,
+                                    },
+                                },
+                            }])
+                        }
+                        None => json!([]),
+                    },
                 ),
                 false => (
                     format!("{}: {}", finding.location, finding.message),
@@ -634,6 +653,14 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
         }],
     });
     format!("{report:#}\n")
+}
+
+/// The first scanned workflow inside `directory`, with its source.
+fn first_workflow<'a>(directory: &Path, files: &'a [FileReport]) -> Option<(&'a Path, &'a str)> {
+    let directory = crate::filesystem::identity(directory);
+    workflows(files)
+        .find(|(path, _, _)| crate::filesystem::identity(path).starts_with(&directory))
+        .map(|(path, source, _)| (path, source))
 }
 
 /// `::error`/`::warning`/`::notice` workflow commands, escaped like actions/toolkit does:

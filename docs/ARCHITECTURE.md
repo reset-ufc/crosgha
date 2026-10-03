@@ -116,7 +116,8 @@ in a written file, and the original findings of a file whose fixes were not writ
   `problem.severity`;
 - every result in a file has a percent-encoded relative URI and a full region whose columns
   count UTF-16 code units (`columnKind`); a repository-wide finding names its directory in the
-  message and has no location, as SARIF allows for results without a file;
+  message and points at line 1 of the first scanned workflow of that directory, because code
+  scanning shows no result without a location;
 - `partialFingerprints` is left to `upload-sarif`.
 
 zizmor's severities map onto the SARIF levels: `informational`/`low` → `note`, `medium` →

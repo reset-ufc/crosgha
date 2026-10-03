@@ -196,7 +196,7 @@ the run fail.
 |---|---|
 | `text` (default; `plain` in zizmor) | One rustc-style diagnostic per finding: the source line with the node underlined, the rule's help, and the equivalent rule in other tools, such as `same as zizmor: template-injection; actionlint: expression`. A summary counts findings by severity and says when the scan is incomplete. |
 | `json` | Versioned report: `version`, `summary`, `findings`, `errors` for workflows that failed to parse or to be written and for GitHub API failures that skipped online checks (`path` is `null`), and under `--fix` a `fixes` entry per proposed fix with its status (`applied`, `rejected`, or `not-written`) and reason. |
-| `sarif` | SARIF 2.1.0 with the rule metadata GitHub code scanning requires; it validates against the official schema. Columns count UTF-16 code units (`columnKind`), and repository-wide findings have no file location. Those same errors are `toolExecutionNotifications` of the invocation, whose `executionSuccessful` is then `false`. |
+| `sarif` | SARIF 2.1.0 with the rule metadata GitHub code scanning requires; it validates against the official schema. Columns count UTF-16 code units (`columnKind`), and a repository-wide finding points at line 1 of the first scanned workflow of its `.github` directory. Those same errors are `toolExecutionNotifications` of the invocation, whose `executionSuccessful` is then `false`. |
 | `github` | Workflow-command annotations. The default when `GITHUB_ACTIONS=true`. |
 | `agent` | One brief line per finding for AI agents: `path:line:col: severity rule: message help: <rule summary>`, after oxlint's format of the same name. |
 

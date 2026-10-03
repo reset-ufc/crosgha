@@ -1496,9 +1496,10 @@ fn every_format_reports_the_findings_of_the_text_report() {
 }
 
 /// SARIF regions count UTF-16 code units (`columnKind`), file names become percent-encoded URI
-/// references, and a repository-wide finding has no file location.
+/// references, and a repository-wide finding points at the first line of the first workflow of
+/// its `.github` directory, since code scanning shows no result without a location.
 #[test]
-fn sarif_uses_utf16_columns_encoded_uris_and_no_location_for_repositories() {
+fn sarif_uses_utf16_columns_encoded_uris_and_a_workflow_location_for_repositories() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -1561,7 +1562,12 @@ fn sarif_uses_utf16_columns_encoded_uris_and_no_location_for_repositories() {
         .collect();
     assert!(!tooling.is_empty(), "{run}");
     for result in tooling {
-        assert_eq!(result["locations"], serde_json::json!([]), "{result}");
+        let location = &result["locations"][0]["physicalLocation"];
+        assert_eq!(
+            location["artifactLocation"]["uri"], ".github/workflows/ci%20build%231.yml",
+            "{result}"
+        );
+        assert_eq!(location["region"]["startLine"], 1, "{result}");
         assert!(
             result["message"]["text"]
                 .as_str()
