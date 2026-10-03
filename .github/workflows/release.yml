@@ -164,12 +164,17 @@ jobs:
           path: target/distrib/
           merge-multiple: true
       - name: Install dependencies
+        env:
+          MATRIX_PACKAGES_INSTALL: ${{ matrix.packages_install }}
         run: |
-          ${{ matrix.packages_install }}
+          eval "$MATRIX_PACKAGES_INSTALL"
       - name: Build artifacts
+        env:
+          NEEDS_PLAN_OUTPUTS_TAG_FLAG: ${{ needs.plan.outputs.tag-flag }}
+          MATRIX_DIST_ARGS: ${{ matrix.dist_args }}
         run: |
           # Actually do builds and make zips and whatnot
-          dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+          dist build ${NEEDS_PLAN_OUTPUTS_TAG_FLAG} --print=linkage --output-format=json ${MATRIX_DIST_ARGS} > dist-manifest.json
           echo "dist ran successfully"
       - id: cargo-dist
         name: Post-build
