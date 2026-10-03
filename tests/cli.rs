@@ -207,7 +207,10 @@ fn byte_order_mark_is_scanned_like_plain_utf8_and_kept_on_fix() {
     let with_bom = text(&format!("\u{feff}{plain}"));
     let without = text(plain);
     fs::remove_file(&path).unwrap();
-    assert!(without.contains("1 | on: push\n  | ^^ workflow"), "{without}");
+    assert!(
+        without.contains("1 | on: push\n  | ^^ workflow"),
+        "{without}"
+    );
     assert_eq!(with_bom, without);
 }
 
@@ -1528,7 +1531,8 @@ fn sarif_uses_utf16_columns_encoded_uris_and_a_workflow_location_for_repositorie
     fs::write(
         workflows.join("ci build#1.yml"),
         "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      \
-         - { name: \"été 🚀\", uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 }\n",
+         - { name: \"été 🚀\", uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 }\n      \
+         - name: Both\n        uses: ./build\n        run: make\n",
     )
     .unwrap();
     let scan = |format: &str| {
@@ -1555,10 +1559,18 @@ fn sarif_uses_utf16_columns_encoded_uris_and_a_workflow_location_for_repositorie
     };
     let sarif = scan("sarif");
     let annotations = scan("github");
+    let (json, agent, text) = (scan("json"), scan("agent"), scan("text"));
     // A file outside the working directory has no relative URI, so it gets a `file:` URI.
     let outside = bin()
         .current_dir(fixture("workflows"))
-        .args(["--offline", "--no-config", "--fail-on", "none", "-f", "sarif"])
+        .args([
+            "--offline",
+            "--no-config",
+            "--fail-on",
+            "none",
+            "-f",
+            "sarif",
+        ])
         .arg(workflows.join("ci build#1.yml"))
         .output()
         .unwrap();
@@ -1607,11 +1619,51 @@ fn sarif_uses_utf16_columns_encoded_uris_and_a_workflow_location_for_repositorie
         annotations.contains("file=.github/workflows/ci build#1.yml,line=6,"),
         "{annotations}"
     );
+    // Every other format counts columns in characters, as GitHub does for annotations: `uses`
+    // follows 25 characters. Annotations omit columns on a multi-line span, which
+    // actions/toolkit forbids.
+    assert!(
+        annotations.contains(
+            "file=.github/workflows/ci build#1.yml,line=6,endLine=6,col=26,endColumn=30,\
+             title=persist-credentials::"
+        ),
+        "{annotations}"
+    );
+    let multi_line: Vec<&str> = annotations
+        .lines()
+        .filter(|line| {
+            let number = |key: &str| line.split(key).nth(1)?.split(',').next();
+            number(",line=") != number(",endLine=")
+        })
+        .collect();
+    assert!(!multi_line.is_empty(), "{annotations}");
+    for line in multi_line {
+        assert!(!line.contains(",col="), "{line}");
+        assert!(!line.contains(",endColumn="), "{line}");
+    }
+    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let checkout = json["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["rule"] == "persist-credentials")
+        .unwrap();
+    assert_eq!(
+        (&checkout["column"], &checkout["end_column"]),
+        (&26.into(), &30.into())
+    );
+    assert!(
+        agent.contains(".github/workflows/ci build#1.yml:6:26: warning persist-credentials:"),
+        "{agent}"
+    );
+    assert!(
+        text.contains(".github/workflows/ci build#1.yml:6:26\n"),
+        "{text}"
+    );
 
     let outside: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
     assert_eq!(
-        outside["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
-            ["uri"],
+        outside["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
         format!(
             "file://{}/.github/workflows/ci%20build%231.yml",
             repo.display()

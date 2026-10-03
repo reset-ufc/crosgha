@@ -84,31 +84,20 @@ pub struct FileError {
 /// ANSI codes that `anstream` strips unless stdout is a color terminal.
 fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix: bool) -> String {
     let mut output = String::new();
+    let sources = repository_sources(repository);
     let mut shown = Vec::new();
-    for (path, source, findings) in workflows(files) {
-        for finding in findings {
-            diagnostic(&mut output, path, Some(source), finding);
-            shown.push(finding);
-        }
+    for (path, source, finding) in reported(files, repository, &sources) {
+        diagnostic(&mut output, path, source, finding);
+        shown.push(finding);
     }
-    for located in repository {
-        let source = std::fs::read_to_string(&located.path).ok();
-        diagnostic(
-            &mut output,
-            &located.path,
-            source.as_deref(),
-            &located.finding,
-        );
-        shown.push(&located.finding);
-    }
-    for (path, finding, _, reason) in attempts(files) {
+    for (path, source, finding, _, reason) in attempts(files) {
         if let Some(reason) = reason {
             let _ = writeln!(
                 output,
                 "Not fixed: {}:{}:{} [{}]: {reason}",
                 path.display(),
                 finding.line,
-                finding.column,
+                char_column(Some(source), finding.line, finding.column),
                 finding.rule.id
             );
         }
@@ -228,7 +217,7 @@ fn diagnostic(output: &mut String, path: &Path, source: Option<&str>, finding: &
                 "{pad}{GUTTER}-->{GUTTER:#} {}:{}:{}",
                 path.display(),
                 finding.line,
-                finding.column
+                char_column(source, finding.line, finding.column)
             );
         }
     }
@@ -365,17 +354,31 @@ fn workflows(files: &[FileReport]) -> impl Iterator<Item = (&Path, &str, &[Findi
     })
 }
 
-/// Every reported finding with its path: what remains after `--fix`, or everything found.
+/// The content of each repository finding's file, `None` for a directory.
+fn repository_sources(repository: &[Located]) -> Vec<Option<String>> {
+    repository
+        .iter()
+        .map(|located| std::fs::read_to_string(&located.path).ok())
+        .collect()
+}
+
+/// Every reported finding with its path and the source its lines point into: what remains
+/// after `--fix`, or everything found. `sources` comes from `repository_sources`.
 fn reported<'a>(
     files: &'a [FileReport],
     repository: &'a [Located],
-) -> Vec<(&'a Path, &'a Finding)> {
+    sources: &'a [Option<String>],
+) -> Vec<(&'a Path, Option<&'a str>, &'a Finding)> {
     workflows(files)
-        .flat_map(|(path, _, findings)| findings.iter().map(move |finding| (path, finding)))
-        .chain(
-            repository
+        .flat_map(|(path, source, findings)| {
+            findings
                 .iter()
-                .map(|located| (located.path.as_path(), &located.finding)),
+                .map(move |finding| (path, Some(source), finding))
+        })
+        .chain(
+            repository.iter().zip(sources).map(|(located, source)| {
+                (located.path.as_path(), source.as_deref(), &located.finding)
+            }),
         )
         .collect()
 }
@@ -385,9 +388,9 @@ fn reported<'a>(
 /// above it may have moved; an applied fix points at the original source.
 fn attempts(
     files: &[FileReport],
-) -> impl Iterator<Item = (&Path, &Finding, &'static str, Option<&str>)> {
+) -> impl Iterator<Item = (&Path, &str, &Finding, &'static str, Option<&str>)> {
     files.iter().flat_map(|file| {
-        let (_, shown) = file.shown();
+        let (source, shown) = file.shown();
         file.inspection
             .fix
             .iter()
@@ -399,14 +402,16 @@ fn attempts(
                     (None, None) => ("applied", None),
                 };
                 let original = &file.inspection.findings[attempt.finding];
-                let finding = shown
+                let (source, finding) = shown
                     .iter()
                     .filter(|_| reason.is_some())
                     .find(|shown| {
                         shown.rule.id == original.rule.id && shown.location == original.location
                     })
-                    .unwrap_or(original);
-                (file.path.as_path(), finding, status, reason)
+                    .map_or((file.inspection.source.as_str(), original), |shown| {
+                        (source, shown)
+                    });
+                (file.path.as_path(), source, finding, status, reason)
             })
     })
 }
@@ -420,18 +425,19 @@ fn equivalents(rule: &Rule) -> Value {
 
 /// A stable, versioned JSON report for scripts and the Action.
 fn json(files: &[FileReport], repository: &[Located], errors: &[FileError]) -> String {
-    let findings: Vec<Value> = reported(files, repository)
+    let sources = repository_sources(repository);
+    let findings: Vec<Value> = reported(files, repository, &sources)
         .into_iter()
-        .map(|(path, finding)| {
+        .map(|(path, source, finding)| {
             json!({
                 "rule": finding.rule.id,
                 "tag": finding.rule.tag,
                 "severity": finding.severity.as_str(),
                 "path": path.display().to_string(),
                 "line": finding.line,
-                "column": finding.column,
+                "column": char_column(source, finding.line, finding.column),
                 "end_line": finding.end_line,
-                "end_column": finding.end_column,
+                "end_column": char_column(source, finding.end_line, finding.end_column),
                 "location": finding.location,
                 "message": finding.message,
                 "equivalents": equivalents(finding.rule),
@@ -439,12 +445,12 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[FileError]) -> S
         })
         .collect();
     let fixes: Vec<Value> = attempts(files)
-        .map(|(path, finding, status, reason)| {
+        .map(|(path, source, finding, status, reason)| {
             json!({
                 "rule": finding.rule.id,
                 "path": path.display().to_string(),
                 "line": finding.line,
-                "column": finding.column,
+                "column": char_column(Some(source), finding.line, finding.column),
                 "location": finding.location,
                 "status": status,
                 "reason": reason,
@@ -543,21 +549,9 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError])
             })
         })
         .collect();
-    let repository_sources: Vec<Option<String>> = repository
-        .iter()
-        .map(|located| std::fs::read_to_string(&located.path).ok())
-        .collect();
-    let workflow_findings = workflows(files).flat_map(|(path, source, findings)| {
-        findings
-            .iter()
-            .map(move |finding| (path, Some(source), finding))
-    });
-    let repository_findings = repository
-        .iter()
-        .zip(&repository_sources)
-        .map(|(located, source)| (located.path.as_path(), source.as_deref(), &located.finding));
-    let results: Vec<Value> = workflow_findings
-        .chain(repository_findings)
+    let sources = repository_sources(repository);
+    let results: Vec<Value> = reported(files, repository, &sources)
+        .into_iter()
         .map(|(path, source, finding)| {
             let index = catalog
                 .iter()
@@ -675,21 +669,30 @@ fn github(files: &[FileReport], repository: &[Located]) -> String {
             .replace('\n', "%0A")
     };
     let property = |text: &str| data(text).replace(':', "%3A").replace(',', "%2C");
-    reported(files, repository)
+    let sources = repository_sources(repository);
+    reported(files, repository, &sources)
         .into_iter()
-        .map(|(path, finding)| {
+        .map(|(path, source, finding)| {
             let command = match finding.severity {
                 crate::policy::Severity::Error => "error",
                 crate::policy::Severity::Warning => "warning",
                 crate::policy::Severity::Note => "notice",
             };
+            // actions/toolkit: columns "cannot be sent when startLine and endLine are different
+            // values".
+            let columns = match finding.line == finding.end_line {
+                true => format!(
+                    ",col={},endColumn={}",
+                    char_column(source, finding.line, finding.column),
+                    char_column(source, finding.end_line, finding.end_column)
+                ),
+                false => String::new(),
+            };
             format!(
-                "::{command} file={},line={},endLine={},col={},endColumn={},title={}::{}\n",
+                "::{command} file={},line={},endLine={}{columns},title={}::{}\n",
                 property(&relative(path)),
                 finding.line,
                 finding.end_line,
-                finding.column,
-                finding.end_column,
                 property(finding.rule.id),
                 data(&format!(
                     "{}: {}{}",
@@ -705,14 +708,15 @@ fn github(files: &[FileReport], repository: &[Located]) -> String {
 /// `path:line:col: severity rule: message help: summary`, one line each, like oxlint's agent
 /// format; the rule summary is the help because it states what the rule requires.
 fn agent(files: &[FileReport], repository: &[Located]) -> String {
-    reported(files, repository)
+    let sources = repository_sources(repository);
+    reported(files, repository, &sources)
         .into_iter()
-        .map(|(path, finding)| {
+        .map(|(path, source, finding)| {
             let line = format!(
                 "{}:{}:{}: {} {}: {}: {}{} help: {}",
                 relative(path),
                 finding.line,
-                finding.column,
+                char_column(source, finding.line, finding.column),
                 finding.severity.as_str(),
                 finding.rule.id,
                 finding.location,
@@ -758,11 +762,21 @@ fn artifact_uri(path: &Path) -> String {
     uri
 }
 
-/// SARIF's `columnKind` is `utf16CodeUnits`, while finding columns count UTF-8 bytes.
+/// SARIF's `columnKind` is `utf16CodeUnits`.
 fn utf16_column(source: Option<&str>, line: usize, column: usize) -> usize {
+    recount(source, line, column, |text| text.encode_utf16().count())
+}
+
+/// The other formats count characters, as GitHub's annotations do.
+fn char_column(source: Option<&str>, line: usize, column: usize) -> usize {
+    recount(source, line, column, |text| text.chars().count())
+}
+
+/// Finding columns count UTF-8 bytes; `unit` measures the text before one in another unit.
+fn recount(source: Option<&str>, line: usize, column: usize, unit: fn(&str) -> usize) -> usize {
     source
         .map(|source| source.strip_prefix(BOM).unwrap_or(source))
         .and_then(|source| source.lines().nth(line.checked_sub(1)?))
         .and_then(|text| text.get(..column.checked_sub(1)?))
-        .map_or(column, |before| before.encode_utf16().count() + 1)
+        .map_or(column, |before| unit(before) + 1)
 }
