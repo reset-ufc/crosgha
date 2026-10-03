@@ -450,6 +450,73 @@ fn a_failing_api_path_skips_only_the_checks_that_need_it() {
     assert_eq!(finding_keys(&failing), expected);
 }
 
+/// GITHUB_TOKEN can never read a repository's Actions settings, so a denied read skips only
+/// `repo-org-settings`: the report and the SARIF file are still written and the exit status
+/// follows the findings. Any other failure of that read makes the scan incomplete.
+#[test]
+fn unreadable_repository_settings_skip_only_that_rule() {
+    const SETTINGS: &str = "/repos/example/project/actions/permissions/workflow";
+    const DENIED: &[Failure] = &[(
+        SETTINGS,
+        "403 Forbidden",
+        "",
+        "Resource not accessible by integration",
+    )];
+    const BROKEN: &[Failure] = &[(SETTINGS, "500 Internal Server Error", "", "Server Error")];
+    let workflow = fixtures().join("rules/missing-concurrency.before.yml");
+    for (failures, repository, code) in [
+        (DENIED, "example/project", 0),
+        (&[][..], "example/missing", 0),
+        (BROKEN, "example/project", 2),
+    ] {
+        let api = failing_github(failures).0;
+        let sarif = std::env::temp_dir().join(
+            format!(
+                "crosgha-settings-{}-{code}-{repository}.sarif",
+                std::process::id()
+            )
+            .replace('/', "-"),
+        );
+        let output = bin()
+            .env_remove("GH_TOKEN")
+            .env_remove("GITHUB_TOKEN")
+            .args([
+                "--persona",
+                "pedantic",
+                "--fail-on",
+                "none",
+                "--format",
+                "json",
+            ])
+            .args(["--repository", repository])
+            .args(["--gh-token", TOKEN, "--gh-hostname", &api])
+            .arg("--sarif-file")
+            .arg(&sarif)
+            .arg(&workflow)
+            .output()
+            .unwrap();
+        let written = fs::read_to_string(&sarif);
+        let _ = fs::remove_file(&sarif);
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(code), "{repository}: {stderr}");
+        assert!(stderr.contains("repo-org-settings was skipped"), "{stderr}");
+        if code == 0 {
+            assert!(stderr.contains("Administration (read)"), "{stderr}");
+        }
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            report["summary"]["findings"].as_u64().unwrap() > 0,
+            "{report:#}"
+        );
+        let sarif: serde_json::Value = serde_json::from_str(&written.unwrap()).unwrap();
+        assert_eq!(
+            sarif["runs"][0]["results"].as_array().unwrap().len() as u64,
+            report["summary"]["findings"].as_u64().unwrap()
+        );
+    }
+}
+
 #[test]
 fn repository_settings_are_read_for_the_named_repository() {
     let workflow = fixtures().join("online/archived-action.clean.yml");

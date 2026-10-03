@@ -119,7 +119,9 @@ deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only
 A GitHub API failure (rate limit, server error, network, rejected token) skips only the online checks
 that needed that answer; every other finding is reported in every format, and each failed request is
 named once on stderr. The scan is incomplete, so it exits 2 and `--fix` writes nothing: a CI gate must
-not pass on checks that never ran.
+not pass on checks that never ran. `repo-org-settings` is the exception: reading Actions settings needs
+the Administration (read) permission, which `GITHUB_TOKEN` cannot be granted, so a 403 or 404 there
+skips that rule with a warning and leaves the exit status to the findings.
 
 ## GitHub Action path
 

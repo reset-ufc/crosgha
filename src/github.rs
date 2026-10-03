@@ -20,6 +20,14 @@ pub struct ApiError {
     pub message: String,
 }
 
+impl ApiError {
+    /// The token may not read the resource: a 403 that is not a rate limit, or a 404 where the
+    /// resource must exist (GitHub answers 404 for private repositories the token cannot see).
+    pub fn denied(&self) -> bool {
+        matches!(self.status, Some(403 | 404)) && !self.rate_limited
+    }
+}
+
 impl fmt::Display for ApiError {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(&self.message)

@@ -7,7 +7,7 @@ use yamlpath::Route;
 
 use super::{Finding, Located, Options, Rule, common};
 use crate::{
-    github::GitHub,
+    github::{ApiError, GitHub},
     policy::{Persona, Severity},
     workflow::Workflow,
 };
@@ -398,12 +398,32 @@ pub fn archived_offline(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         .collect()
 }
 
-pub fn settings(github: &GitHub, repository: &str, path: &Path) -> Result<Vec<Located>, String> {
-    let Some(workflow) =
-        github.get(&format!("/repos/{repository}/actions/permissions/workflow"))?
-    else {
-        return Ok(Vec::new());
-    };
+/// A denied read (403, or 404 for a repository the token cannot see) comes back with
+/// `ApiError::denied`, so the caller can skip this rule instead of failing the scan.
+pub fn settings(github: &GitHub, repository: &str, path: &Path) -> Result<Vec<Located>, ApiError> {
+    // The endpoint needs the Administration (read) repository permission
+    // (https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens#repository-permissions-for-administration)
+    // or a classic token's `repo` scope (https://docs.github.com/en/rest/actions/permissions#get-default-workflow-permissions-for-a-repository).
+    // GITHUB_TOKEN cannot be granted Administration, so in Actions this read is usually denied.
+    let endpoint = format!("/repos/{repository}/actions/permissions/workflow");
+    let workflow = github
+        .request(&endpoint)
+        .and_then(|found| {
+            found.ok_or_else(|| ApiError {
+                status: Some(404),
+                rate_limited: false,
+                message: format!("GitHub API {endpoint}: HTTP 404"),
+            })
+        })
+        .map_err(|mut error| {
+            if error.denied() {
+                error.message.push_str(
+                    "; reading Actions settings needs a token with the Administration (read) \
+                     repository permission, which GITHUB_TOKEN cannot be granted",
+                );
+            }
+            error
+        })?;
     let mut problems = Vec::new();
     if workflow
         .get("default_workflow_permissions")

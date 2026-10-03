@@ -271,7 +271,7 @@ pub fn detect_settings(
     repository: &str,
     scanned: &Path,
     settings: &Settings,
-) -> Result<Vec<Located>, String> {
+) -> Result<Vec<Located>, crate::github::ApiError> {
     match &settings.github {
         Some(github) if enabled(&online::SETTINGS, settings) => Ok(finish_located(
             online::settings(github, repository, scanned)?,

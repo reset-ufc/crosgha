@@ -285,16 +285,7 @@ pub fn run() -> ExitCode {
                 .collect()
         },
     ));
-    if let Some(name) = &args.repository {
-        let first = [(args.paths[0].clone(), owners[0])];
-        repository.extend(per_config(
-            &first,
-            &mut configs,
-            &mut settings,
-            |scanned, settings| vec![rules::detect_settings(name, &scanned[0], settings)],
-        ));
-    }
-    let repository = match repository.into_iter().collect::<Result<Vec<_>, _>>() {
+    let mut repository = match repository.into_iter().collect::<Result<Vec<_>, _>>() {
         Ok(found) => found.into_iter().flatten().collect::<Vec<_>>(),
         Err(error) => {
             report::error(error);
@@ -303,7 +294,8 @@ pub fn run() -> ExitCode {
     };
     // A GitHub API failure (rate limit, 5xx, network, bad token) skips only the online checks that
     // needed the answer; the rest is still reported. The scan is then incomplete and exits 2
-    // without writing fixes, so CI does not pass on checks that never ran.
+    // without writing fixes, so CI does not pass on checks that never ran. A settings read the token
+    // is not permitted to make is expected in Actions and only skips `repo-org-settings`.
     let mut incomplete = false;
     if let Some(github) = &settings.github {
         for failure in github.failures() {
@@ -311,6 +303,21 @@ pub fn run() -> ExitCode {
                 "{failure}; online checks that needed it were skipped"
             ));
             incomplete = true;
+        }
+    }
+    if let Some(name) = &args.repository {
+        let first = [(args.paths[0].clone(), owners[0])];
+        let checked = per_config(&first, &mut configs, &mut settings, |scanned, settings| {
+            vec![rules::detect_settings(name, &scanned[0], settings)]
+        });
+        for result in checked {
+            match result {
+                Ok(found) => repository.extend(found),
+                Err(error) => {
+                    report::warning(format_args!("repo-org-settings was skipped: {error}"));
+                    incomplete |= !error.denied();
+                }
+            }
         }
     }
     if incomplete {
