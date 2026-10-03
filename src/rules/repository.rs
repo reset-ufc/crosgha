@@ -160,7 +160,7 @@ pub fn tooling(
     }
     for (name, action) in SCANNERS {
         if !workflows.contains(action) {
-            missing.push(format!("a {name} workflow"));
+            missing.push(format!("{name} workflow"));
         }
     }
     Ok(missing
