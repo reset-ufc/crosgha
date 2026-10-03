@@ -88,8 +88,9 @@ unchanged under `--fix` and remain visible in the report.
    A replaced value is swapped back and must restore the original source. An added key must
    be the only insertion: the original equals the patched source minus the new node and the
    spaces, line breaks, or comma around it, and the parsed values differ only by that key.
-   CRLF files and files without a final newline are patched as LF with one, then converted
-   back.
+   Files with CRLF or mixed line breaks, or without a final newline, are patched as LF with
+   one; then each original line gets its own break back and an added line takes the break of
+   the line before it.
 4. Prepare all files before writing any file. Write each changed file through
    a same-directory temporary file, preserving permissions and renaming it
    over the original. A symbolic link is never replaced. A failed write is

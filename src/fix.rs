@@ -39,29 +39,28 @@ pub fn apply(
     file: &str,
 ) -> Result<FixOutcome, String> {
     // yamlpatch writes `\n` line breaks and ends the file with one, so the file is patched in
-    // that form and converted back. YAML normalizes line breaks in scalars, so neither
-    // conversion changes a value.
+    // that form and each line gets its own break back. YAML normalizes line breaks in scalars,
+    // so neither conversion changes a value.
     let source = workflow.document.source();
-    let crlf = source.contains("\r\n") && !source.replace("\r\n", "\n").contains('\r');
     let unterminated = !source.ends_with('\n');
-    let mut normalized = match crlf {
-        true => source.replace("\r\n", "\n"),
-        false => source.to_owned(),
-    };
-    if unterminated {
-        normalized.push('\n');
+    let mut breaks = None;
+    let mut normalized = None;
+    if unterminated || source.contains("\r\n") {
+        let mut lf = source.replace("\r\n", "\n");
+        if unterminated {
+            lf.push('\n');
+        }
+        if let Ok(parsed) = Workflow::parse(lf) {
+            breaks = Some(line_breaks(source));
+            normalized = Some(parsed);
+        }
     }
-    let (mut current, crlf, unterminated) = match crlf || unterminated {
-        true => match Workflow::parse(normalized) {
-            Ok(normalized) => (normalized, crlf, unterminated),
-            Err(_) => (workflow, false, false),
-        },
-        false => (workflow, false, false),
-    };
+    let mut current = normalized.unwrap_or(workflow);
+    let unterminated = unterminated && breaks.is_some();
     // Findings of `current`. The caller's findings describe it until the source is normalized;
     // after that, each accepted patch's validation has already found them.
     let mut known: Option<Vec<Finding>> = None;
-    let normalized = crlf || unterminated;
+    let normalized = breaks.is_some();
     let mut attempts = Vec::new();
     for (index, finding) in findings.iter().enumerate() {
         let Some(proposal) = &finding.fix else {
@@ -82,6 +81,9 @@ pub fn apply(
         let before = known.as_deref().unwrap_or(findings);
         let rejected = match patch(&current, finding, proposal, before, settings, file) {
             Ok((next, after)) => {
+                if let Some(breaks) = &mut breaks {
+                    *breaks = carry(breaks, current.document.source(), next.document.source());
+                }
                 current = next;
                 known = Some(after);
                 None
@@ -97,18 +99,70 @@ pub fn apply(
         Some(found) => found,
         None => rules::detect_all(&current, settings, file)?,
     };
-    let mut source = current.document.source();
-    if unterminated {
-        source = source.strip_suffix('\n').unwrap_or(source);
-    }
+    let source = current.document.source();
+    let source = match breaks {
+        None => source.to_owned(),
+        Some(breaks) => {
+            let mut restored = String::with_capacity(source.len() + breaks.len());
+            for (line, end) in source.split_inclusive('\n').zip(breaks) {
+                restored.push_str(line.strip_suffix('\n').unwrap_or(line));
+                restored.push_str(end);
+            }
+            if unterminated {
+                restored.truncate(restored.trim_end_matches(['\r', '\n']).len());
+            }
+            restored
+        }
+    };
     Ok(FixOutcome {
-        source: match crlf {
-            true => source.replace('\n', "\r\n"),
-            false => source.to_owned(),
-        },
+        source,
         attempts,
         remaining,
     })
+}
+
+/// The break (`\r\n` or `\n`) ending each line of `source`; a last line without one takes the
+/// break of the line before it.
+fn line_breaks(source: &str) -> Vec<&'static str> {
+    let mut breaks: Vec<&'static str> = Vec::new();
+    for line in source.split_inclusive('\n') {
+        breaks.push(match line {
+            _ if line.ends_with("\r\n") => "\r\n",
+            _ if line.ends_with('\n') => "\n",
+            _ => breaks.last().copied().unwrap_or("\n"),
+        });
+    }
+    breaks
+}
+
+/// The breaks of `before`'s lines moved onto `after`'s, which differ in one region: lines around
+/// it keep their break, a changed line keeps the break of the line it replaces, and an added
+/// line takes the break of the line before it.
+fn carry(breaks: &[&'static str], before: &str, after: &str) -> Vec<&'static str> {
+    let old: Vec<&str> = before.split_inclusive('\n').collect();
+    let new: Vec<&str> = after.split_inclusive('\n').collect();
+    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let suffix = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let replaced = old.len() - prefix - suffix;
+    let mut carried = breaks[..prefix].to_vec();
+    for index in 0..new.len() - prefix - suffix {
+        let end = match index < replaced {
+            true => breaks[prefix + index],
+            false => carried
+                .last()
+                .or(breaks.get(prefix))
+                .copied()
+                .unwrap_or("\n"),
+        };
+        carried.push(end);
+    }
+    carried.extend_from_slice(&breaks[old.len() - suffix..]);
+    carried
 }
 
 /// The patched workflow and its findings, once the patch passes validation.

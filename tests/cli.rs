@@ -453,8 +453,9 @@ fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
     assert!(!stdout.contains("--fix"), "{stdout}");
 }
 
-/// Layouts common in real repositories: a comment (here CJK) after the fixed step, CRLF line
-/// breaks, and no final newline. The fix keeps each file's line breaks and missing final newline.
+/// Layouts common in real repositories: a comment (here CJK) after the fixed step, CRLF or mixed
+/// line breaks, and no final newline. The fix keeps each line's break and the missing final
+/// newline.
 #[test]
 fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
     let unique = SystemTime::now()
@@ -466,24 +467,48 @@ fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
     let source = fs::read_to_string(fixture("fix-layout.yml")).unwrap();
     let unterminated = source.trim_end_matches('\n');
     let crlf = source.replace('\n', "\r\n");
+    // Editors that mix line breaks: odd lines end with CRLF, even lines with LF.
+    let ending = |index: usize| {
+        if index.is_multiple_of(2) {
+            "\r\n"
+        } else {
+            "\n"
+        }
+    };
+    let mut mixed = String::new();
+    let mut fixed_mixed_expected = String::new();
+    for (index, line) in source.lines().enumerate() {
+        let end = ending(index);
+        mixed.push_str(&format!("{line}{end}"));
+        fixed_mixed_expected.push_str(&format!("{line}{end}"));
+        // Each inserted line takes the line break of the line it follows.
+        if line.ends_with("# v5.1.0") {
+            fixed_mixed_expected.push_str(&format!(
+                "        with:{end}          persist-credentials: false{end}"
+            ));
+        }
+    }
     fs::write(dir.join("unterminated.yml"), unterminated).unwrap();
     fs::write(dir.join("crlf.yml"), &crlf).unwrap();
+    fs::write(dir.join("mixed.yml"), &mixed).unwrap();
 
     let output = bin().arg("--fix").arg(&dir).output().unwrap();
     let fixed_unterminated = fs::read_to_string(dir.join("unterminated.yml")).unwrap();
     let fixed_crlf = fs::read_to_string(dir.join("crlf.yml")).unwrap();
+    let fixed_mixed = fs::read_to_string(dir.join("mixed.yml")).unwrap();
     fs::remove_dir_all(&dir).unwrap();
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(0), "{stdout}");
     assert!(
-        stdout.contains("Fixed 4 findings in 2 workflow files."),
+        stdout.contains("Fixed 6 findings in 3 workflow files."),
         "{stdout}"
     );
     let with = "# v5.1.0\n        with:\n          persist-credentials: false\n";
     let expected = source.replace("# v5.1.0\n", with);
     assert_eq!(fixed_unterminated, expected.trim_end_matches('\n'));
     assert_eq!(fixed_crlf, expected.replace('\n', "\r\n"));
+    assert_eq!(fixed_mixed, fixed_mixed_expected);
 }
 
 /// A fix is never written through a symbolic link, but a link with nothing to fix is fine and
