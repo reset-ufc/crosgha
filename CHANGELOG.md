@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.11.2](https://github.com/meiazero/crosgha/compare/v0.11.1...v0.11.2) (2026-10-03)
+
+
+### Fixed
+
+* **action:** fail on non-X64 runners and on any unexpected exit status ([5db1996](https://github.com/meiazero/crosgha/commit/5db1996c1556507884b24643a18e773c67703f06))
+* **action:** scan every path of a multi-line inputs value ([d7b3b0b](https://github.com/meiazero/crosgha/commit/d7b3b0b291e6d1b75759212aa3410e9318004b4b))
+* **action:** stop workflow commands in relayed scan output ([401ad50](https://github.com/meiazero/crosgha/commit/401ad50f128c1043f2a31161b1d0c3f6a69f38eb))
+* allow plain HTTP only for a bare loopback release origin ([4f92be9](https://github.com/meiazero/crosgha/commit/4f92be961cf7dc510ad744ad609ed2d267cb6382))
+* audit fixes across the fix pipeline, rules, config, API, Action, and performance ([a089c76](https://github.com/meiazero/crosgha/commit/a089c76003e791a119e259553f92f7b962beedb5))
+* **cli:** apply the config each input discovers ([94e3ed8](https://github.com/meiazero/crosgha/commit/94e3ed8a535244b65496c771956499b8758ab7e7))
+* **cli:** let --no-config override CROSGHA_CONFIG ([3c5bbba](https://github.com/meiazero/crosgha/commit/3c5bbba94744927f567a531e59ce6eebdb758011))
+* **cli:** scan files reached through overlapping inputs once ([020e831](https://github.com/meiazero/crosgha/commit/020e83111ffacaf4bb48863075092eb3e6f2c735))
+* **config:** reject ignore entries with a malformed line ([58e4f01](https://github.com/meiazero/crosgha/commit/58e4f014aafc41e6b4cc61a068caf0282058bdef))
+* **config:** skip the workflows directory when a single workflow is scanned ([caf1120](https://github.com/meiazero/crosgha/commit/caf1120309003a03fcfd806e06aedda3a8e7c10f))
+* **fix:** apply fixes next to comments, in CRLF files, and without a final newline ([54af6b4](https://github.com/meiazero/crosgha/commit/54af6b4591e5dcca5d532af987dadf630a75364a))
+* **fix:** keep the finding when its fix is rejected ([ac8a4a4](https://github.com/meiazero/crosgha/commit/ac8a4a46bfdc780c7f0b96b5f49347a01687b545))
+* **fix:** refuse a symlinked workflow only when a fix must be written to it ([9eaeb57](https://github.com/meiazero/crosgha/commit/9eaeb57072fa01c5ee0fd449e022cfcf6852f08b))
+* **github:** keep offline findings when a GitHub API request fails ([d05aa93](https://github.com/meiazero/crosgha/commit/d05aa9353e8849f4bf3a81b539237a774b4684d2))
+* **install:** run the new binary before replacing the installed one ([2db2286](https://github.com/meiazero/crosgha/commit/2db22860c037150c7c172176a1abfb44d5a7978e))
+* **migrate:** keep commands that share a step with the zizmor install ([981a2cb](https://github.com/meiazero/crosgha/commit/981a2cbc7d3a6efc83ce38fcee21ee6edf3d7817))
+* **migrate:** note output formats the crosgha Action cannot produce ([9023de8](https://github.com/meiazero/crosgha/commit/9023de86d4d3c9f40fec6631683a1d0ad373e539))
+* **online:** check every tag page before reporting an impostor commit ([779510b](https://github.com/meiazero/crosgha/commit/779510b940b20c47015c5fa6161de8791d3514a5))
+* **online:** look up advisories for the release a major-only ref points to ([854746f](https://github.com/meiazero/crosgha/commit/854746fd55fefe2f7a44eff4dfb5824e2abcf69e))
+* **online:** skip repo-org-settings when the token cannot read Actions settings ([c216cb1](https://github.com/meiazero/crosgha/commit/c216cb1455f88a6fc623886592a8668349fb87e0))
+* **report:** emit UTF-16 SARIF columns and percent-encoded URIs ([9a0fbbd](https://github.com/meiazero/crosgha/commit/9a0fbbdef2e1a84f7de8df8fab090dfdaceb71a9))
+* **report:** report only the fixes that were written ([2bd7e37](https://github.com/meiazero/crosgha/commit/2bd7e37cf4422890f67be03c49bff38fb31f017d))
+* **rules:** align actionlint equivalents with the taxonomy ([9fcaaec](https://github.com/meiazero/crosgha/commit/9fcaaec879187e2dfc68d747c4e062aebf13bf4a))
+* **rules:** count only cache saves after untrusted checkout ([082ff19](https://github.com/meiazero/crosgha/commit/082ff194dd78a1b00bd858490c40d32dde45dd69))
+* **rules:** detect fork and merge-commit checkouts in pwn-request ([c90bd4d](https://github.com/meiazero/crosgha/commit/c90bd4d3887537ec863eafd49e53993fc9ff4ccc))
+* **rules:** drop the stray article in missing-security-tooling messages ([9087012](https://github.com/meiazero/crosgha/commit/9087012adcb70020a4156bda7460cb08f3afa64f))
+* **rules:** expand matrix runner values that are label lists ([532bf58](https://github.com/meiazero/crosgha/commit/532bf5893683713d44dbb72ec872366d2789956c))
+* **rules:** find environment file writes through tee, PowerShell, groups, and heredocs ([affca52](https://github.com/meiazero/crosgha/commit/affca524e24101683d9d0ef4f8ff393bd9db3d78))
+* **rules:** ignore remote downloads piped as data ([ca65ae3](https://github.com/meiazero/crosgha/commit/ca65ae3c870195fc5d0fa33d2147e5ef25aae997))
+* **rules:** keep steps whose outputs are read out of duplicated-steps ([0a197f5](https://github.com/meiazero/crosgha/commit/0a197f500a08aae572acc6bb35ee9ba364319fc9))
+* **rules:** match actions/checkout case-insensitively in persist-credentials ([b56d83d](https://github.com/meiazero/crosgha/commit/b56d83d6c92345d712dccedeaafc9114f9d50c43))
+* **rules:** match untrusted contexts in index syntax, any case, and toJSON objects ([dfbf8b2](https://github.com/meiazero/crosgha/commit/dfbf8b238bab08c827842658ee34aa045819d123))
+* **rules:** recognize custom bash and sh shell paths ([f7f760a](https://github.com/meiazero/crosgha/commit/f7f760a635b8f9b65116384ea99c37802a7833b6))
+* **rules:** report older retired hosted runner images ([26934eb](https://github.com/meiazero/crosgha/commit/26934eb7d08cec766900e69c736e3acc7805cb2d))
+* **rules:** report only bot-name checks that grant a spoofed actor ([4b6d4be](https://github.com/meiazero/crosgha/commit/4b6d4be7d521284bb7bc4057f9d6a6623247f546))
+* **rules:** report opt-out variables only when set to true ([a5fe15d](https://github.com/meiazero/crosgha/commit/a5fe15dd4e95e862b54e7eefb98dfd031254b7dc))
+* **rules:** require an exact npm package version ([bf481d7](https://github.com/meiazero/crosgha/commit/bf481d729649773086c09b2a368154680e970d9e))
+* **rules:** say exact version in unpinned-package messages ([79798bb](https://github.com/meiazero/crosgha/commit/79798bbd26b71a35bee10e0f9cecb16746436072))
+* **rules:** stop counting the shell test builtin as a test suite ([4863fb2](https://github.com/meiazero/crosgha/commit/4863fb2848cd5363e436b563e81cf448a862d538))
+* **rules:** treat jobs that need a fork-guarded job as guarded ([fd0ee99](https://github.com/meiazero/crosgha/commit/fd0ee9967ff54997e7e1e95d3ce3183cfe13bcef))
+* **rules:** validate permission access levels ([aafdc6d](https://github.com/meiazero/crosgha/commit/aafdc6d42c08499c92963da201c84686b588beab))
+* **scan:** read workflows only directly inside .github/workflows ([25f7aee](https://github.com/meiazero/crosgha/commit/25f7aee81ab950a928e26f5993c52bfbdcb721f7))
+
+
+### Changed
+
+* **fix:** reuse each validation's findings as the next baseline ([a2ae88f](https://github.com/meiazero/crosgha/commit/a2ae88fcde68fc6b655e8b1f65c84d4333646d08))
+* **rules:** look up each version comment once per workflow ([b3cb4ae](https://github.com/meiazero/crosgha/commit/b3cb4ae9dbd768e75815289d27a09e54295ff410))
+* **rules:** reuse parsed workflows in repository rules ([9e07bc3](https://github.com/meiazero/crosgha/commit/9e07bc32cc380d1d5b5b7f79a8c367fe11d99286))
+* **rules:** skip the ignore lookup in files without an ignore comment ([9c6887e](https://github.com/meiazero/crosgha/commit/9c6887e48051a596ac30ca30b725f2f9f39fb46d))
+
+
+### Documentation
+
+* describe rejected and unwritten fixes in the report ([9fdc4d2](https://github.com/meiazero/crosgha/commit/9fdc4d22cc15228f9cdc6d4500e7c6dfe0d1f4e8))
+* describe the flat workflow scan and the X64 runner requirement ([95289cd](https://github.com/meiazero/crosgha/commit/95289cd5cb210f7607a87a012c6e3a8768c42355))
+
 ## [0.11.1](https://github.com/meiazero/crosgha/compare/v0.11.0...v0.11.1) (2026-09-28)
 
 
