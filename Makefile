@@ -1,6 +1,7 @@
 .PHONY: setup check run
 
 setup:
+	mise trust
 	git config core.hooksPath .githooks
 
 check:
