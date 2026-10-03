@@ -162,11 +162,9 @@ pub fn env_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
-            let unsafe_write = script.lines().any(|line| {
-                let writes = line.contains('>')
-                    && (line.contains("GITHUB_ENV") || line.contains("GITHUB_PATH"));
-                writes && (privileged || !common::untrusted_in_text(line).is_empty())
-            });
+            let unsafe_write = env_file_writes(script)
+                .iter()
+                .any(|written| privileged || !common::untrusted_in_text(written).is_empty());
             if unsafe_write {
                 findings.push(common::finding(
                     workflow,
@@ -179,6 +177,97 @@ pub fn env_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
+}
+
+/// The text of every command in `script` that writes GITHUB_ENV or GITHUB_PATH: the line with
+/// the write, plus the heredoc it reads or the `{ }`, `( )`, or loop body it closes.
+fn env_file_writes(script: &str) -> Vec<String> {
+    let script = script.replace("\\\n", " ");
+    let lines: Vec<&str> = script.lines().collect();
+    (0..lines.len())
+        .filter(|&index| writes_env_file(lines[index]))
+        .map(|index| lines[block_start(&lines, index)..=heredoc_end(&lines, index)].join("\n"))
+        .collect()
+}
+
+const ENV_FILES: &[&str] = &["github_env", "github_path"];
+const FILE_WRITERS: &[&str] = &["tee", "out-file", "add-content", "set-content"];
+
+/// Whether `line` writes an environment file: a `>` or `>>` redirect into it, or `tee` or
+/// PowerShell's `Out-File`, `Add-Content`, or `Set-Content` naming it. Reading the path is not
+/// a write. Compared in lower case because PowerShell and cmd ignore it.
+fn writes_env_file(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    ENV_FILES.iter().any(|file| {
+        line.match_indices(file).any(|(at, _)| {
+            let whole_name = !line[at + file.len()..]
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+            let Some(before) = ["${", "$env:", "$", "%"]
+                .iter()
+                .find_map(|sigil| line[..at].strip_suffix(sigil))
+            else {
+                return false;
+            };
+            let before = before.trim_end_matches([' ', '\t', '"', '\'']);
+            let command = before.rsplit(['|', ';', '&']).next().unwrap_or(before);
+            let writer = !before.ends_with('<')
+                && command
+                    .split_whitespace()
+                    .any(|word| FILE_WRITERS.contains(&word));
+            whole_name && (before.ends_with('>') || writer)
+        })
+    })
+}
+
+/// First line of the block that the write on `lines[index]` redirects: the matching `{`, `(`,
+/// or `do` line when it starts with `}`, `)`, or `done`.
+// ponytail: the nearest opener indented no deeper than the closer; an unindented nested block
+// of the same kind cuts the body short. Parse the shell when that shows up in practice.
+fn block_start(lines: &[&str], index: usize) -> usize {
+    let closer = lines[index].trim_start();
+    let indent = lines[index].len() - closer.len();
+    let opens: fn(&str) -> bool = if closer.starts_with('}') {
+        |line| line.ends_with('{')
+    } else if closer.starts_with(')') {
+        |line| line.starts_with('(')
+    } else if closer.starts_with("done") {
+        |line| line.ends_with("do")
+    } else {
+        return index;
+    };
+    (0..index)
+        .rev()
+        .find(|&opener| {
+            let text = lines[opener].trim_start();
+            lines[opener].len() - text.len() <= indent && opens(text.trim_end())
+        })
+        .unwrap_or(0)
+}
+
+/// Last line of the heredoc that the write on `lines[index]` reads, or `index` without one.
+fn heredoc_end(lines: &[&str], index: usize) -> usize {
+    let line = lines[index];
+    let Some(at) = line
+        .find("<<")
+        .filter(|&at| !line[at + 2..].starts_with('<'))
+    else {
+        return index;
+    };
+    let delimiter: String = line[at + 2..]
+        .trim_start_matches('-')
+        .trim_start()
+        .chars()
+        .take_while(|char| !char.is_whitespace() && !";|&)".contains(*char))
+        .filter(|char| !"'\"".contains(*char))
+        .collect();
+    if delimiter.is_empty() {
+        return index;
+    }
+    (index + 1..lines.len())
+        .find(|&end| lines[end].trim() == delimiter)
+        .unwrap_or(lines.len() - 1)
 }
 
 // ponytail: Known agent actions only; add a marketplace-category lookup when

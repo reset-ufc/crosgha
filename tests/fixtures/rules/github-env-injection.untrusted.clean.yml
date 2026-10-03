@@ -7,3 +7,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo "NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
+      - run: |
+          cat >> "$GITHUB_ENV" <<EOF
+          NUMBER=${{ github.event.issue.number }}
+          EOF
+      - shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "NUMBER=${{ github.event.issue.number }}"
+      - run: echo "$GITHUB_ENV" > debug.txt
