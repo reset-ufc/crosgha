@@ -505,6 +505,8 @@ fn fixes_regular_workflows_but_refuses_to_write_through_symlinks() {
     fs::copy(fixture("checkout-credentials.before.yml"), &real).unwrap();
     std::os::unix::fs::symlink(&shared, scanned.join("linked.yml")).unwrap();
     std::os::unix::fs::symlink(&clean, scanned.join("clean-link.yml")).unwrap();
+    // A link to another scanned workflow is that workflow: reported and fixed once, by its target.
+    std::os::unix::fs::symlink("real.yml", scanned.join("alias.yml")).unwrap();
     let before = fs::read(&shared).unwrap();
 
     let scan = bin().arg(&scanned).output().unwrap();
@@ -528,6 +530,7 @@ fn fixes_regular_workflows_but_refuses_to_write_through_symlinks() {
         "{stdout}"
     );
     assert!(stdout.contains("linked.yml"));
+    assert!(!stdout.contains("alias.yml"), "{stdout}");
 
     assert_eq!(fix.status.code(), Some(2));
     let stderr = String::from_utf8(fix.stderr).unwrap();
@@ -558,6 +561,7 @@ fn fixes_regular_workflows_but_refuses_to_write_through_symlinks() {
         "{stdout}"
     );
     assert!(stdout.contains("Remaining: 3 findings"), "{stdout}");
+    assert!(!stdout.contains("alias.yml"), "{stdout}");
 
     assert_eq!(
         clean_fix.status.code(),

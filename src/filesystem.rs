@@ -89,6 +89,12 @@ pub fn identity(path: &Path) -> PathBuf {
     }
 }
 
+/// The `identity` of the file a symbolic link resolves to; `None` for any other path.
+pub fn link_target(path: &Path) -> Option<PathBuf> {
+    let link = fs::symlink_metadata(path).ok()?.file_type().is_symlink();
+    link.then(|| fs::canonicalize(path).ok()).flatten()
+}
+
 /// A Dependabot config shares the `.yml` extension but is not a workflow.
 pub fn is_dependabot(path: &Path) -> bool {
     path.is_file()

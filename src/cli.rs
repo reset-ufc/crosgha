@@ -185,6 +185,10 @@ pub fn run() -> ExitCode {
     workflows.sort();
     let mut seen = HashSet::new();
     workflows.retain(|(path, _)| seen.insert(filesystem::identity(path)));
+    // A link to another scanned workflow is reported, and fixed, once through its target.
+    workflows.retain(|(path, _)| {
+        filesystem::link_target(path).is_none_or(|target| !seen.contains(&target))
+    });
 
     let mut files = Vec::new();
     let mut failures: Vec<report::FileError> = Vec::new();
