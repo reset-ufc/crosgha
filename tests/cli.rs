@@ -8,7 +8,8 @@ fn bin() -> Command {
     command
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
-        .env_remove("GITHUB_ACTIONS");
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("FORCE_COLOR");
     isolate_git(&mut command);
     command
 }
@@ -2251,4 +2252,39 @@ fn text_report_points_at_the_source_and_colors_only_on_request() {
         "{colored}"
     );
     assert_eq!(anstream::adapter::strip_str(&colored).to_string(), piped);
+}
+
+#[test]
+fn zizmor_pedantic_flag_and_force_color_work_as_in_zizmor() {
+    let scan = |args: &[&str], env: &[(&str, &str)]| {
+        let output = bin()
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE")
+            .envs(env.iter().copied())
+            .args(["--offline", "--no-config", "--fail-on", "none"])
+            .args(args)
+            .arg(fixture("repos/configured/.github/workflows/ci.yml"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    // https://docs.zizmor.sh/usage/: `--pedantic` is an alias for `--persona=pedantic`.
+    let pedantic = scan(&["--persona", "pedantic"], &[]);
+    assert_ne!(pedantic, scan(&[], &[]));
+    assert_eq!(scan(&["--pedantic"], &[]), pedantic);
+
+    let colored = scan(&[], &[("FORCE_COLOR", "1")]);
+    assert!(colored.contains('\x1b'), "{colored}");
+    for env in [
+        &[("FORCE_COLOR", "")][..],
+        &[("FORCE_COLOR", "1"), ("NO_COLOR", "1")],
+    ] {
+        let plain = scan(&[], env);
+        assert!(!plain.contains('\x1b'), "{env:?}: {plain}");
+    }
 }

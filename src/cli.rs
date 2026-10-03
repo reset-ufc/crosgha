@@ -30,6 +30,10 @@ struct Args {
     #[arg(long, value_enum, default_value_t = policy::Persona::Regular)]
     persona: policy::Persona,
 
+    /// zizmor's alias for `--persona pedantic`: https://docs.zizmor.sh/usage/#using-personas
+    #[arg(long, hide = true, conflicts_with = "persona")]
+    pedantic: bool,
+
     /// Never contact the GitHub API, even when a token is available.
     #[arg(long)]
     offline: bool,
@@ -138,6 +142,14 @@ enum HookAction {
 pub fn run() -> ExitCode {
     let args = Args::parse();
     match args.color {
+        // zizmor honors FORCE_COLOR (https://docs.zizmor.sh/usage/, "Cargo-style output"); like
+        // anstream's CLICOLOR_FORCE, a non-empty value forces color unless NO_COLOR is set.
+        ColorChoice::Auto
+            if std::env::var_os("FORCE_COLOR").is_some_and(|value| !value.is_empty())
+                && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty()) =>
+        {
+            anstream::ColorChoice::Always.write_global()
+        }
         ColorChoice::Auto => {}
         ColorChoice::Always => anstream::ColorChoice::Always.write_global(),
         ColorChoice::Never => anstream::ColorChoice::Never.write_global(),
@@ -217,7 +229,11 @@ pub fn run() -> ExitCode {
     };
     let workflows = owned(workflows);
     let mut settings = policy::Settings {
-        persona: args.persona,
+        persona: if args.pedantic {
+            policy::Persona::Pedantic
+        } else {
+            args.persona
+        },
         github: token
             .filter(|_| !args.offline && !args.no_online_audits)
             .map(|token| GitHub::new(&api_url(&args.gh_hostname), token)),
