@@ -295,8 +295,24 @@ fn runs_tests(job: &common::Job<'_>) -> bool {
         .filter_map(|step| step.run())
         .any(|script| {
             script
-                .split(|c: char| !c.is_ascii_alphanumeric())
-                .any(|word| TEST_COMMANDS.contains(&word))
+                .split(['\n', ';', '&', '|', '(', ')', '`'])
+                .any(|command| {
+                    // `test` in command position is the shell's condition builtin, not a test runner.
+                    let mut words = command
+                        .split_whitespace()
+                        .skip_while(|word| {
+                            matches!(
+                                *word,
+                                "if" | "then" | "elif" | "while" | "until" | "do" | "!" | "{"
+                            )
+                        })
+                        .peekable();
+                    words.next_if_eq(&"test");
+                    words.any(|word| {
+                        word.split(|c: char| !c.is_ascii_alphanumeric())
+                            .any(|word| TEST_COMMANDS.contains(&word))
+                    })
+                })
         })
 }
 
