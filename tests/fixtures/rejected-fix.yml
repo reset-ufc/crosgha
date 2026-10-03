@@ -1,0 +1,17 @@
+name: Rejected fix
+on: [push]
+permissions: { contents: read }
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Adding a key rewrites this whole flow mapping, so validation refuses the fix.
+      - { uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 }
+      - run: make lint
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - run: make test

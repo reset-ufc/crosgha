@@ -327,6 +327,91 @@ fn fixes_checkout_while_reporting_a_detection_only_finding() {
     assert!(!stdout.contains("[persist-credentials]"));
 }
 
+/// A fix that fails validation stays a reported finding; the other fixes in that file and in the
+/// other files are still written.
+#[test]
+fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("crosgha-reject-{}-{unique}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let (flow, ci) = (dir.join("flow.yml"), dir.join("ci.yml"));
+    fs::copy(fixture("rejected-fix.yml"), &flow).unwrap();
+    fs::copy(fixture("checkout-credentials.before.yml"), &ci).unwrap();
+
+    let json = bin()
+        .args(["--fix", "-f", "json"])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    let flow_after = fs::read_to_string(&flow).unwrap();
+    let ci_after = fs::read_to_string(&ci).unwrap();
+    fs::copy(fixture("rejected-fix.yml"), &flow).unwrap();
+    let text = bin().arg("--fix").arg(&flow).output().unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    assert_eq!(
+        ci_after,
+        fs::read_to_string(fixture("checkout-credentials.after.yml")).unwrap()
+    );
+    let original = fs::read_to_string(fixture("rejected-fix.yml")).unwrap();
+    assert!(
+        flow_after
+            .contains("- { uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 }\n"),
+        "{flow_after}"
+    );
+    assert_eq!(
+        flow_after,
+        original.replace(
+            "# v5.1.0\n",
+            "# v5.1.0\n        with:\n          persist-credentials: false\n"
+        )
+    );
+
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(report["summary"]["fixed"], 4, "{report}");
+    let remaining = report["findings"].as_array().unwrap();
+    assert_eq!(remaining.len(), 1, "{report}");
+    assert_eq!(remaining[0]["rule"], "persist-credentials");
+    assert!(remaining[0]["path"].as_str().unwrap().ends_with("flow.yml"));
+    assert_eq!(remaining[0]["line"], 10);
+    let fixes = report["fixes"].as_array().unwrap();
+    let status = |status: &str| {
+        fixes
+            .iter()
+            .filter(|fix| fix["status"] == status)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(status("applied").len(), 4, "{report}");
+    let rejected = status("rejected");
+    assert_eq!(rejected.len(), 1, "{report}");
+    assert_eq!(rejected[0]["line"], 10);
+    assert_eq!(
+        rejected[0]["reason"],
+        "fix changed YAML outside the intended node"
+    );
+
+    assert_eq!(text.status.code(), Some(1));
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(
+        stdout.contains("Fixed 1 finding in 1 workflow file."),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("flow.yml:10:11 [persist-credentials]: fix changed YAML outside"),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("[persist-credentials]:").count(),
+        2,
+        "{stdout}"
+    );
+    assert!(!stdout.contains("--fix"), "{stdout}");
+}
+
 #[cfg(unix)]
 #[test]
 fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {

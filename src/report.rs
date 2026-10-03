@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::Inspection,
+    fix::FixOutcome,
     policy::Severity,
     rules::{self, Finding, Located, Rule},
 };
@@ -83,7 +84,7 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
                 file.inspection
                     .fix
                     .as_ref()
-                    .is_some_and(|outcome| outcome.fixed_count > 0)
+                    .is_some_and(|outcome| outcome.applied() > 0)
             })
             .count();
         output.push_str(&format!(
@@ -91,6 +92,18 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
             count(fixed(files), "finding"),
             count(changed, "workflow file")
         ));
+        for (path, finding, reason) in attempts(files) {
+            if let Some(reason) = reason {
+                let _ = writeln!(
+                    output,
+                    "Not fixed: {}:{}:{} [{}]: {reason}",
+                    path.display(),
+                    finding.line,
+                    finding.column,
+                    finding.rule.id
+                );
+            }
+        }
         if !shown.is_empty() {
             output.push_str(&format!(
                 "Remaining: {}{}.\n",
@@ -355,8 +368,25 @@ fn fixed(files: &[FileReport]) -> usize {
     files
         .iter()
         .filter_map(|file| file.inspection.fix.as_ref())
-        .map(|outcome| outcome.fixed_count)
+        .map(FixOutcome::applied)
         .sum()
+}
+
+/// Every proposed fix with its finding in the original source and why it was not applied.
+fn attempts(files: &[FileReport]) -> impl Iterator<Item = (&Path, &Finding, Option<&str>)> {
+    files.iter().flat_map(|file| {
+        file.inspection
+            .fix
+            .iter()
+            .flat_map(|outcome| &outcome.attempts)
+            .map(|attempt| {
+                (
+                    file.path.as_path(),
+                    &file.inspection.findings[attempt.finding],
+                    attempt.rejected.as_deref(),
+                )
+            })
+    })
 }
 
 fn equivalents(rule: &Rule) -> Value {
@@ -386,6 +416,19 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
             })
         })
         .collect();
+    let fixes: Vec<Value> = attempts(files)
+        .map(|(path, finding, reason)| {
+            json!({
+                "rule": finding.rule.id,
+                "path": path.display().to_string(),
+                "line": finding.line,
+                "column": finding.column,
+                "location": finding.location,
+                "status": if reason.is_some() { "rejected" } else { "applied" },
+                "reason": reason,
+            })
+        })
+        .collect();
     let errors: Vec<Value> = errors
         .iter()
         .map(|error| json!({ "path": error.path.display().to_string(), "message": error.message }))
@@ -400,6 +443,7 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
             "errors": errors.len(),
         },
         "findings": findings,
+        "fixes": fixes,
         "errors": errors,
     });
     format!("{report:#}\n")

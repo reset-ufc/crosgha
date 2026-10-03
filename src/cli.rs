@@ -330,7 +330,7 @@ pub fn run() -> ExitCode {
     if fix {
         for file in &files {
             if let Some(outcome) = &file.inspection.fix
-                && outcome.fixed_count > 0
+                && outcome.applied() > 0
                 && let Err(error) = filesystem::write_verified(&file.path, &outcome.source)
             {
                 report::error(format_args!("{}: {error}", file.path.display()));
