@@ -162,9 +162,28 @@ pub fn env_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
-            let unsafe_write = env_file_writes(script)
-                .iter()
-                .any(|written| privileged || !common::untrusted_in_text(written).is_empty());
+            // Step `env` overrides the job's, which overrides the workflow's.
+            let mut tainted = std::collections::BTreeMap::new();
+            for scope in [&workflow.value, job.value, step.value] {
+                let Some(env) = scope.get("env").and_then(Value::as_mapping) else {
+                    continue;
+                };
+                for (name, value) in env {
+                    if let Some(name) = name.as_str() {
+                        let untrusted = value
+                            .as_str()
+                            .is_some_and(|text| !common::untrusted_in_text(text).is_empty());
+                        tainted.insert(name.to_ascii_lowercase(), untrusted);
+                    }
+                }
+            }
+            let unsafe_write = env_file_writes(script).iter().any(|written| {
+                privileged
+                    || !common::untrusted_in_text(written).is_empty()
+                    || tainted
+                        .iter()
+                        .any(|(name, untrusted)| *untrusted && reads_variable(written, name))
+            });
             if unsafe_write {
                 findings.push(common::finding(
                     workflow,
@@ -180,30 +199,38 @@ pub fn env_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 }
 
 /// The text of every command in `script` that writes GITHUB_ENV or GITHUB_PATH: the line with
-/// the write, plus the heredoc it reads or the `{ }`, `( )`, or loop body it closes.
+/// the write, plus the heredoc it reads, the `{ }`, `( )`, or loop body it closes, or the
+/// indented block of a Python `with open(...):` it opens.
 fn env_file_writes(script: &str) -> Vec<String> {
     let script = script.replace("\\\n", " ");
     let lines: Vec<&str> = script.lines().collect();
     (0..lines.len())
         .filter(|&index| writes_env_file(lines[index]))
-        .map(|index| lines[block_start(&lines, index)..=heredoc_end(&lines, index)].join("\n"))
+        .map(|index| {
+            let end = heredoc_end(&lines, index).max(indented_block_end(&lines, index));
+            lines[block_start(&lines, index)..=end].join("\n")
+        })
         .collect()
 }
 
 const ENV_FILES: &[&str] = &["github_env", "github_path"];
 const FILE_WRITERS: &[&str] = &["tee", "out-file", "add-content", "set-content"];
 
-/// Whether `line` writes an environment file: a `>` or `>>` redirect into it, or `tee` or
-/// PowerShell's `Out-File`, `Add-Content`, or `Set-Content` naming it. Reading the path is not
-/// a write. Compared in lower case because PowerShell and cmd ignore it.
+/// Whether `line` writes an environment file: a `>`, `>|`, or `>>` redirect into it, `tee` or
+/// PowerShell's `Out-File`, `Add-Content`, or `Set-Content` naming it, or Python opening it to
+/// append or write. Reading the path is not a write. Compared in lower case because PowerShell
+/// and cmd ignore it.
 fn writes_env_file(line: &str) -> bool {
-    let line = line.to_ascii_lowercase();
+    let line = env_file_expressions(&line.to_ascii_lowercase());
     ENV_FILES.iter().any(|file| {
         line.match_indices(file).any(|(at, _)| {
             let whole_name = !line[at + file.len()..]
                 .bytes()
                 .next()
                 .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+            if whole_name && python_opens_for_writing(&line[..at], &line[at + file.len()..]) {
+                return true;
+            }
             let Some(before) = ["${", "$env:", "$", "%"]
                 .iter()
                 .find_map(|sigil| line[..at].strip_suffix(sigil))
@@ -216,9 +243,94 @@ fn writes_env_file(line: &str) -> bool {
                 && command
                     .split_whitespace()
                     .any(|word| FILE_WRITERS.contains(&word));
-            whole_name && (before.ends_with('>') || writer)
+            whole_name && (before.ends_with('>') || before.ends_with(">|") || writer)
         })
     })
+}
+
+/// Rewrites `${{ github.env }}` and `${{ github.path }}`, the contexts that hold the same paths
+/// (https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context),
+/// to `$github_env` and `$github_path`.
+fn env_file_expressions(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find("${{") {
+        let after = &rest[start + 3..];
+        let Some(end) = after.find("}}") else { break };
+        out.push_str(&rest[..start]);
+        match after[..end].trim() {
+            "github.env" => out.push_str("$github_env"),
+            "github.path" => out.push_str("$github_path"),
+            _ => out.push_str(&rest[start..start + 3 + end + 2]),
+        }
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether the environment file named between `before` and `after` is Python's
+/// `os.environ["…"]`, `os.environ.get("…")`, or `os.getenv("…")` opened to append or write:
+/// `open(…, "a")`, `open(…, mode="w")`, `Path(…).open("a")`, or `Path(…).write_text(…)`.
+fn python_opens_for_writing(before: &str, after: &str) -> bool {
+    let Some(quote) = before.chars().last().filter(|char| "'\"".contains(*char)) else {
+        return false;
+    };
+    let lookup = before[..before.len() - 1].trim_end();
+    let from_environment = ["environ[", "environ.get(", "getenv("]
+        .iter()
+        .any(|call| lookup.ends_with(call));
+    let Some(after) = after.strip_prefix(quote) else {
+        return false;
+    };
+    let after = after.trim_start_matches([']', ')', ' ']);
+    let writing_mode = |text: &str| {
+        let text = text.trim_start();
+        let text = text.strip_prefix("mode=").unwrap_or(text).trim_start();
+        text.strip_prefix(['\'', '"'])
+            .is_some_and(|mode| mode.starts_with(['a', 'w']))
+    };
+    from_environment
+        && (after.strip_prefix(',').is_some_and(writing_mode)
+            || after.strip_prefix(".open(").is_some_and(writing_mode)
+            || after.starts_with(".write_text("))
+}
+
+/// Whether `text` expands the environment variable `name` (lowercase) in shell (`$name`,
+/// `${name}`), PowerShell (`$env:name`), cmd (`%name%`), or Python (`os.environ["name"]`).
+fn reads_variable(text: &str, name: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.match_indices(name).any(|(at, _)| {
+        let before = &text[..at];
+        let after = &text[at + name.len()..];
+        let ends_name = !after
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        let quoted = ['\'', '"']
+            .into_iter()
+            .any(|quote| before.ends_with(quote) && after.starts_with(quote));
+        let sigil = before.ends_with("$env:")
+            || before.ends_with("${")
+            || (before.ends_with('%') && after.starts_with('%'))
+            || before.ends_with('$');
+        ends_name && (sigil || quoted)
+    })
+}
+
+/// Last line of the indented block that `lines[index]` opens with a trailing `:`, as Python's
+/// `with open(...) as file:` does, or `index` without one.
+fn indented_block_end(lines: &[&str], index: usize) -> usize {
+    let opener = lines[index];
+    if !opener.trim_end().ends_with(':') {
+        return index;
+    }
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let depth = indent(opener);
+    (index + 1..lines.len())
+        .take_while(|&next| lines[next].trim().is_empty() || indent(lines[next]) > depth)
+        .last()
+        .unwrap_or(index)
 }
 
 /// First line of the block that the write on `lines[index]` redirects: the matching `{`, `(`,

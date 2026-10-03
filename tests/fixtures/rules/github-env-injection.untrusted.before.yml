@@ -43,3 +43,37 @@ jobs:
       - run: |
           echo "$GITHUB_ENV ${{ github.event.issue.title }}" > debug.txt
           echo "NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
+      # The untrusted value reaches the write through an environment variable.
+      - env:
+          TITLE: ${{ github.event.issue.title }}
+        run: echo "TITLE=$TITLE" >> "$GITHUB_ENV" # expect: github-env-injection
+      - shell: python
+        env:
+          TITLE: ${{ github.event.issue.title }}
+        run: | # expect: github-env-injection
+          import os
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"TITLE={os.environ['TITLE']}\n")
+      # `github.env` names the same file, and `>|` truncates it like `>`.
+      - run: echo "TITLE=${{ github.event.issue.title }}" >> ${{ github.env }} # expect: github-env-injection
+      - run: echo "TITLE=${{ github.event.issue.title }}" >| "$GITHUB_ENV" # expect: github-env-injection
+      - env:
+          NUMBER: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+        run: echo "NUMBER=$NUMBER" >> "$GITHUB_ENV"
+      - shell: python
+        env:
+          TITLE: ${{ github.event.issue.title }}
+        run: |
+          import os
+          print(open(os.environ["GITHUB_ENV"]).read(), os.environ["TITLE"])
+  notify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      BODY: ${{ github.event.issue.body }}
+    steps:
+      - run: echo "BODY=${BODY}" >> "$GITHUB_ENV" # expect: github-env-injection
+      - env:
+          BODY: fixed
+        run: echo "BODY=${BODY}" >> "$GITHUB_ENV"
