@@ -67,6 +67,16 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      # A dispatch on any other ref would publish that ref's code under the tag.
+      - name: Check that the dispatched ref is the release tag
+        if: ${{ inputs.tag != 'dry-run' }}
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "::error::dispatched on $GITHUB_REF, but publishing $TAG needs --ref $TAG"
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -294,6 +304,16 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      # --clobber below may only replace assets a failed attempt left on the draft; a re-run or a
+      # second dispatch must never rewrite the tarball or sha256.sum of a published release.
+      - name: Check that the release is still a draft
+        env:
+          NEEDS_PLAN_OUTPUTS_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          if [ "$(gh release view "$NEEDS_PLAN_OUTPUTS_TAG" --json isDraft -q .isDraft)" != true ]; then
+            echo "::error::release $NEEDS_PLAN_OUTPUTS_TAG is not a draft; refusing to replace its assets"
+            exit 1
+          fi
       - name: Install cached dist
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -342,7 +362,8 @@ jobs:
           NEEDS_PLAN_OUTPUTS_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           # If we're editing a release in place, we need to upload things ahead of time
-          # --clobber lets a re-run of this job replace assets a failed attempt already uploaded.
+          # --clobber lets a re-run of this job replace assets a failed attempt already uploaded;
+          # the draft check above keeps it off published releases.
           gh release upload --clobber "${NEEDS_PLAN_OUTPUTS_TAG}" artifacts/*
 
           gh release edit "${NEEDS_PLAN_OUTPUTS_TAG}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --draft=false
