@@ -176,7 +176,13 @@ fn patch(
 ) -> Result<(Workflow, Vec<Finding>), String> {
     let patched = apply_yaml_patches(&current.document, std::slice::from_ref(&proposal.patch))
         .map_err(|error| error.to_string())?;
-    let next = Workflow::parse(patched.source().to_owned())?;
+    let mut source = patched.source().to_owned();
+    if matches!(proposal.change, ChangeKind::Add)
+        && let Some(moved) = after_trailing_whitespace(current.document.source(), &source)
+    {
+        source = moved;
+    }
+    let next = Workflow::parse(source)?;
     let after = validate_change(current, &next, finding, proposal, before, settings, file)?;
     Ok((next, after))
 }
@@ -259,6 +265,31 @@ fn validate_change(
     Ok(new_findings)
 }
 
+/// yamlpatch adds block lines right after the last value, before that line's trailing spaces,
+/// which then end the added line instead. This moves such an insertion to the next line
+/// boundary, so the existing line keeps its bytes.
+fn after_trailing_whitespace(before: &str, after: &str) -> Option<String> {
+    let length = after.len().checked_sub(before.len())?;
+    let at = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let rest = before.get(at..)?;
+    let lines = after.get(at..at + length)?.strip_prefix('\n')?;
+    let line_end = rest.find('\n')?;
+    let trailing = rest[..line_end].bytes().all(|byte| matches!(byte, b' ' | b'\t'));
+    if line_end == 0 || !trailing || after[at + length..] != *rest {
+        return None;
+    }
+    let boundary = at + line_end + 1;
+    Some(format!(
+        "{}{lines}\n{}",
+        &before[..boundary],
+        &before[boundary..]
+    ))
+}
+
 /// `end` without the blank and comment lines that close `source[start..end]`: the parser counts
 /// comments after a block mapping as part of its last node.
 fn content_end(source: &str, start: usize, mut end: usize) -> usize {
@@ -288,12 +319,22 @@ fn inserts_only(before: &str, after: &str, node: std::ops::Range<usize>) -> bool
         .zip(new.iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
-    // When the insertion repeats its surroundings, it can start anywhere in `lowest..=prefix`.
+    // When the insertion repeats its surroundings, it can start anywhere in `lowest..=highest`.
     let lowest = (old.len() - suffix).max(node.end.saturating_sub(length));
-    let start = prefix.min(node.start);
-    if prefix + suffix < old.len() || start < lowest {
+    let highest = prefix.min(node.start);
+    if prefix + suffix < old.len() || highest < lowest {
         return false;
     }
+    // Added lines must be whole lines, so every line around them keeps its bytes.
+    let start = match new[highest..highest + length].contains(&b'\n') {
+        false => highest,
+        true => match (lowest..=highest)
+            .find(|&at| (at == 0 || new[at - 1] == b'\n') && new[at + length - 1] == b'\n')
+        {
+            Some(at) => at,
+            None => return false,
+        },
+    };
     let mut commas = 0;
     new[start..node.start]
         .iter()

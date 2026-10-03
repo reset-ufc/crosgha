@@ -511,6 +511,38 @@ fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
     assert_eq!(fixed_mixed, fixed_mixed_expected);
 }
 
+/// Trailing spaces after the node a key is added to stay on their own line: the added lines go
+/// between whole lines, so every existing line stays byte for byte.
+#[test]
+fn added_lines_leave_trailing_whitespace_on_its_line() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("crosgha-trailing-{unique}.yml"));
+    let source = "on: push\npermissions: {}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \
+                  timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@v4\n        \
+                  with:\n          fetch-depth: 0 \t \n      - run: make\n";
+    fs::write(&path, source).unwrap();
+    let output = bin()
+        .args(["--fix", "--offline", "--no-config", "-f", "json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let fixed = fs::read_to_string(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["fixes"][0]["status"], "applied", "{report:#}");
+    assert_eq!(
+        fixed,
+        source.replace(
+            "0 \t \n",
+            "0 \t \n          persist-credentials: false\n"
+        )
+    );
+}
+
 /// A fix is never written through a symbolic link, but a link with nothing to fix is fine and
 /// the regular files next to it are still fixed.
 #[cfg(unix)]
