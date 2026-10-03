@@ -19,3 +19,16 @@ jobs:
       - run: ./legacy-tool
         env:
           ACTIONS_ALLOW_UNSECURE_COMMANDS: 'true' # expect: deprecated-command
+      # The runner reads the variable with .NET bool.TryParse: `True` in any case, nothing else.
+      - run: ./legacy-tool --upper
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: 'TRUE' # expect: deprecated-command
+      - run: ./legacy-tool --expression
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: ${{ 'true' }} # expect: deprecated-command
+      - run: ./legacy-tool --spelled-out
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: FALSE
+      - run: ./legacy-tool --not-a-boolean
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: 'yes'

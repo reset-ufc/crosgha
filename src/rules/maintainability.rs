@@ -630,10 +630,14 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     }
     for (route, location, scope) in scopes {
         for (variable, message) in OPT_OUTS {
-            // Only `true` opts out; `false` keeps the default.
+            // The runner reads it with .NET `bool.TryParse`, which accepts `True` in any case
+            // (`ActionCommandManager.cs` in actions/runner at
+            // d7bc179baf11a02110b46cfbbc4040f74ac3f60a); an expression may evaluate to it.
             let value = scope.get("env").and_then(|env| env.get(variable));
             if matches!(value, Some(Value::Bool(true)))
-                || value.and_then(Value::as_str) == Some("true")
+                || value.and_then(Value::as_str).is_some_and(|value| {
+                    value.trim().eq_ignore_ascii_case("true") || value.contains("${{")
+                })
             {
                 findings.push(common::finding(
                     workflow,
