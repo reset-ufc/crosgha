@@ -222,12 +222,41 @@ pub fn broad_trigger(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 
 // Scheduled runs carry the repository object in `github.event` since
 // https://github.blog/changelog/2022-09-27-github-actions-additional-information-available-in-github-event-payload-for-scheduled-workflow-runs/
+/// Context paths (and their prefixes, as in `github.repository_owner`) that keep a job in one
+/// repository when compared with `==`; `!=` would run it only in forks.
 const FORK_GUARDS: &[&str] = &[
     "github.repository",
-    "github.event.repository.fork",
     "github.event.repository.full_name",
     "github.event.repository.owner",
 ];
+const FORK_FLAG: &str = "github.event.repository.fork";
+
+/// Whether `condition` runs the job only in its own repository. Context names are
+/// case-insensitive: https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+fn guards_fork(condition: &str) -> bool {
+    let condition = condition.to_ascii_lowercase();
+    let is_path = |byte: u8| byte.is_ascii_alphanumeric() || b"_-.".contains(&byte);
+    condition.match_indices("github.").any(|(start, _)| {
+        if start > 0 && is_path(condition.as_bytes()[start - 1]) {
+            return false;
+        }
+        let end = condition[start..]
+            .bytes()
+            .position(|byte| !is_path(byte))
+            .map_or(condition.len(), |length| start + length);
+        let path = &condition[start..end];
+        let before = condition[..start].trim_end();
+        let after = condition[end..].trim_start();
+        if path == FORK_FLAG {
+            before.ends_with('!') && !before.ends_with("!=")
+                || after.starts_with("== false")
+                || after.starts_with("!= true")
+        } else {
+            FORK_GUARDS.iter().any(|guard| path.starts_with(guard))
+                && (after.starts_with("==") || before.ends_with("=="))
+        }
+    })
+}
 
 /// "If a job fails or is skipped, all jobs that need it are skipped unless the jobs use a
 /// conditional expression that causes the job to continue."
@@ -244,12 +273,16 @@ fn fork_guarded(
     }
     visited.push(job.name.to_owned());
     let condition = job.get("if").and_then(Value::as_str).unwrap_or("");
-    if FORK_GUARDS.iter().any(|guard| condition.contains(guard)) {
+    if guards_fork(condition) {
         return true;
     }
+    // A status function replaces the implicit `success()`; `success() || ...` still runs when the
+    // needed job was skipped.
+    let lowered = condition.to_ascii_lowercase();
     if ["always()", "failure()", "cancelled()"]
         .iter()
-        .any(|status| condition.contains(status))
+        .any(|status| lowered.contains(status))
+        || lowered.contains("success()") && lowered.contains("||")
     {
         return false;
     }
