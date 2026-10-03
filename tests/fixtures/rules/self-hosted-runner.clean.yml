@@ -7,3 +7,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo a
+  h:
+    strategy:
+      matrix:
+        runner: [[ubuntu-24.04], [windows-2025]]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - run: echo h

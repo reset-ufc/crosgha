@@ -41,3 +41,29 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo g
+  h:
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, [self-hosted, linux]]
+    runs-on: ${{ matrix.runner }} # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo h
+  i:
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04]
+        include:
+          - runner: [self-hosted, gpu]
+    runs-on: ${{ matrix.runner }} # expect: self-hosted-runner
+    timeout-minutes: 10
+    steps:
+      - run: echo i
+  j:
+    strategy:
+      matrix:
+        runner: [[ubuntu-24.04], [windows-2025]]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - run: echo j

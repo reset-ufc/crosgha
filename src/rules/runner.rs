@@ -107,7 +107,14 @@ fn matrix_values<'a>(matrix: Option<&'a Value>, key: &str) -> Vec<&'a str> {
         .into_iter()
         .flatten()
         .filter_map(|entry| entry.get(key));
-    direct.chain(include).filter_map(Value::as_str).collect()
+    // A matrix value may itself be a list of labels, as in `runner: [[self-hosted, linux]]`.
+    direct
+        .chain(include)
+        .flat_map(|value| match value {
+            Value::Sequence(labels) => labels.iter().filter_map(Value::as_str).collect(),
+            other => other.as_str().into_iter().collect::<Vec<_>>(),
+        })
+        .collect()
 }
 
 /// `rules.self-hosted-runner.config.labels`: custom labels of self-hosted runners, with `*`
