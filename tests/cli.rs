@@ -469,9 +469,11 @@ fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
     assert_eq!(fixed_crlf, expected.replace('\n', "\r\n"));
 }
 
+/// A fix is never written through a symbolic link, but a link with nothing to fix is fine and
+/// the regular files next to it are still fixed.
 #[cfg(unix)]
 #[test]
-fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {
+fn fixes_regular_workflows_but_refuses_to_write_through_symlinks() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -479,28 +481,74 @@ fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {
     let root = std::env::temp_dir().join(format!("crosgha-links-{}-{unique}", std::process::id()));
     let scanned = root.join("workflows");
     fs::create_dir_all(&scanned).unwrap();
-    let target = root.join("shared.yml");
-    fs::copy(fixture("checkout-credentials.before.yml"), &target).unwrap();
+    let (shared, clean) = (root.join("shared.yml"), root.join("clean.yml"));
+    fs::copy(fixture("checkout-credentials.before.yml"), &shared).unwrap();
+    fs::copy(fixture("workflows/ci.yml"), &clean).unwrap();
     fs::copy(fixture("workflows/ci.yml"), scanned.join("ci.yml")).unwrap();
-    std::os::unix::fs::symlink(&target, scanned.join("linked.yml")).unwrap();
-    let before = fs::read(&target).unwrap();
+    let real = scanned.join("real.yml");
+    fs::copy(fixture("checkout-credentials.before.yml"), &real).unwrap();
+    std::os::unix::fs::symlink(&shared, scanned.join("linked.yml")).unwrap();
+    std::os::unix::fs::symlink(&clean, scanned.join("clean-link.yml")).unwrap();
+    let before = fs::read(&shared).unwrap();
 
     let scan = bin().arg(&scanned).output().unwrap();
     let fix = bin().arg("--fix").arg(&scanned).output().unwrap();
-    let after = fs::read(&target).unwrap();
+    let after = fs::read(&shared).unwrap();
+    let fixed = fs::read_to_string(&real).unwrap();
+    let still_linked = fs::symlink_metadata(scanned.join("linked.yml"))
+        .unwrap()
+        .is_symlink();
+    let clean_fix = bin()
+        .arg("--fix")
+        .arg(scanned.join("clean-link.yml"))
+        .output()
+        .unwrap();
     fs::remove_dir_all(&root).unwrap();
 
     assert_eq!(scan.status.code(), Some(1));
     let stdout = String::from_utf8(scan.stdout).unwrap();
-    assert!(stdout.contains("Checked 2 workflow files: 3 findings"));
-    assert!(stdout.contains("linked.yml"));
-    assert_eq!(fix.status.code(), Some(2));
     assert!(
-        String::from_utf8(fix.stderr)
-            .unwrap()
-            .contains("refusing to replace a symbolic link")
+        stdout.contains("Checked 4 workflow files: 6 findings"),
+        "{stdout}"
     );
+    assert!(stdout.contains("linked.yml"));
+
+    assert_eq!(fix.status.code(), Some(2));
+    let stderr = String::from_utf8(fix.stderr).unwrap();
+    assert_eq!(
+        stderr
+            .matches("refusing to replace a symbolic link")
+            .count(),
+        1,
+        "{stderr}"
+    );
+    assert!(stderr.contains("linked.yml"), "{stderr}");
     assert_eq!(before, after);
+    assert!(still_linked);
+    assert_eq!(
+        fixed,
+        fs::read_to_string(fixture("checkout-credentials.after.yml")).unwrap()
+    );
+    let stdout = String::from_utf8(fix.stdout).unwrap();
+    assert!(
+        stdout.contains("Fixed 3 findings in 1 workflow file."),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches("[persist-credentials]: refusing to replace a symbolic link")
+            .count(),
+        3,
+        "{stdout}"
+    );
+    assert!(stdout.contains("Remaining: 3 findings"), "{stdout}");
+
+    assert_eq!(
+        clean_fix.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&clean_fix.stderr)
+    );
 }
 
 #[test]

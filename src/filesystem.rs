@@ -119,6 +119,10 @@ pub fn read(path: &Path, fix: bool) -> Result<String, String> {
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
+    // Renaming over a link would replace it with a regular file and leave its target unfixed.
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err("refusing to replace a symbolic link".to_owned());
+    }
     let bom = fs::read(path)
         .is_ok_and(|old| old.starts_with(BOM.encode_utf8(&mut [0; 3]).as_bytes()))
         && !source.starts_with(BOM);

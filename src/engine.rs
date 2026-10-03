@@ -51,7 +51,8 @@ pub fn inspect_files(
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        filesystem::read(path, apply_fixes)
+        // A symbolic link is refused only if a fix has to be written through it.
+        filesystem::read(path, false)
             .and_then(|source| inspect(source, apply_fixes, settings, &file))
     })
 }
