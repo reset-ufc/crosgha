@@ -403,15 +403,10 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 "text around `${{ }}` makes the condition always true".to_owned(),
                 Some("unsound-condition"),
             )),
-            Value::String(text)
-                if (text.contains("github.actor") || text.contains("github.triggering_actor"))
-                    && text.contains("[bot]") =>
-            {
-                Some((
-                    "actor name checks can be spoofed by a bot-triggered event".to_owned(),
-                    Some("bot-conditions"),
-                ))
-            }
+            Value::String(text) if trusts_bot_actor(text) => Some((
+                "actor name checks can be spoofed by a bot-triggered event".to_owned(),
+                Some("bot-conditions"),
+            )),
             _ => None,
         };
         if let Some((message, concept)) = problem {
@@ -421,6 +416,84 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
+}
+
+/// Whether `condition` runs something because the actor is a bot: `==`, `contains`,
+/// `startsWith`, or `endsWith` matching `github.actor` or `github.triggering_actor` with a
+/// `[bot]` name. A spoofed actor fails a `!=` or negated check, which only skips the work.
+fn trusts_bot_actor(condition: &str) -> bool {
+    let text = condition.to_ascii_lowercase();
+    ["github.actor", "github.triggering_actor"]
+        .iter()
+        .flat_map(|actor| {
+            text.match_indices(actor)
+                .map(|(at, actor)| (at, at + actor.len()))
+        })
+        .filter(|&(_, end)| {
+            !text[end..]
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+        .any(|(start, end)| {
+            let before = text[..start].trim_end();
+            let after = text[end..].trim_start();
+            if let Some(operand) = after.strip_prefix("==") {
+                return leading_literal(operand.trim_start()).contains("[bot]");
+            }
+            if let Some(operand) = before.strip_suffix("==") {
+                let operand = operand.trim_end();
+                let literal = operand
+                    .strip_suffix('\'')
+                    .and_then(|rest| rest.rfind('\'').map(|open| &rest[open..]));
+                return literal.is_some_and(|literal| literal.contains("[bot]"));
+            }
+            if after.starts_with("!=") || before.ends_with("!=") {
+                return false;
+            }
+            enclosing_call(&text, start).is_some_and(|(name, call, negated)| {
+                ["contains", "startswith", "endswith"].contains(&name)
+                    && !negated
+                    && call.contains("[bot]")
+            })
+        })
+}
+
+/// The single-quoted literal that `text` starts with, or "" when it starts with something else.
+fn leading_literal(text: &str) -> &str {
+    text.strip_prefix('\'')
+        .and_then(|rest| rest.find('\'').map(|close| &rest[..close]))
+        .unwrap_or("")
+}
+
+/// Name, full text, and `!` negation of the innermost function call around `text[at]`.
+fn enclosing_call(text: &str, at: usize) -> Option<(&str, &str, bool)> {
+    let mut depth = 0;
+    let open = text[..at].char_indices().rev().find_map(|(index, char)| {
+        match char {
+            ')' => depth += 1,
+            '(' if depth == 0 => return Some(index),
+            '(' => depth -= 1,
+            _ => {}
+        }
+        None
+    })?;
+    let mut depth = 0;
+    let close = text[open..].char_indices().find_map(|(index, char)| {
+        match char {
+            '(' => depth += 1,
+            ')' if depth == 1 => return Some(open + index),
+            ')' => depth -= 1,
+            _ => {}
+        }
+        None
+    })?;
+    let head = text[..open].trim_end();
+    let name_start = head
+        .rfind(|char: char| !(char.is_ascii_alphanumeric() || char == '_'))
+        .map_or(0, |index| index + 1);
+    let negated = head[..name_start].trim_end().ends_with('!');
+    Some((&head[name_start..], &text[name_start..=close], negated))
 }
 
 fn single_expression(text: &str) -> bool {

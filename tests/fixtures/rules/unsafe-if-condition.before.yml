@@ -20,3 +20,16 @@ jobs:
         run: echo e
       - if: github.event.pull_request.user.login == 'dependabot[bot]'
         run: echo f
+      - if: ${{ 'Dependabot[bot]' == GitHub.Actor }} # expect: unsafe-if-condition
+        run: echo g
+      - if: contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.triggering_actor) # expect: unsafe-if-condition
+        run: echo h
+      - if: github.event_name == 'pull_request' && endsWith(github.actor, '[bot]') # expect: unsafe-if-condition
+        run: echo i
+      # A spoofed bot name fails these checks, so it can only skip the step.
+      - if: github.actor != 'dependabot[bot]'
+        run: echo j
+      - if: ${{ !contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.actor) }}
+        run: echo k
+      - if: github.actor == 'octocat' && github.event.pull_request.user.login == 'dependabot[bot]'
+        run: echo l
