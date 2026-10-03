@@ -4,7 +4,16 @@
 set -euo pipefail
 
 msg_file="$1"
-first_line="$(head -n1 "$msg_file")"
+# Git runs this hook before dropping blank and comment lines, so the subject it stores is the
+# first line that is neither. `auto` and multi-character values fall back to `#`.
+comment_char="$(git config core.commentChar || true)"
+[[ ${#comment_char} == 1 ]] || comment_char='#'
+first_line=""
+while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "${line//[[:space:]]/}" || "$line" == "$comment_char"* ]] && continue
+    first_line="$line"
+    break
+done < "$msg_file"
 
 # Messages git writes itself: merges, reverts, and `commit --fixup/--squash` markers that
 # `rebase --autosquash` folds away.
