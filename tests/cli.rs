@@ -1537,6 +1537,13 @@ fn sarif_uses_utf16_columns_encoded_uris_and_a_workflow_location_for_repositorie
     };
     let sarif = scan("sarif");
     let annotations = scan("github");
+    // A file outside the working directory has no relative URI, so it gets a `file:` URI.
+    let outside = bin()
+        .current_dir(fixture("workflows"))
+        .args(["--offline", "--no-config", "--fail-on", "none", "-f", "sarif"])
+        .arg(workflows.join("ci build#1.yml"))
+        .output()
+        .unwrap();
     fs::remove_dir_all(&repo).unwrap();
 
     let sarif: serde_json::Value = serde_json::from_str(&sarif).unwrap();
@@ -1581,6 +1588,16 @@ fn sarif_uses_utf16_columns_encoded_uris_and_a_workflow_location_for_repositorie
     assert!(
         annotations.contains("file=.github/workflows/ci build#1.yml,line=6,"),
         "{annotations}"
+    );
+
+    let outside: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
+    assert_eq!(
+        outside["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+            ["uri"],
+        format!(
+            "file://{}/.github/workflows/ci%20build%231.yml",
+            repo.display()
+        )
     );
 }
 

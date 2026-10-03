@@ -734,10 +734,15 @@ fn relative(path: &Path) -> String {
 }
 
 /// A URI reference for `path` with every byte outside RFC 3986's unreserved characters and `/`
-/// percent-encoded, so no character in a file name is read as URI syntax.
+/// percent-encoded, so no character in a file name is read as URI syntax. A path outside the
+/// working directory stays absolute and becomes a `file:` URI (RFC 8089).
 fn artifact_uri(path: &Path) -> String {
-    let mut uri = String::new();
-    for byte in relative(path).bytes() {
+    let path = relative(path);
+    let mut uri = match path.starts_with('/') {
+        true => "file://".to_owned(),
+        false => String::new(),
+    };
+    for byte in path.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 uri.push(char::from(byte));
