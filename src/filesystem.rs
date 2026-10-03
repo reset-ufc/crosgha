@@ -125,13 +125,25 @@ pub fn read(path: &Path, fix: bool) -> Result<String, String> {
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
+    replace(path, source, None)
+}
+
+/// `write_verified`, unless `path` no longer holds `read`, the content the fix was computed from.
+pub fn write_unchanged(path: &Path, source: &str, read: &str) -> Result<(), String> {
+    replace(path, source, Some(read))
+}
+
+fn replace(path: &Path, source: &str, read: Option<&str>) -> Result<(), String> {
     // Renaming over a link would replace it with a regular file and leave its target unfixed.
     if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err("refusing to replace a symbolic link".to_owned());
     }
-    let bom = fs::read(path)
-        .is_ok_and(|old| old.starts_with(BOM.encode_utf8(&mut [0; 3]).as_bytes()))
-        && !source.starts_with(BOM);
+    let bom = match read {
+        Some(read) => read.starts_with(BOM),
+        None => {
+            fs::read(path).is_ok_and(|old| old.starts_with(BOM.encode_utf8(&mut [0; 3]).as_bytes()))
+        }
+    } && !source.starts_with(BOM);
     let name = path
         .file_name()
         .ok_or("workflow has no filename")?
@@ -141,24 +153,33 @@ pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
         ".{name}.crosgha-{}-{sequence}.tmp",
         std::process::id()
     ));
-    let result = (|| -> Result<(), std::io::Error> {
+    let cannot = |error: std::io::Error| format!("cannot write verified fix: {error}");
+    let result = (|| -> Result<(), String> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&temporary)?;
-        file.set_permissions(fs::metadata(path)?.permissions())?;
+            .open(&temporary)
+            .map_err(cannot)?;
+        file.set_permissions(fs::metadata(path).map_err(cannot)?.permissions())
+            .map_err(cannot)?;
         if bom {
-            write!(file, "{BOM}")?;
+            write!(file, "{BOM}").map_err(cannot)?;
         }
-        file.write_all(source.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)?;
-        Ok(())
+        file.write_all(source.as_bytes()).map_err(cannot)?;
+        file.sync_all().map_err(cannot)?;
+        // An edit saved during the scan would be lost. An edit between this check and the rename
+        // still is; only a lock every editor honors could close that window.
+        if let Some(read) = read
+            && fs::read(path).map_err(cannot)? != read.as_bytes()
+        {
+            return Err("file changed since it was read".to_owned());
+        }
+        fs::rename(&temporary, path).map_err(cannot)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    result.map_err(|error| format!("cannot write verified fix: {error}"))
+    result
 }
 
 /// The `.github` directory that owns a scanned `.github/workflows` directory or repository root.

@@ -94,7 +94,8 @@ unchanged under `--fix` and remain visible in the report.
    the line before it.
 4. Prepare all files before writing any file. Write each changed file through
    a same-directory temporary file, preserving permissions and renaming it
-   over the original. A symbolic link is never replaced. A failed write is
+   over the original. A symbolic link is never replaced, nor a file whose content changed
+   since it was read (an edit saved during the scan). A failed write is
    reported, exits with status 2, and leaves the other files fixed; there is no
    cross-file transaction.
 

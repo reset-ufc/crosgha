@@ -383,7 +383,12 @@ pub fn run() -> ExitCode {
             };
             file.unwritten = match &blocked {
                 Some(reason) => Some(reason.clone()),
-                None => filesystem::write_verified(&file.path, &outcome.source).err(),
+                None => filesystem::write_unchanged(
+                    &file.path,
+                    &outcome.source,
+                    &file.inspection.source,
+                )
+                .err(),
             };
             if blocked.is_none()
                 && let Some(error) = &file.unwritten

@@ -511,6 +511,68 @@ fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
     assert_eq!(fixed_mixed, fixed_mixed_expected);
 }
 
+/// A workflow saved while the scan runs keeps the new content: its fix was computed from the old
+/// one, so it is reported as not written and the run fails. The edit lands while online checks
+/// wait for the API, which answers every request with 404.
+#[test]
+fn a_workflow_edited_during_the_scan_is_not_overwritten() {
+    use std::io::{BufRead, BufReader, Write};
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("crosgha-edited-{unique}.yml"));
+    let source = "on: push\npermissions: {}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \
+                  timeout-minutes: 5\n    steps:\n      \
+                  - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0\n";
+    let edited = format!("{source}      - run: make\n");
+    fs::write(&path, source).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let api = format!("http://{}", listener.local_addr().unwrap());
+    let (target, content) = (path.clone(), edited.clone());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 0 && line != "\r\n" {
+                line.clear();
+            }
+            fs::write(&target, &content).unwrap();
+            let body = r#"{"message":"Not Found"}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    let output = bin()
+        .args(["--fix", "--no-config", "-f", "json", "--gh-token", "t"])
+        .args(["--gh-hostname", &api])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let after = fs::read_to_string(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(after, edited);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("file changed since it was read"),
+        "{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let fix = &report["fixes"][0];
+    assert_eq!(fix["rule"], "persist-credentials", "{report:#}");
+    assert_eq!(fix["status"], "not-written", "{report:#}");
+    assert_eq!(
+        fix["reason"], "file changed since it was read",
+        "{report:#}"
+    );
+}
+
 /// Fixing one of two equal checkout steps makes them differ until the other is fixed too, which
 /// clears and restores `duplicated-steps` (pedantic and auditor only). The fixes must not depend
 /// on the persona.
