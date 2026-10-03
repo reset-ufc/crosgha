@@ -324,8 +324,10 @@ pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
             // A trailing `\` or `|` continues the command on the next line.
-            let joined = script.replace("\\\n", " ").replace("|\n", "| ");
-            if joined.lines().any(pipes_download_to_interpreter) {
+            let joined = without_comments(script)
+                .replace("\\\n", " ")
+                .replace("|\n", "| ");
+            if joined.lines().any(pipes_download_to_interpreter) || runs_downloaded_file(&joined) {
                 findings.push(common::finding(
                     workflow,
                     &REMOTE_SCRIPT,
@@ -339,40 +341,92 @@ pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-/// Interpreters and the short options that make them run code from an argument, leaving stdin as
-/// data (`bash -c`, `python3 -c`/`-m`, `perl -ne`, `node -e`/`-p`). `bash -s` still runs stdin.
-const INTERPRETERS: &[(&str, &[char])] = &[
-    ("sh", &['c']),
-    ("bash", &['c']),
-    ("zsh", &['c']),
-    ("dash", &['c']),
-    ("ksh", &['c']),
-    ("python", &['c', 'm']),
-    ("python3", &['c', 'm']),
-    ("perl", &['e', 'E']),
-    ("ruby", &['e']),
-    ("node", &['e', 'p']),
+/// `script` without shell comments: a `#` that starts a word outside quotes ends the line.
+// ponytail: quotes are tracked per line, so a comment inside a multi-line string is dropped too.
+fn without_comments(script: &str) -> String {
+    script
+        .lines()
+        .map(|line| {
+            let mut quote = None;
+            let mut previous = ' ';
+            for (index, character) in line.char_indices() {
+                match (quote, character) {
+                    (None, '"' | '\'') => quote = Some(character),
+                    (Some(open), _) if open == character => quote = None,
+                    (None, '#') if previous.is_whitespace() => return &line[..index],
+                    _ => {}
+                }
+                previous = character;
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Interpreters, the short options that make them run code from an argument and leave stdin as
+/// data (`bash -c`, `python3 -c`/`-m`, `perl -ne`, `node -e`/`-p`; `bash -s` still runs stdin),
+/// and the short options whose value fills the rest of the word, as in `perl -I/usr/share/perl5`.
+/// From bash(1), https://docs.python.org/3/using/cmdline.html, perlrun(1), ruby(1), and
+/// https://nodejs.org/api/cli.html.
+const INTERPRETERS: &[(&str, &[char], &[char])] = &[
+    ("sh", &['c'], &['o', 'O']),
+    ("bash", &['c'], &['o', 'O']),
+    ("zsh", &['c'], &['o', 'O']),
+    ("dash", &['c'], &['o', 'O']),
+    ("ksh", &['c'], &['o', 'O']),
+    ("python", &['c', 'm'], &['W', 'X']),
+    ("python3", &['c', 'm'], &['W', 'X']),
+    (
+        "perl",
+        &['e', 'E'],
+        &['0', 'C', 'd', 'D', 'i', 'I', 'l', 'm', 'M', 'x', 'V'],
+    ),
+    (
+        "ruby",
+        &['e'],
+        &['0', 'C', 'E', 'F', 'i', 'I', 'r', 'T', 'W', 'x'],
+    ),
+    ("node", &['e', 'p'], &['r', 'C']),
 ];
+
+/// The interpreter a command runs and whether its options make it run code from an argument.
+fn interpreter(command: &str) -> Option<(&'static str, bool, Vec<&str>)> {
+    let mut words = command
+        .split_whitespace()
+        .map(|word| word.trim_matches(['"', '\'']))
+        .skip_while(|word| *word == "sudo" || word.starts_with('-') || word.contains('='));
+    let program = words.next()?;
+    let program = program.rsplit('/').next().unwrap_or(program);
+    let (name, code_options, valued) = INTERPRETERS.iter().find(|(name, ..)| *name == program)?;
+    let mut arguments = Vec::new();
+    let mut runs_argument = false;
+    for word in words.by_ref() {
+        if word == "--" || !word.starts_with('-') {
+            arguments.push(word);
+            break;
+        }
+        if matches!(word, "--eval" | "--print") {
+            runs_argument = true;
+        } else if !word.starts_with("--") {
+            // Only the option's own letters: a valued option takes the rest of the word.
+            for letter in word.chars().skip(1) {
+                if code_options.contains(&letter) {
+                    runs_argument = true;
+                }
+                if valued.contains(&letter) {
+                    break;
+                }
+            }
+        }
+    }
+    arguments.extend(words);
+    Some((name, runs_argument, arguments))
+}
 
 /// Whether the command in `segment` is an interpreter that executes its stdin.
 fn runs_stdin(segment: &str) -> bool {
-    let mut words = segment
-        .split_whitespace()
-        .skip_while(|word| *word == "sudo" || word.starts_with('-'));
-    let program = words.next().unwrap_or("");
-    let Some((_, code_options)) = INTERPRETERS
-        .iter()
-        .find(|(name, _)| *name == program.rsplit('/').next().unwrap_or(program))
-    else {
-        return false;
-    };
-    !words.take_while(|word| *word != "--").any(|word| {
-        matches!(word, "--eval" | "--print")
-            || word.len() > 1
-                && word.starts_with('-')
-                && !word.starts_with("--")
-                && word.contains(*code_options)
-    })
+    interpreter(segment).is_some_and(|(_, runs_argument, _)| !runs_argument)
 }
 
 fn pipes_download_to_interpreter(line: &str) -> bool {
@@ -397,6 +451,120 @@ fn pipes_download_to_interpreter(line: &str) -> bool {
             return true;
         }
         downloaded = downloaded || downloads(segment);
+    }
+    false
+}
+
+/// Checksum and signature tools; running one after a download counts as its integrity check.
+const VERIFIERS: &[&str] = &[
+    "sha256sum",
+    "sha512sum",
+    "shasum",
+    "gpg",
+    "cosign",
+    "minisign",
+];
+
+/// Short options of curl(1) and wget(1) whose value is the next word or the rest of the word.
+const CURL_VALUED: &[char] = &[
+    'A', 'b', 'c', 'C', 'd', 'D', 'e', 'E', 'F', 'H', 'K', 'm', 'P', 'Q', 'r', 't', 'T', 'u', 'U',
+    'w', 'x', 'X', 'y', 'Y', 'z',
+];
+const WGET_VALUED: &[char] = &[
+    'a', 'A', 'B', 'D', 'e', 'i', 'I', 'l', 'o', 'P', 'Q', 'R', 't', 'T', 'U', 'w', 'X',
+];
+
+/// File names a `curl` or `wget` command saves: curl's `-o file` and `-O` (the URL's last
+/// segment), and wget's `-O file` or, without it, the URL's last segment. `-O -` is stdout.
+fn saved_files(words: &[&str]) -> Vec<String> {
+    let (output, remote, valued) = match words.first() {
+        Some(&"curl") => ('o', Some('O'), CURL_VALUED),
+        Some(&"wget") => ('O', None, WGET_VALUED),
+        _ => return Vec::new(),
+    };
+    let url_name = || {
+        words
+            .iter()
+            .find(|word| word.contains("://"))
+            .and_then(|url| url.split(['?', '#']).next())
+            .and_then(|url| url.rsplit('/').next())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+    };
+    let mut files = Vec::new();
+    let mut named = false;
+    let mut rest = words[1..].iter();
+    while let Some(word) = rest.next() {
+        let value = match *word {
+            "--output" | "--output-document" => rest.next().copied(),
+            "--remote-name" if remote.is_some() => Some(""),
+            _ => match word.strip_prefix("--output-document=") {
+                Some(file) => Some(file),
+                None if word.starts_with('-') && !word.starts_with("--") => {
+                    let mut found = None;
+                    for (index, letter) in word.char_indices().skip(1) {
+                        if Some(letter) == remote {
+                            found = Some("");
+                        } else if letter == output {
+                            let attached = &word[index + 1..];
+                            found = match attached.is_empty() {
+                                true => rest.next().copied(),
+                                false => Some(attached),
+                            };
+                            break;
+                        } else if valued.contains(&letter) {
+                            break;
+                        }
+                    }
+                    found
+                }
+                None => None,
+            },
+        };
+        match value {
+            None => continue,
+            Some("-") => {}
+            // curl's `-O` saves under the URL's last segment.
+            Some("") => files.extend(url_name()),
+            Some(file) => files.push(file.to_owned()),
+        }
+        named = true;
+    }
+    if !named && words[0] == "wget" {
+        files.extend(url_name());
+    }
+    files
+}
+
+/// Whether a script saves a download to a file and then runs that file before any checksum or
+/// signature tool runs.
+fn runs_downloaded_file(script: &str) -> bool {
+    let name = |path: &str| path.rsplit('/').next().unwrap_or(path).to_owned();
+    let mut downloaded: Vec<String> = Vec::new();
+    for command in script.split(['\n', ';', '&', '|']) {
+        let words: Vec<&str> = command
+            .split_whitespace()
+            .map(|word| word.trim_matches(['"', '\'']))
+            .skip_while(|word| *word == "sudo" || word.starts_with('-') || word.contains('='))
+            .collect();
+        let Some(program) = words.first() else {
+            continue;
+        };
+        if VERIFIERS.contains(&name(program).as_str()) {
+            downloaded.clear();
+            continue;
+        }
+        downloaded.extend(saved_files(&words).iter().map(|file| name(file)));
+        let runs = match interpreter(command) {
+            Some((_, false, arguments)) => arguments.first().map(|script| name(script)),
+            Some((_, true, _)) => None,
+            None if matches!(*program, "source" | ".") => words.get(1).map(|file| name(file)),
+            None if program.contains('/') => Some(name(program)),
+            None => None,
+        };
+        if runs.is_some_and(|file| downloaded.contains(&file)) {
+            return true;
+        }
     }
     false
 }
