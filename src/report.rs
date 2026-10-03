@@ -335,6 +335,7 @@ pub fn rules_json() -> String {
                 "scope": scope,
                 "summary": rule.summary,
                 "equivalents": equivalents(rule),
+                "configurable": rule.configurable,
             })
         })
         .collect();

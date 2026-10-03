@@ -1726,6 +1726,25 @@ fn rule_catalog_as_json_matches_the_text_catalog() {
         .find(|rule| rule["id"] == "script-injection")
         .unwrap();
     assert_eq!(injection["equivalents"][0]["rule"], "template-injection");
+    // README's catalog marks the rules that read `rules.<id>.config` in its last column.
+    let readme =
+        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap();
+    let documented: Vec<(String, bool)> = readme
+        .lines()
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+            (cells.len() == 7 && cells[0].starts_with('`'))
+                .then(|| (cells[0].trim_matches('`').to_owned(), !cells[6].is_empty()))
+        })
+        .collect();
+    let listed: Vec<(String, bool)> = rules
+        .iter()
+        .map(|rule| {
+            let configurable = rule["configurable"].as_bool().expect("configurable");
+            (rule["id"].as_str().unwrap().to_owned(), configurable)
+        })
+        .collect();
+    assert_eq!(documented, listed);
 
     let rejected = bin()
         .args(["--list-rules", "--format", "sarif"])

@@ -78,7 +78,7 @@ struct Args {
     repository: Option<String>,
 
     /// Print every rule with its taxonomy tag, severity, persona, and scope, then exit;
-    /// `--format json` adds each rule's summary and equivalents.
+    /// `--format json` adds each rule's summary, equivalents, and whether it reads a config.
     #[arg(long)]
     list_rules: bool,
 
