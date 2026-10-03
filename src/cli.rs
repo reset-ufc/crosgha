@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -176,7 +177,8 @@ pub fn run() -> ExitCode {
         Ok(found) => {
             let mut workflows: Vec<PathBuf> = found.into_iter().flatten().collect();
             workflows.sort();
-            workflows.dedup();
+            let mut seen = HashSet::new();
+            workflows.retain(|path| seen.insert(filesystem::identity(path)));
             workflows
         }
         Err(error) => {
@@ -235,7 +237,8 @@ pub fn run() -> ExitCode {
         .filter_map(|path| filesystem::github_dir(path))
         .collect();
     github_dirs.sort();
-    github_dirs.dedup();
+    let mut seen = HashSet::new();
+    github_dirs.retain(|github| seen.insert(filesystem::identity(github)));
     // A Dependabot file inside a scanned `.github` is already checked by the repository rules.
     let scanned: Vec<PathBuf> = github_dirs
         .iter()

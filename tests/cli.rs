@@ -763,9 +763,22 @@ fn no_path_the_repository_root_and_github_dir_scan_the_same_workflows() {
     let default = scan(&[]);
     assert!(default.contains("Checked 1 workflow file:"), "{default}");
     assert!(default.contains(".github/dependabot.yml:3:"), "{default}");
+    let absolute = fixture("repos/cooldown/.github/workflows/ci.yml");
+    let absolute = absolute.to_str().unwrap();
     for paths in [&["."][..], &[".github"], &[".github/workflows"]] {
         assert_eq!(scan(paths), default, "{paths:?}");
     }
+    // Overlapping inputs, relative or absolute, report each workflow and `.github` once.
+    let overlapping = scan(&[".", ".github", ".github/workflows", absolute]);
+    assert!(
+        overlapping.contains("Checked 1 workflow file:"),
+        "{overlapping}"
+    );
+    assert_eq!(
+        overlapping.matches("[missing-release-cooldown]").count(),
+        default.matches("[missing-release-cooldown]").count(),
+        "{overlapping}"
+    );
 }
 
 #[test]

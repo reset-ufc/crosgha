@@ -76,6 +76,19 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+/// One key for every spelling of a path (relative, absolute, through `.`), so overlapping inputs
+/// are scanned once. Only the directory is resolved: a symlinked workflow stays its own entry.
+pub fn identity(path: &Path) -> PathBuf {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    match (fs::canonicalize(parent), path.file_name()) {
+        (Ok(parent), Some(name)) => parent.join(name),
+        _ => path.to_path_buf(),
+    }
+}
+
 /// A Dependabot config shares the `.yml` extension but is not a workflow.
 pub fn is_dependabot(path: &Path) -> bool {
     path.is_file()
