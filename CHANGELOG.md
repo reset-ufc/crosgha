@@ -1,5 +1,80 @@
 # Changelog
 
+## [0.12.0](https://github.com/meiazero/crosgha/compare/v0.11.2...v0.12.0) (2026-10-03)
+
+
+### Added
+
+* **cli:** accept zizmor's --pedantic flag and honor FORCE_COLOR ([a980967](https://github.com/meiazero/crosgha/commit/a980967b262c6b6b346e8bc307f4ebdc7cb5530c))
+* **report:** mark configurable rules in the JSON rule catalog ([5e61fb8](https://github.com/meiazero/crosgha/commit/5e61fb878a4a9d127b215ef4cca9a1e5fbe9d49c))
+
+
+### Fixed
+
+* **action:** print error annotations on stdout ([630dac9](https://github.com/meiazero/crosgha/commit/630dac97afe538a199670c10ceea0b9cb825bf69))
+* **cli:** handle stdout write failures in hook and migrate output ([05d207b](https://github.com/meiazero/crosgha/commit/05d207b4a3e178bc9caebb58937714b798a6c39c))
+* **cli:** handle stdout write failures instead of panicking ([442975e](https://github.com/meiazero/crosgha/commit/442975e412150ba80243d956bd4e34b62f021092))
+* **cli:** scan a symlink to another scanned workflow only through its target ([00c350b](https://github.com/meiazero/crosgha/commit/00c350bc786ad5a908020996bef72098c8bd0f5c))
+* **cli:** treat an empty CROSGHA_CONFIG or ZIZMOR_CONFIG as unset ([a9c0876](https://github.com/meiazero/crosgha/commit/a9c0876846d3e0e9328c7cbf790d85587463432a))
+* **cli:** treat any spelling of github.com as the hosted API ([c019f8b](https://github.com/meiazero/crosgha/commit/c019f8bf6619ec6e8042e1f8a594b1236dbe7dbf))
+* **config:** discover the config from the repository root for every input ([253a9c3](https://github.com/meiazero/crosgha/commit/253a9c34313f66643a34dbe36531e5544e97876b))
+* **config:** reject wrong types, unknown keys, and unknown severities ([d6a5b6b](https://github.com/meiazero/crosgha/commit/d6a5b6b657d1bc56476b2f85d4a08e9b9565aa7b))
+* **filesystem:** keep a workflow edited during the scan ([6256797](https://github.com/meiazero/crosgha/commit/6256797c00e87311d0a7088e26377f512866666d))
+* **fix:** add block lines after trailing whitespace, not inside it ([aa8354e](https://github.com/meiazero/crosgha/commit/aa8354e3fbae66437652304e434ed2e310405e19))
+* **fix:** apply fixes of equal steps under every persona ([283184c](https://github.com/meiazero/crosgha/commit/283184cf8ae95de3138d8a15d5f8001d5e546cb3))
+* **fix:** keep each line's break in files with mixed line endings ([ca440e3](https://github.com/meiazero/crosgha/commit/ca440e3988b162ed61b731a465a7bb7dffe411c5))
+* **github:** stop requesting after the token is rejected ([65f7c54](https://github.com/meiazero/crosgha/commit/65f7c5467ffa725ae6cfe680cbd4030d32e4e27f))
+* **hook:** recognize only the exact generated script as crosgha's hook ([f2cbea6](https://github.com/meiazero/crosgha/commit/f2cbea615b3c43650adedb17c81d4c695f4574f0))
+* **hook:** refuse to install into a hooks directory outside the repository ([8658c6b](https://github.com/meiazero/crosgha/commit/8658c6b7cb9dc7fbba8ec3c6e96df0c023ff1aa9))
+* **hook:** reject hook arguments that edit files, skip the scan, or remove the hook ([f3fb0f8](https://github.com/meiazero/crosgha/commit/f3fb0f817f2b5d59f9e4f5e87815fce3fa67e5be))
+* **migrate:** keep shell steps whose arguments carry shell syntax ([ea56563](https://github.com/meiazero/crosgha/commit/ea56563b8bd396c68611f5aaea02276cd1282993))
+* **migrate:** never write a rule key twice into crosgha.yml ([346ef20](https://github.com/meiazero/crosgha/commit/346ef20d6225222b99a80da4d0491aa20075a405))
+* **migrate:** refuse only symlinked workflows that need an edit ([ab6d2eb](https://github.com/meiazero/crosgha/commit/ab6d2eb4dc89dad909994669f406a76452be393b))
+* **migrate:** remove install steps only from jobs that got a crosgha step ([0842ce1](https://github.com/meiazero/crosgha/commit/0842ce1f5078604fb2b0f6e8507256b6b82dc97b))
+* **report:** count columns in characters and omit them on multi-line annotations ([e41d7ae](https://github.com/meiazero/crosgha/commit/e41d7ae0ee9aba34d31513968f195476a8d158f3))
+* **report:** emit file URIs for SARIF paths outside the working directory ([e48d5c4](https://github.com/meiazero/crosgha/commit/e48d5c4d653f23e573b4c88ad095358718f42190))
+* **report:** give repository-wide SARIF results a file location ([5a11daa](https://github.com/meiazero/crosgha/commit/5a11daa34aefff7ba5d14f1514627df64a31b899))
+* **report:** give unapplied fixes the line of their reported finding ([a5920bc](https://github.com/meiazero/crosgha/commit/a5920bc56189ca26f2673ccaa1688e8ba0650b79))
+* **report:** point repository-wide annotations at a workflow file ([bc92d78](https://github.com/meiazero/crosgha/commit/bc92d78300dd3e648c2b31e2a613730c2f83bc22))
+* **report:** report incomplete scans and failed writes as run errors ([4320c78](https://github.com/meiazero/crosgha/commit/4320c78c2e96addb1dad25aeecafff61e100d942))
+* **report:** show line 1 of a BOM file without the BOM ([d93ac6e](https://github.com/meiazero/crosgha/commit/d93ac6e60efeb411222e860f9ae759a09e0d5e03))
+* **rules:** check permission scopes against GitHub's workflow schema ([b66ecce](https://github.com/meiazero/crosgha/commit/b66ecce6beba37f804bb2fd62eea76d613f7953b))
+* **rules:** count setup-node v5 automatic caching as a cache save ([f0c9bf6](https://github.com/meiazero/crosgha/commit/f0c9bf6fbd4526ef185265785bac375100c6ea5a))
+* **rules:** detect pull request fetches behind git global options ([9582c4f](https://github.com/meiazero/crosgha/commit/9582c4fe70b21aa3c62589b99d32bb5ed36a5c0b))
+* **rules:** find the shell behind /usr/bin/env in custom shells ([ef99c4c](https://github.com/meiazero/crosgha/commit/ef99c4c040163d7f2f36785c7509acc5cd3ddd7d))
+* **rules:** ignore bot actor checks negated around their group ([969666c](https://github.com/meiazero/crosgha/commit/969666c6c5c7f97cf4c3c6e2322e67810141c113))
+* **rules:** ignore test conditions and test-tool installs in missing-matrix ([63adbd0](https://github.com/meiazero/crosgha/commit/63adbd03406fe4b0b9101aa99c8dbd75066588ef))
+* **rules:** keep persist-credentials unfixed when the token is needed ([d068552](https://github.com/meiazero/crosgha/commit/d06855295daebb796aca197ca62a84abbeac090d))
+* **rules:** match pull request head refs in index syntax and any case ([7ad57a0](https://github.com/meiazero/crosgha/commit/7ad57a0e85aaae7bfa00b86720e0e99fba8a1c86))
+* **rules:** read conditions and run scripts through shared readers ([2ee5c23](https://github.com/meiazero/crosgha/commit/2ee5c233ae28b94aa38a89a58e7508e1998a4e33))
+* **rules:** read expressions with }} in string literals and spaced indexes ([957856e](https://github.com/meiazero/crosgha/commit/957856e97166118c441e51e025e174747e8cc1a3))
+* **rules:** read persist-credentials true without regard to case ([15ae64a](https://github.com/meiazero/crosgha/commit/15ae64acdb6b72a521d9242ec4ea6612739cdd9b))
+* **rules:** read step ids from index syntax and only from evaluated text ([d7d61f0](https://github.com/meiazero/crosgha/commit/d7d61f0737a120e9496b91dbbb5303919d7df254))
+* **rules:** report unsecure-command opt-outs written as TRUE or an expression ([a426da5](https://github.com/meiazero/crosgha/commit/a426da50fb8e60e10756d032a21da1b4d7b13230))
+* **rules:** require an equality fork guard and stop inheriting it through success() || ([5568bf4](https://github.com/meiazero/crosgha/commit/5568bf403da33b7491f335e07ddfcb505734f26f))
+* **rules:** resolve nested matrix paths in runs-on labels ([f73a682](https://github.com/meiazero/crosgha/commit/f73a6821e27aab342eb5e186af1d81f28f31e251))
+* **rules:** stop reading quotes, option values, and expressions as packages ([f6db932](https://github.com/meiazero/crosgha/commit/f6db932d2395c8a440f44f35d7830ffab932634f))
+* **rules:** stop reporting toJSON of scalar payload fields ([d955ff5](https://github.com/meiazero/crosgha/commit/d955ff5b93f9a3783937f589c71bc523839ebf44))
+* **rules:** stop the tag walk when a page repeats or after 100 pages ([22fd0b0](https://github.com/meiazero/crosgha/commit/22fd0b0e684e1957bbea111f523d5607c795f2f6))
+* **rules:** trace untrusted env values into environment file writes ([e028c67](https://github.com/meiazero/crosgha/commit/e028c67efc9c3b91e4c167eaec135706191b991f))
+* **rules:** track saved remote scripts and read only an option's own letters ([22b69e8](https://github.com/meiazero/crosgha/commit/22b69e8c77905b4b0a1c1e0da4a2d64d1be62a74))
+* **rules:** treat workflow_run display titles and edited text as untrusted ([4ca8e78](https://github.com/meiazero/crosgha/commit/4ca8e7845ea5ae9eb9ea948cacbf45207017fef6))
+* second audit round (persist-credentials fix safety, reports, rules, config, hook) ([d733b12](https://github.com/meiazero/crosgha/commit/d733b12d5f3e2911484eee2ec58d8c7d3983af8d))
+
+
+### Changed
+
+* **config:** validate the config file with serde ([1fdf2a7](https://github.com/meiazero/crosgha/commit/1fdf2a7963198181514ce8dc4ddad77bd31d696c))
+* **fix:** skip the fix pass when no finding proposes a fix ([2c60ab9](https://github.com/meiazero/crosgha/commit/2c60ab9ab5f87d7b1a6b42a9788419f974fd497a))
+* **hook:** recognize every script a release has installed ([f14fe28](https://github.com/meiazero/crosgha/commit/f14fe28affe9bdcd7663dfb5099479533a9b03e4))
+* **report:** decide where findings point before rendering ([64dd333](https://github.com/meiazero/crosgha/commit/64dd333aa35b1ff9e2c5431155d6c2168dda203e))
+
+
+### Documentation
+
+* describe the second audit's behavior changes ([f9b3b93](https://github.com/meiazero/crosgha/commit/f9b3b935f47b6cf6043ef2f292be0d456cfb3097))
+* describe the shared readers and the split test files ([8b0f8e7](https://github.com/meiazero/crosgha/commit/8b0f8e79f05bccabdd917b5614136550c4c48528))
+
 ## [0.11.2](https://github.com/meiazero/crosgha/compare/v0.11.1...v0.11.2) (2026-10-03)
 
 
