@@ -31,7 +31,8 @@ pub fn inspect(
     let workflow = Workflow::parse(source.clone())?;
     let findings = rules::detect_all(&workflow, settings, file)?;
     let local_actions = rules::local_actions(&workflow);
-    let fix = if apply_fixes && !findings.is_empty() {
+    // Without a proposal the fix pass would only scan the same source again.
+    let fix = if apply_fixes && findings.iter().any(|finding| finding.fix.is_some()) {
         Some(fix::apply(workflow, &findings, settings, file)?)
     } else {
         None
