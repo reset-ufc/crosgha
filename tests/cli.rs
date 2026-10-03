@@ -796,6 +796,19 @@ fn zizmor_config_is_discovered_and_honored() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(String::from_utf8(output.stdout).unwrap(), unconfigured);
+        // An empty variable is unset, so the config is discovered.
+        let empty = bin()
+            .args(["--persona", "pedantic", "--offline", "--fail-on", "none"])
+            .env(variable, "")
+            .arg(&workflows)
+            .output()
+            .unwrap();
+        assert!(
+            empty.status.success(),
+            "{variable}: {}",
+            String::from_utf8_lossy(&empty.stderr)
+        );
+        assert_eq!(String::from_utf8(empty.stdout).unwrap(), configured);
     }
     assert_eq!(lines_of(&unconfigured, "unpinned-action"), ["11"]);
     assert!(unconfigured.contains("warning[persist-credentials]"));

@@ -47,12 +47,12 @@ struct Args {
     no_online_audits: bool,
 
     /// Config file for every input; also read from CROSGHA_CONFIG or ZIZMOR_CONFIG.
-    #[arg(long, env = "CROSGHA_CONFIG")]
+    // The variables are read in `load_configs`, where an empty one counts as unset.
+    #[arg(long)]
     config: Option<PathBuf>,
 
     /// Do not discover or load crosgha.yml or zizmor.yml, even one named by `--config`.
-    // No clap conflict: it cannot tell a CROSGHA_CONFIG value from the flag, and ZIZMOR_CONFIG
-    // already yields to `--no-config`.
+    // No clap conflict, so the config variables also yield to `--no-config`.
     #[arg(long)]
     no_config: bool,
 
@@ -419,10 +419,13 @@ pub fn run() -> ExitCode {
 /// variables) applies to every input; otherwise each input discovers its own, so the result never
 /// depends on the order of the inputs. Inputs that find the same file share one entry.
 fn load_configs(args: &Args) -> Result<(Vec<config::Config>, Vec<usize>), String> {
-    let explicit = args
-        .config
-        .clone()
-        .or_else(|| std::env::var_os("ZIZMOR_CONFIG").map(PathBuf::from));
+    let explicit = args.config.clone().or_else(|| {
+        ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .find(|value| !value.is_empty())
+            .map(PathBuf::from)
+    });
     if args.no_config || explicit.is_some() {
         let config = match explicit.filter(|_| !args.no_config) {
             Some(path) => config::Config::load(&path)?,
