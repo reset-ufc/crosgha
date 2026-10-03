@@ -224,7 +224,7 @@ pub fn run() -> ExitCode {
         config: config::Config::default(),
         ignores: !args.no_ignores,
         min_severity: args.min_severity.as_deref().and_then(config::severity),
-        hosted: api_url(&args.gh_hostname) == "https://api.github.com",
+        hosted: api_url(&args.gh_hostname).eq_ignore_ascii_case("https://api.github.com"),
     };
     let inspections = per_config(
         &workflows,
@@ -477,11 +477,12 @@ fn per_config<T: Clone, R>(
 }
 
 /// `github.com` uses api.github.com; Enterprise Server hosts serve the API under `/api/v3`.
-/// A full URL is used as given.
+/// A full URL is used as given. Host names compare case-insensitively, without a trailing slash.
 fn api_url(host: &str) -> String {
+    let host = host.trim_end_matches('/');
     if host.contains("://") {
         host.to_owned()
-    } else if host == "github.com" {
+    } else if host.eq_ignore_ascii_case("github.com") {
         "https://api.github.com".to_owned()
     } else {
         format!("https://{host}/api/v3")

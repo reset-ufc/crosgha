@@ -708,7 +708,12 @@ fn github_com_only_rules_are_skipped_for_another_host() {
     let java = fixture("rules/removed-feature.setup-java.before.yml");
     let runtime = fixture("repos/runtime/.github/workflows");
 
-    assert!(scan("github.com", hosted.clone()).len() > 5);
+    let on_github = scan("github.com", hosted.clone());
+    assert!(on_github.len() > 5);
+    // Host names are case-insensitive, and a trailing slash names the same API.
+    for spelling in ["GitHub.COM", "github.com/", "https://api.github.com/"] {
+        assert_eq!(scan(spelling, hosted.clone()), on_github, "{spelling}");
+    }
     assert_eq!(scan("ghe.example.com", hosted), Vec::<String>::new());
     // The setup-java distribution removal is a fact about the action, not about the host.
     assert_eq!(scan("ghe.example.com", java), ["removed-feature"; 2]);
