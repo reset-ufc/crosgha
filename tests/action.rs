@@ -153,7 +153,7 @@ fn action_refuses_a_release_whose_checksum_does_not_match() {
     let base = serve(root.clone());
     let run = run_action(&base, ".", &[]);
     assert!(!run.output.status.success());
-    assert!(String::from_utf8_lossy(&run.output.stderr).contains("checksum"));
+    assert!(String::from_utf8_lossy(&run.output.stdout).contains("checksum"));
     assert_eq!(output_value(&run.outputs, "findings"), None);
     fs::remove_dir_all(&run.temp).unwrap();
     fs::remove_dir_all(root).unwrap();
@@ -190,9 +190,9 @@ fn action_uses_plain_http_only_for_a_bare_loopback_origin() {
     let run = run_action(&disguised, ".", &[]);
     assert!(!run.output.status.success());
     assert!(
-        String::from_utf8_lossy(&run.output.stderr).contains("cannot download"),
+        String::from_utf8_lossy(&run.output.stdout).contains("cannot download"),
         "{}",
-        String::from_utf8_lossy(&run.output.stderr)
+        String::from_utf8_lossy(&run.output.stdout)
     );
     assert_eq!(run.outputs, "");
     fs::remove_dir_all(&run.temp).unwrap();
@@ -204,7 +204,7 @@ fn action_fails_without_outputs_when_crosgha_cannot_run_or_crashes() {
     // Nothing listens on port 9: the runner check must fail before any download.
     let arm = run_action("http://127.0.0.1:9", ".", &[("RUNNER_ARCH", "ARM64")]);
     assert!(!arm.output.status.success());
-    assert!(String::from_utf8_lossy(&arm.output.stderr).contains("X64"));
+    assert!(String::from_utf8_lossy(&arm.output.stdout).contains("X64"));
     assert_eq!(arm.outputs, "");
     fs::remove_dir_all(&arm.temp).unwrap();
 
@@ -225,7 +225,16 @@ fn action_fails_without_outputs_when_crosgha_cannot_run_or_crashes() {
         );
         assert!(!run.output.status.success(), "{output}");
         assert!(output.contains(message), "{output}");
-        assert!(output.contains(&format!("exit status {code}")), "{output}");
+        // The error shares stdout with the stop and resume markers, so it lands after the resume.
+        let stdout = String::from_utf8_lossy(&run.output.stdout);
+        assert_eq!(
+            live_commands(&stdout),
+            [
+                format!("::error::crosgha could not complete the scan (exit status {code})")
+                    .as_str()
+            ],
+            "{output}"
+        );
         assert_eq!(run.outputs, "", "exit {code}");
         assert_eq!(run.summary, "", "exit {code}");
         fs::remove_dir_all(&run.temp).unwrap();

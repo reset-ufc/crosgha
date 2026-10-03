@@ -4,8 +4,10 @@
 # the `exit-code` output.
 set -euo pipefail
 
+# On stdout for the same reason as the stop and resume markers below: on stderr, the error
+# could reach the runner while commands are still stopped.
 fail() {
-    printf '::error::%s\n' "$1" >&2
+    printf '::error::%s\n' "$1"
     exit 1
 }
 
