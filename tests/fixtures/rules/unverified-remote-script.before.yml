@@ -14,3 +14,13 @@ jobs:
       - run: sh -c "$(curl -fsSL https://example.com/y.sh)" # expect: unverified-remote-script
       - run: curl -fsSL https://example.com/tool.tgz -o tool.tgz && sha256sum -c tool.tgz.sha256
       - run: curl -s https://api.example.com/status | jq .
+      - run: curl -s https://api.example.com/status | python3 -c 'import json, sys; print(json.load(sys.stdin)["ok"])'
+      - run: curl -s https://api.example.com/status | python3 -m json.tool
+      - run: curl -s https://api.example.com/status | perl -ne 'print if /ready/'
+      - run: curl -s https://api.example.com/status | bash -c 'cat > status.json'
+      - run: | # expect: unverified-remote-script
+          curl -fsSL https://example.com/install.sh \
+            | bash
+      - run: | # expect: unverified-remote-script
+          curl -fsSL https://example.com/install.sh |
+            python3 - --prefix /opt/tool

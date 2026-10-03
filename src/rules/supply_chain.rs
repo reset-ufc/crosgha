@@ -269,7 +269,9 @@ pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
-            if script.lines().any(pipes_download_to_interpreter) {
+            // A trailing `\` or `|` continues the command on the next line.
+            let joined = script.replace("\\\n", " ").replace("|\n", "| ");
+            if joined.lines().any(pipes_download_to_interpreter) {
                 findings.push(common::finding(
                     workflow,
                     &REMOTE_SCRIPT,
@@ -283,9 +285,41 @@ pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-const INTERPRETERS: &[&str] = &[
-    "sh", "bash", "zsh", "dash", "ksh", "python", "python3", "perl", "ruby", "node",
+/// Interpreters and the short options that make them run code from an argument, leaving stdin as
+/// data (`bash -c`, `python3 -c`/`-m`, `perl -ne`, `node -e`/`-p`). `bash -s` still runs stdin.
+const INTERPRETERS: &[(&str, &[char])] = &[
+    ("sh", &['c']),
+    ("bash", &['c']),
+    ("zsh", &['c']),
+    ("dash", &['c']),
+    ("ksh", &['c']),
+    ("python", &['c', 'm']),
+    ("python3", &['c', 'm']),
+    ("perl", &['e', 'E']),
+    ("ruby", &['e']),
+    ("node", &['e', 'p']),
 ];
+
+/// Whether the command in `segment` is an interpreter that executes its stdin.
+fn runs_stdin(segment: &str) -> bool {
+    let mut words = segment
+        .split_whitespace()
+        .skip_while(|word| *word == "sudo" || word.starts_with('-'));
+    let program = words.next().unwrap_or("");
+    let Some((_, code_options)) = INTERPRETERS
+        .iter()
+        .find(|(name, _)| *name == program.rsplit('/').next().unwrap_or(program))
+    else {
+        return false;
+    };
+    !words.take_while(|word| *word != "--").any(|word| {
+        matches!(word, "--eval" | "--print")
+            || word.len() > 1
+                && word.starts_with('-')
+                && !word.starts_with("--")
+                && word.contains(*code_options)
+    })
+}
 
 fn pipes_download_to_interpreter(line: &str) -> bool {
     let downloads = |text: &str| text.contains("curl") || text.contains("wget");
@@ -305,11 +339,7 @@ fn pipes_download_to_interpreter(line: &str) -> bool {
     };
     let mut downloaded = downloads(first);
     for segment in segments {
-        let program = segment
-            .split_whitespace()
-            .find(|word| *word != "sudo" && !word.starts_with('-'))
-            .unwrap_or("");
-        if downloaded && INTERPRETERS.contains(&program.rsplit('/').next().unwrap_or(program)) {
+        if downloaded && runs_stdin(segment) {
             return true;
         }
         downloaded = downloaded || downloads(segment);
