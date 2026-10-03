@@ -44,8 +44,17 @@ pub fn uninstall() -> Result<Option<PathBuf>, String> {
     Ok(Some(hook))
 }
 
+/// Every script crosgha has installed, oldest first, over the quoted arguments; `install` writes
+/// the last. A release that changes the script appends a template, so hooks that earlier releases
+/// installed are still recognized, upgraded, and removed.
+const TEMPLATES: &[fn(&str) -> String] = &[first];
+
 fn script(args: &[String]) -> String {
     let args: String = args.iter().map(|arg| format!(" {}", quote(arg))).collect();
+    TEMPLATES[TEMPLATES.len() - 1](&args)
+}
+
+fn first(args: &str) -> String {
     // ponytail: scans the working tree, not the pushed commits, so uncommitted edits count.
     // Upgrade path: read the pushed refs from stdin and scan each in a temporary worktree.
     format!(
@@ -85,13 +94,15 @@ fn refuse_foreign(hook: &Path) -> Result<(), String> {
 }
 
 /// Only the stored arguments vary, so a copy the user edited, marker included, is theirs.
-/// The template must stay byte-identical, or hooks from earlier releases become foreign.
 fn is_ours(content: &str) -> bool {
-    content
+    let Some(args) = content
         .lines()
         .find_map(|line| line.strip_prefix("crosgha"))
-        .and_then(unquote)
-        .is_some_and(|args| script(&args) == content)
+        .filter(|args| unquote(args).is_some())
+    else {
+        return false;
+    };
+    TEMPLATES.iter().any(|template| template(args) == content)
 }
 
 /// Inverse of `quote` over a line of ` '…'` words; `None` for anything `quote` cannot produce.
