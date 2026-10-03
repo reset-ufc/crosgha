@@ -1,6 +1,7 @@
 //! Rules that read repository files next to the workflows, not a single workflow.
 
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -43,6 +44,50 @@ pub struct Located {
     pub finding: Finding,
 }
 
+/// What the workflow scan already read from one file, so repository rules do not read and parse
+/// it again.
+pub struct Parsed<'a> {
+    pub source: &'a str,
+    pub local_actions: &'a [String],
+}
+
+/// Parsed workflows by `filesystem::identity` of their path.
+pub type Scanned<'a> = HashMap<PathBuf, Parsed<'a>>;
+
+/// Paths of the local actions a workflow calls, such as `.github/actions/setup` for
+/// `uses: ./.github/actions/setup`.
+pub fn local_actions(workflow: &Workflow) -> Vec<String> {
+    common::all_uses(workflow)
+        .into_iter()
+        .filter_map(|(_, _, uses)| uses.strip_prefix("./").map(str::to_owned))
+        .collect()
+}
+
+/// Every entry of `github/workflows`, with what the scan parsed from it. Entries the scan skipped
+/// or failed to parse as a workflow come back as `None`.
+fn workflow_files<'a>(
+    github: &Path,
+    scanned: &'a Scanned,
+) -> Vec<(PathBuf, Option<&'a Parsed<'a>>)> {
+    let directory = github.join("workflows");
+    // `filesystem::identity` of each entry, resolving their shared directory once.
+    let resolved = fs::canonicalize(&directory).ok();
+    fs::read_dir(&directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| {
+            let path = entry.path();
+            let key = match &resolved {
+                Some(directory) => directory.join(entry.file_name()),
+                None => path.clone(),
+            };
+            let parsed = scanned.get(&key);
+            (path, parsed)
+        })
+        .collect()
+}
+
 /// zizmor's default for `rules.dependabot-cooldown.config.days`.
 const DEFAULT_COOLDOWN_DAYS: u64 = 7;
 
@@ -52,6 +97,7 @@ const DEPENDABOT_DEFAULT_DAYS: u64 = 3;
 
 pub fn cooldown(
     github: &Path,
+    _scanned: &Scanned,
     honor_ignores: bool,
     options: Options,
 ) -> Result<Vec<Located>, String> {
@@ -137,19 +183,20 @@ const SCANNERS: &[(&str, &str)] = &[
 
 pub fn tooling(
     github: &Path,
+    scanned: &Scanned,
     _honor_ignores: bool,
     _options: Options,
 ) -> Result<Vec<Located>, String> {
     let root = github.parent().unwrap_or(github);
     let mut workflows = String::new();
-    if let Ok(entries) = fs::read_dir(github.join("workflows")) {
-        for entry in entries.flatten() {
-            workflows.push_str(
-                &fs::read_to_string(entry.path())
-                    .unwrap_or_default()
-                    .to_ascii_lowercase(),
-            );
-        }
+    for (path, parsed) in workflow_files(github, scanned) {
+        let source = match parsed {
+            Some(parsed) => parsed.source.to_ascii_lowercase(),
+            None => fs::read_to_string(path)
+                .unwrap_or_default()
+                .to_ascii_lowercase(),
+        };
+        workflows.push_str(&source);
     }
     let mut missing = Vec::new();
     if !UPDATE_CONFIGS
@@ -204,27 +251,24 @@ const RETIRED_RUNTIMES: &[&str] = &["node12", "node16", "node20"];
 /// its workflows use. Unparseable files are skipped: the workflow scan already reports them.
 pub fn runtime(
     github: &Path,
+    scanned: &Scanned,
     honor_ignores: bool,
     _options: Options,
 ) -> Result<Vec<Located>, String> {
     let root = github.parent().unwrap_or(github);
     let mut actions: Vec<PathBuf> = vec![root.to_path_buf()];
-    for entry in fs::read_dir(github.join("workflows"))
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let Some(workflow) = fs::read_to_string(entry.path())
-            .ok()
-            .and_then(|source| Workflow::parse_yaml(source).ok())
-        else {
-            continue;
+    for (path, parsed) in workflow_files(github, scanned) {
+        let used = match parsed {
+            Some(parsed) => parsed.local_actions.to_vec(),
+            None => match fs::read_to_string(path)
+                .ok()
+                .and_then(|source| Workflow::parse_yaml(source).ok())
+            {
+                Some(workflow) => local_actions(&workflow),
+                None => continue,
+            },
         };
-        for (_, _, uses) in common::all_uses(&workflow) {
-            if let Some(path) = uses.strip_prefix("./") {
-                actions.push(root.join(path));
-            }
-        }
+        actions.extend(used.iter().map(|path| root.join(path)));
     }
     actions.sort();
     actions.dedup();

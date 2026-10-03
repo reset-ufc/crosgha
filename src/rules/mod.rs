@@ -119,14 +119,14 @@ pub enum ChangeKind {
     Replace,
 }
 
-pub use repository::Located;
+pub use repository::{Located, Parsed, Scanned, local_actions};
 
 /// The rule's `rules.<id>.config` block, if the config has one.
 pub type Options<'a> = Option<&'a yaml_serde::Value>;
 
 type Detect = fn(&Workflow) -> Result<Vec<Finding>, String>;
 type ConfigurableDetect = fn(&Workflow, Options) -> Result<Vec<Finding>, String>;
-type RepositoryDetect = fn(&Path, bool, Options) -> Result<Vec<Located>, String>;
+type RepositoryDetect = fn(&Path, &Scanned, bool, Options) -> Result<Vec<Located>, String>;
 type OnlineDetect = fn(&Workflow, &GitHub, Options) -> Result<Vec<Finding>, String>;
 
 const REGISTRY: &[(&Rule, Detect)] = &[
@@ -282,7 +282,11 @@ pub fn detect_settings(
 }
 
 /// Repository-level rules for the `.github` directory next to the scanned workflows.
-pub fn detect_repository(github: &Path, settings: &Settings) -> Result<Vec<Located>, String> {
+pub fn detect_repository(
+    github: &Path,
+    scanned: &Scanned,
+    settings: &Settings,
+) -> Result<Vec<Located>, String> {
     let mut found = Vec::new();
     let hosted = if settings.hosted {
         HOSTED_REPOSITORY
@@ -293,6 +297,7 @@ pub fn detect_repository(github: &Path, settings: &Settings) -> Result<Vec<Locat
         if enabled(rule, settings) {
             found.extend(detect(
                 github,
+                scanned,
                 settings.ignores,
                 settings.config.options(rule),
             )?);

@@ -268,12 +268,25 @@ pub fn run() -> ExitCode {
                 .is_none_or(|parent| !scanned.contains(&parent))
         })
         .collect::<Vec<_>>();
+    // Repository rules read the workflows parsed above instead of reading them again.
+    let parsed: rules::Scanned = files
+        .iter()
+        .map(|file| {
+            let parsed = rules::Parsed {
+                source: &file.inspection.source,
+                local_actions: &file.inspection.local_actions,
+            };
+            (filesystem::identity(&file.path), parsed)
+        })
+        .collect();
     let mut repository = per_config(
         &github_dirs,
         &mut configs,
         &mut settings,
         |dirs, settings| {
-            engine::parallel_map(dirs, |github| rules::detect_repository(github, settings))
+            engine::parallel_map(dirs, |github| {
+                rules::detect_repository(github, &parsed, settings)
+            })
         },
     );
     repository.extend(per_config(

@@ -68,7 +68,7 @@ four shapes, dispatched from explicit tables in `rules/mod.rs`:
 | Workflow | `fn(&Workflow) -> Vec<Finding>` | `REGISTRY` |
 | Configurable | `fn(&Workflow, Options) -> Vec<Finding>` with its `rules.<id>.config` | `CONFIGURABLE` |
 | Online | `fn(&Workflow, &GitHub, Options) -> Vec<Finding>` | `ONLINE`; runs only with a token |
-| Repository | `fn(&Path, bool, Options) -> Vec<Located>` for the `.github` directory | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
+| Repository | `fn(&Path, &Scanned, bool, Options) -> Vec<Located>` for the `.github` directory; `Scanned` holds the workflows the scan already parsed, so they are not read twice | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
 
 Checks that state github.com facts (retired hosted-runner images and service shutdowns in
 `removed-feature`, and `retired-runtime`) sit in the `HOSTED` and `HOSTED_REPOSITORY` tables and are
