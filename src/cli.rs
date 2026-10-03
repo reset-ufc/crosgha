@@ -578,10 +578,7 @@ fn run_hook(action: &HookAction) -> ExitCode {
         }),
     };
     match result {
-        Ok(message) => {
-            println!("{message}");
-            ExitCode::SUCCESS
-        }
+        Ok(message) => emit(&format!("{message}\n"), ExitCode::SUCCESS),
         Err(error) => {
             report::error(error);
             ExitCode::from(2)
@@ -605,14 +602,14 @@ fn run_migrate(
             for note in &summary.notes {
                 report::note(note);
             }
-            println!(
-                "Migrated {} step(s) in {} workflow file(s).",
+            let mut text = format!(
+                "Migrated {} step(s) in {} workflow file(s).\n",
                 summary.steps, summary.files
             );
             if let Some(config) = &summary.config {
-                println!("Wrote {}.", config.display());
+                text.push_str(&format!("Wrote {}.\n", config.display()));
             }
-            ExitCode::SUCCESS
+            emit(&text, ExitCode::SUCCESS)
         }
         Err(error) => {
             report::error(error);

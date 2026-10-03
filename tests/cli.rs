@@ -1731,6 +1731,33 @@ fn unwritable_stdout_is_reported_without_a_panic() {
         assert!(!stderr.contains("panicked"), "{stderr}");
     }
 
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let repo = std::env::temp_dir().join(format!("crosgha-migrate-full-{unique}"));
+    fs::create_dir_all(repo.join(".github/workflows")).unwrap();
+    fs::copy(
+        fixture("checkout-credentials.before.yml"),
+        repo.join(".github/workflows/ci.yml"),
+    )
+    .unwrap();
+    let workflows = repo.join(".github/workflows");
+    let output = full(&[
+        "migrate",
+        "--from",
+        "zizmor",
+        "--action",
+        "owner/crosgha@0123456789abcdef0123456789abcdef01234567",
+        "--action-version",
+        "v0.1.0",
+        workflows.to_str().unwrap(),
+    ]);
+    fs::remove_dir_all(&repo).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "migrate: {stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+
     let mut child = bin()
         .args(["--list-rules", "-f", "json"])
         .stdout(std::process::Stdio::piped())
