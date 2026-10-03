@@ -32,6 +32,10 @@ jobs:
       - run: echo "${{ github.event.changes.title.from }}" # expect: script-injection
       - run: echo "${{ github.event.changes.body.from }}" # expect: script-injection
       - run: echo "${{ github.event.changes.base.sha.from }}"
+      # Spaces inside the index and `}}` inside a string literal do not end the path or expression.
+      - run: echo "${{ github.event[ 'issue' ].title }}" # expect: script-injection
+      - run: echo "${{ format('}}{0}', github.event.issue.title) }}" # expect: script-injection
+      - run: echo "${{ format('it''s }}{0}', github.event.issue.number) }}"
       - run: echo "${{ github.event.issue }} ${{ inputs.github_token }}"
       - run: echo '${{ toJSON(github.event.sender) }}'
       # A scalar leaf serializes to a number or hash; a nested object still carries its text.

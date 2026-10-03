@@ -176,19 +176,38 @@ pub const EXTERNAL_TRIGGERS: &[&str] = &[
     "workflow_run",
 ];
 
-/// The bodies of every `${{ ... }}` expression in `text`.
+/// The bodies of every `${{ ... }}` expression in `text`. A `}}` inside a single-quoted string
+/// literal (`''` escapes a quote) does not close the expression:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#literals
 pub fn expressions(text: &str) -> Vec<&str> {
     let mut found = Vec::new();
     let mut rest = text;
     while let Some(start) = rest.find("${{") {
         let after = &rest[start + 3..];
-        let Some(end) = after.find("}}") else {
+        let Some(end) = expression_end(after) else {
             break;
         };
         found.push(after[..end].trim());
         rest = &after[end + 2..];
     }
     found
+}
+
+/// Offset of the `}}` that closes the expression `body` starts, outside string literals.
+fn expression_end(body: &str) -> Option<usize> {
+    let bytes = body.as_bytes();
+    let mut quoted = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            // An escaped `''` reads as closing and reopening the literal.
+            b'\'' => quoted = !quoted,
+            b'}' if !quoted && bytes.get(index + 1) == Some(&b'}') => return Some(index),
+            _ => {}
+        }
+        index += 1;
+    }
+    None
 }
 
 /// Context paths GitHub documents as attacker-controllable: `github.head_ref` and
@@ -311,21 +330,30 @@ pub fn untrusted_contexts(expression: &str) -> Vec<String> {
     found
 }
 
-/// Rewrites index syntax with a literal name (`['body']`) to property syntax (`.body`).
+/// Rewrites index syntax with a literal name (`['body']`, `[ 'body' ]`) to property syntax
+/// (`.body`).
 pub fn dotted(expression: &str) -> String {
     let mut out = String::with_capacity(expression.len());
     let mut rest = expression;
-    while let Some(open) = rest.find("['") {
+    while let Some(open) = rest.find('[') {
         out.push_str(&rest[..open]);
-        let after = &rest[open + 2..];
-        match after.find("']") {
-            Some(close) if after[..close].bytes().all(is_context_char) => {
+        let after = &rest[open + 1..];
+        let index = after.trim_start().strip_prefix('\'').and_then(|name| {
+            let close = name.find('\'')?;
+            let tail = name[close + 1..].trim_start().strip_prefix(']')?;
+            name[..close]
+                .bytes()
+                .all(is_context_char)
+                .then_some((&name[..close], tail))
+        });
+        match index {
+            Some((name, tail)) => {
                 out.push('.');
-                out.push_str(&after[..close]);
-                rest = &after[close + 2..];
+                out.push_str(name);
+                rest = tail;
             }
-            _ => {
-                out.push_str("['");
+            None => {
+                out.push('[');
                 rest = after;
             }
         }
