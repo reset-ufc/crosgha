@@ -1891,6 +1891,60 @@ fn hook_install_rejects_arguments_that_stop_it_from_being_a_read_only_scan() {
 }
 
 #[test]
+fn hook_install_stays_inside_the_repository_it_was_run_in() {
+    let work = git_repo("shared");
+    let root = work.parent().unwrap().to_path_buf();
+    git(&work, &["commit", "-q", "--allow-empty", "-m", "init"]);
+
+    // A global core.hooksPath is shared by every repository on the machine.
+    let shared = root.join("shared-hooks");
+    let global = root.join("gitconfig");
+    fs::write(
+        &global,
+        format!("[core]\n\thooksPath = {}\n", shared.display()),
+    )
+    .unwrap();
+    let refused = bin()
+        .current_dir(&work)
+        .env("GIT_CONFIG_GLOBAL", &global)
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+    let output = combined(&refused);
+    assert_eq!(refused.status.code(), Some(2), "{output}");
+    assert!(
+        output.contains("core.hooksPath") && output.contains("shared-hooks"),
+        "{output}"
+    );
+    assert!(!shared.exists());
+
+    // Hooks git keeps in the main repository are fine for a linked worktree.
+    git(&work, &["worktree", "add", "-q", "../linked"]);
+    let linked = bin()
+        .current_dir(root.join("linked"))
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+    assert!(linked.status.success(), "{}", combined(&linked));
+    let ours = work.join(".git/hooks/pre-push");
+    assert!(ours.exists());
+
+    // A hook an earlier release left in the shared directory can still be removed.
+    fs::create_dir_all(&shared).unwrap();
+    fs::copy(&ours, shared.join("pre-push")).unwrap();
+    let removed = bin()
+        .current_dir(&work)
+        .env("GIT_CONFIG_GLOBAL", &global)
+        .args(["hook", "uninstall"])
+        .output()
+        .unwrap();
+    assert!(removed.status.success(), "{}", combined(&removed));
+    assert!(!shared.join("pre-push").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn text_report_points_at_the_source_and_colors_only_on_request() {
     let scan = |extra: &[&str]| {
         let output = bin()
