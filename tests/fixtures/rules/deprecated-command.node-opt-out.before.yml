@@ -15,3 +15,4 @@ jobs:
       - run: echo "$NODE_VERSION"
         env:
           NODE_VERSION: '24'
+          ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: false

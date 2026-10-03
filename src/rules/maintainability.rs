@@ -610,7 +610,11 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     }
     for (route, location, scope) in scopes {
         for (variable, message) in OPT_OUTS {
-            if scope.get("env").and_then(|env| env.get(variable)).is_some() {
+            // Only `true` opts out; `false` keeps the default.
+            let value = scope.get("env").and_then(|env| env.get(variable));
+            if matches!(value, Some(Value::Bool(true)))
+                || value.and_then(Value::as_str) == Some("true")
+            {
                 findings.push(common::finding(
                     workflow,
                     &DEPRECATED,
