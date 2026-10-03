@@ -511,6 +511,44 @@ fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
     assert_eq!(fixed_mixed, fixed_mixed_expected);
 }
 
+/// Fixing one of two equal checkout steps makes them differ until the other is fixed too, which
+/// clears and restores `duplicated-steps` (pedantic and auditor only). The fixes must not depend
+/// on the persona.
+#[test]
+fn fixes_of_equal_steps_apply_under_every_persona() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let source = "on: push\npermissions: {}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \
+                  timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@v4\n      \
+                  - run: ./cleanup.sh\n      - uses: actions/checkout@v4\n";
+    let with = "@v4\n        with:\n          persist-credentials: false\n";
+    for persona in ["regular", "pedantic", "auditor"] {
+        let path = std::env::temp_dir().join(format!("crosgha-equal-{persona}-{unique}.yml"));
+        fs::write(&path, source).unwrap();
+        let output = bin()
+            .args(["--fix", "--offline", "--no-config", "-f", "json"])
+            .args(["--fail-on", "none", "--persona", persona])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let fixed = fs::read_to_string(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["summary"]["fixed"], 2, "{persona}: {report:#}");
+        assert_eq!(fixed, source.replace("@v4\n", with), "{persona}");
+        let duplicated = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| finding["rule"] == "duplicated-steps")
+            .count();
+        assert_eq!(duplicated, usize::from(persona != "regular"), "{report:#}");
+    }
+}
+
 /// Trailing spaces after the node a key is added to stay on their own line: the added lines go
 /// between whole lines, so every existing line stays byte for byte.
 #[test]
@@ -536,10 +574,7 @@ fn added_lines_leave_trailing_whitespace_on_its_line() {
     assert_eq!(report["fixes"][0]["status"], "applied", "{report:#}");
     assert_eq!(
         fixed,
-        source.replace(
-            "0 \t \n",
-            "0 \t \n          persist-credentials: false\n"
-        )
+        source.replace("0 \t \n", "0 \t \n          persist-credentials: false\n")
     );
 }
 

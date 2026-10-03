@@ -83,7 +83,8 @@ unchanged under `--fix` and remain visible in the report.
 
 1. Parse the patched YAML and validate its workflow structure.
 2. Run every enabled rule again. The target must disappear; no new
-   finding may appear.
+   finding may appear. `duplicated-steps` compares steps with each other, so fixing one of two
+   equal steps may clear its finding, and fixing the other may bring back one the file had.
 3. Check that only the declared node changed, byte for byte, comments and spacing included.
    A replaced value is swapped back and must restore the original source. An added key must
    be the only insertion: the original equals the patched source minus the new node and the

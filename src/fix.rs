@@ -79,7 +79,9 @@ pub fn apply(
             }
         }
         let before = known.as_deref().unwrap_or(findings);
-        let rejected = match patch(&current, finding, proposal, before, settings, file) {
+        let rejected = match patch(
+            &current, finding, proposal, before, findings, settings, file,
+        ) {
             Ok((next, after)) => {
                 if let Some(breaks) = &mut breaks {
                     *breaks = carry(breaks, current.document.source(), next.document.source());
@@ -165,12 +167,14 @@ fn carry(breaks: &[&'static str], before: &str, after: &str) -> Vec<&'static str
     carried
 }
 
-/// The patched workflow and its findings, once the patch passes validation.
+/// The patched workflow and its findings, once the patch passes validation. `before` holds the
+/// findings of `current`, `original` those of the file as it was read.
 fn patch(
     current: &Workflow,
     finding: &Finding,
     proposal: &ProposedFix,
     before: &[Finding],
+    original: &[Finding],
     settings: &Settings,
     file: &str,
 ) -> Result<(Workflow, Vec<Finding>), String> {
@@ -183,34 +187,54 @@ fn patch(
         source = moved;
     }
     let next = Workflow::parse(source)?;
-    let after = validate_change(current, &next, finding, proposal, before, settings, file)?;
+    let after = rules::detect_all(&next, settings, file)?;
+    compare_findings(finding, before, &after, original)?;
+    validate_change(current, &next, proposal)?;
     Ok((next, after))
+}
+
+/// Rules that compare steps with each other: fixing one of two equal steps clears their finding
+/// until the other step gets the same fix, which restores it.
+const STEP_EQUALITY: &[&str] = &["duplicated-steps"];
+
+/// The target must disappear and no other finding may change, except that findings of
+/// `STEP_EQUALITY` rules may disappear, or come back when the file as read had them.
+fn compare_findings(
+    target: &Finding,
+    old: &[Finding],
+    new: &[Finding],
+    original: &[Finding],
+) -> Result<(), String> {
+    let compared = |findings: &[Finding]| {
+        findings
+            .iter()
+            .filter(|finding| !STEP_EQUALITY.contains(&finding.rule.id))
+            .count()
+    };
+    if new.iter().any(|finding| same_target(finding, target)) || compared(new) + 1 != compared(old)
+    {
+        return Err("fix did not remove exactly the targeted finding".to_owned());
+    }
+    let known = |finding: &Finding| {
+        let restored = match STEP_EQUALITY.contains(&finding.rule.id) {
+            true => original,
+            false => &[],
+        };
+        old.iter()
+            .chain(restored)
+            .any(|old| same_target(old, finding))
+    };
+    if !new.iter().all(known) {
+        return Err("fix introduced a new finding".to_owned());
+    }
+    Ok(())
 }
 
 fn validate_change(
     before: &Workflow,
     after: &Workflow,
-    target: &Finding,
     proposal: &ProposedFix,
-    old_findings: &[Finding],
-    settings: &Settings,
-    file: &str,
-) -> Result<Vec<Finding>, String> {
-    let new_findings = rules::detect_all(after, settings, file)?;
-    if new_findings
-        .iter()
-        .any(|finding| same_target(finding, target))
-        || new_findings.len() + 1 != old_findings.len()
-    {
-        return Err("fix did not remove exactly the targeted finding".to_owned());
-    }
-    if new_findings
-        .iter()
-        .any(|finding| !old_findings.iter().any(|old| same_target(old, finding)))
-    {
-        return Err("fix introduced a new finding".to_owned());
-    }
-
+) -> Result<(), String> {
     let route = &proposal.changed_route;
     let only_target = match proposal.change {
         ChangeKind::Add => {
@@ -262,7 +286,7 @@ fn validate_change(
     if !only_target {
         return Err("fix changed YAML outside the intended node".to_owned());
     }
-    Ok(new_findings)
+    Ok(())
 }
 
 /// yamlpatch adds block lines right after the last value, before that line's trailing spaces,
@@ -278,7 +302,9 @@ fn after_trailing_whitespace(before: &str, after: &str) -> Option<String> {
     let rest = before.get(at..)?;
     let lines = after.get(at..at + length)?.strip_prefix('\n')?;
     let line_end = rest.find('\n')?;
-    let trailing = rest[..line_end].bytes().all(|byte| matches!(byte, b' ' | b'\t'));
+    let trailing = rest[..line_end]
+        .bytes()
+        .all(|byte| matches!(byte, b' ' | b'\t'));
     if line_end == 0 || !trailing || after[at + length..] != *rest {
         return None;
     }
