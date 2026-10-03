@@ -419,10 +419,14 @@ pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     if common::has_trigger(workflow, PRIVILEGED_TRIGGERS) {
         for job in common::jobs(workflow) {
             let steps = common::steps(&job);
-            if !steps.iter().any(checks_out_head) {
+            let Some(checkout) = steps.iter().position(checks_out_head) else {
                 continue;
-            }
-            for step in steps.iter().filter(|step| uses_cache(workflow, step)) {
+            };
+            let saves = steps
+                .iter()
+                .enumerate()
+                .filter(|(index, step)| saves_cache(workflow, step, *index > checkout));
+            for (_, step) in saves {
                 findings.push(common::finding(
                     workflow,
                     &CACHE_POISONING,
@@ -459,6 +463,21 @@ pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
+/// Whether the step writes a cache once the job has run. `actions/cache` and the setup actions
+/// save in their `post` step at the end of the job (action.yml of each); `actions/cache/save`
+/// saves where it stands, and `actions/cache/restore` never saves.
+fn saves_cache(workflow: &Workflow, step: &common::Step, after_checkout: bool) -> bool {
+    let name = step
+        .uses()
+        .map(|uses| uses.split('@').next().unwrap_or("").to_ascii_lowercase());
+    match name.as_deref() {
+        Some("actions/cache/save") => after_checkout,
+        Some("actions/cache/restore") => false,
+        _ => uses_cache(workflow, step),
+    }
+}
+
+/// Whether the step restores a cache.
 fn uses_cache(workflow: &Workflow, step: &common::Step) -> bool {
     let Some(uses) = step.uses() else {
         return false;
