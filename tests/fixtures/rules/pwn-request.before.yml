@@ -34,6 +34,16 @@ jobs:
       - run: | # expect: pwn-request
           git remote add fork "https://github.com/${{ github.event.pull_request.head.repo.full_name }}"
           git fetch fork "${{ github.event.pull_request.head.sha }}" && git switch --detach FETCH_HEAD
+      # Index syntax and upper case name the same head.
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: pwn-request
+        with:
+          ref: ${{ github.event.pull_request['head']['sha'] }}
+          persist-credentials: false
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: pwn-request
+        with:
+          ref: ${{ github.event.pull_request.HEAD.sha }}
+          persist-credentials: false
+      - run: git fetch origin "${{ github.event.pull_request.head['ref'] }}" # expect: pwn-request
       # Global options before the subcommand, `pull`, and `clone` reach the same code.
       - run: git -C src fetch origin pull/1/head # expect: pwn-request
       - run: git -c protocol.version=2 fetch origin refs/pull/1/merge # expect: pwn-request

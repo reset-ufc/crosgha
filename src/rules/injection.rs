@@ -323,9 +323,13 @@ const HEAD_REFS: &[&str] = &[
 ];
 
 /// Whether a step checks out or fetches the pull request's code, which the author controls.
-/// Any ref of the fork repository counts, so `repository` alone is enough.
+/// Any ref of the fork repository counts, so `repository` alone is enough. Context paths are
+/// compared as `untrusted_contexts` reads them: lowercased, with index syntax made dotted.
 fn checks_out_head(step: &common::Step) -> bool {
-    let mentions_head = |text: &str| HEAD_REFS.iter().any(|head| text.contains(head));
+    let mentions_head = |text: &str| {
+        let text = common::dotted(&text.to_ascii_lowercase());
+        HEAD_REFS.iter().any(|head| text.contains(head))
+    };
     let checkout = step
         .uses()
         .is_some_and(|uses| uses.to_ascii_lowercase().starts_with("actions/checkout@"))

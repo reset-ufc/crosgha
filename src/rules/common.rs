@@ -269,7 +269,7 @@ pub fn untrusted_contexts(expression: &str) -> Vec<String> {
 }
 
 /// Rewrites index syntax with a literal name (`['body']`) to property syntax (`.body`).
-fn dotted(expression: &str) -> String {
+pub fn dotted(expression: &str) -> String {
     let mut out = String::with_capacity(expression.len());
     let mut rest = expression;
     while let Some(open) = rest.find("['") {
