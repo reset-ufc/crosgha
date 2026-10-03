@@ -99,10 +99,10 @@ const STEP_KEYS: &[&str] = &[
     "parallel",
 ];
 
-/// `GITHUB_TOKEN` scopes from the workflow syntax reference, plus `models`
-/// (https://github.blog/ai-and-ml/generative-ai/automate-your-project-with-github-models-in-actions/)
-/// and `repository-projects`, which the current reference dropped without a documented removal
-/// (https://github.blog/changelog/2021-04-20-github-actions-control-permissions-for-github_token/).
+/// `GITHUB_TOKEN` scopes and the levels each accepts, from `permissions-mapping` in GitHub's
+/// published workflow schema (actions/languageservices `workflow-parser/src/workflow-v1.0.json`
+/// at 4043eda158e16579cc5fb1b0b07a4bce2a76f0b5). `read-all`, `write-all`, and `{}` are the only
+/// shorthands.
 const PERMISSION_SCOPES: &[&str] = &[
     "actions",
     "artifact-metadata",
@@ -110,8 +110,10 @@ const PERMISSION_SCOPES: &[&str] = &[
     "checks",
     "code-quality",
     "contents",
+    "copilot-requests",
     "deployments",
     "discussions",
+    "drives",
     "id-token",
     "issues",
     "models",
@@ -124,13 +126,10 @@ const PERMISSION_SCOPES: &[&str] = &[
     "vulnerability-alerts",
 ];
 
-/// Access levels a scope accepts. The workflow syntax reference lists `id-token: write|none`,
-/// `vulnerability-alerts: read|none`, and `read|write|none` for the rest; `read-all`,
-/// `write-all`, and `{}` are the only shorthands.
 fn permission_levels(scope: &str) -> &'static [&'static str] {
     match scope {
-        "id-token" => &["write", "none"],
-        "vulnerability-alerts" => &["read", "none"],
+        "copilot-requests" | "id-token" => &["write", "none"],
+        "models" | "vulnerability-alerts" => &["read", "none"],
         _ => &["read", "write", "none"],
     }
 }
