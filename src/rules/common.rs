@@ -234,6 +234,34 @@ const FREE_TEXT_OBJECTS: &[&str] = &[
     "workflow_run",
 ];
 
+/// Payload fields that hold a number, flag, hash, enum, timestamp, or GitHub URL, so `toJSON` of
+/// one carries no free text; any other field below a free-text object may be an object holding it.
+fn is_scalar_leaf(field: &str) -> bool {
+    const SCALARS: &[&str] = &[
+        "additions",
+        "author_association",
+        "changed_files",
+        "comments",
+        "commits",
+        "deletions",
+        "draft",
+        "id",
+        "locked",
+        "merged",
+        "number",
+        "review_comments",
+        "run_attempt",
+        "run_number",
+        "sha",
+        "state",
+        "url",
+    ];
+    SCALARS.contains(&field)
+        || ["_at", "_count", "_id", "_sha", "_url"]
+            .iter()
+            .any(|suffix| field.ends_with(suffix))
+}
+
 /// Untrusted context paths read by `expression`, lowercased and in dotted form. Contexts accept
 /// `github['event']` as well as `github.event`:
 /// https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
@@ -264,7 +292,10 @@ pub fn untrusted_contexts(expression: &str) -> Vec<String> {
         let whole_object = expression[..begin].trim_end().ends_with("tojson(")
             && match segments.as_slice() {
                 ["github"] | ["github", "event"] => true,
-                ["github", "event", object, ..] => FREE_TEXT_OBJECTS.contains(object),
+                ["github", "event", object] => FREE_TEXT_OBJECTS.contains(object),
+                ["github", "event", object, .., leaf] => {
+                    FREE_TEXT_OBJECTS.contains(object) && !is_scalar_leaf(leaf)
+                }
                 _ => false,
             };
         let untrusted = segments.as_slice() == ["github", "head_ref"]

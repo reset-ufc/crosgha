@@ -34,6 +34,11 @@ jobs:
       - run: echo "${{ github.event.changes.base.sha.from }}"
       - run: echo "${{ github.event.issue }} ${{ inputs.github_token }}"
       - run: echo '${{ toJSON(github.event.sender) }}'
+      # A scalar leaf serializes to a number or hash; a nested object still carries its text.
+      - run: echo '${{ toJSON(github.event.issue.number) }} ${{ toJSON(github.event.pull_request.head.sha) }}'
+      - run: echo '${{ toJSON(github.event.pull_request.created_at) }} ${{ toJSON(github.event.issue.html_url) }}'
+      - run: echo '${{ toJSON(github.event.pull_request.head) }}' # expect: script-injection
+      - run: echo '${{ toJSON(github.event.commits[0]) }}' # expect: script-injection
       - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with:
           title: ${{ github.event.issue.title }}
