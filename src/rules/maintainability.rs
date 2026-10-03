@@ -2,7 +2,9 @@ use yaml_serde::{Mapping, Value};
 use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{ChangeKind, Finding, ProposedFix, Rule, common, online, repository, runner};
+use super::{
+    ChangeKind, Finding, ProposedFix, Rule, common, correctness, online, repository, runner,
+};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -429,9 +431,29 @@ pub fn cache_misuse(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
+/// Step `id`s a job reads as `steps.<id>`, in `${{ }}` expressions or bare `if` conditions.
+fn read_step_ids(job: &common::Job<'_>) -> Vec<String> {
+    let mut ids = Vec::new();
+    common::strings(job.value, &job.route, &mut |_, text| {
+        let expressions = match common::expressions(text) {
+            found if found.is_empty() => vec![text],
+            found => found,
+        };
+        for expression in expressions {
+            ids.extend(
+                correctness::context_names(expression, "steps")
+                    .into_iter()
+                    .map(str::to_ascii_lowercase),
+            );
+        }
+    });
+    ids
+}
+
 pub fn duplicated_steps(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
+        let read = read_step_ids(&job);
         let mut seen: Vec<Mapping> = Vec::new();
         for step in common::steps(&job) {
             let Some(mapping) = step.value.as_mapping() else {
@@ -440,10 +462,16 @@ pub fn duplicated_steps(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             if mapping.contains_key("parallel") {
                 continue;
             }
+            // A step whose outputs a later step reads is a measurement, not a repeat.
+            let output_read = step
+                .value
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| read.contains(&id.to_ascii_lowercase()));
             let mut body = mapping.clone();
             body.remove("name");
             body.remove("id");
-            if seen.contains(&body) {
+            if !output_read && seen.contains(&body) {
                 findings.push(common::finding(
                     workflow,
                     &DUPLICATED_STEPS,

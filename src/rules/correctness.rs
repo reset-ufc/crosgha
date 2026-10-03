@@ -420,7 +420,7 @@ fn undefined_references(job: &common::Job<'_>) -> Vec<(Route<'static>, String, S
 }
 
 /// Property names read as `<context>.<name>` in an expression, outside string literals.
-fn context_names<'a>(expression: &'a str, context: &str) -> Vec<&'a str> {
+pub(super) fn context_names<'a>(expression: &'a str, context: &str) -> Vec<&'a str> {
     let prefix = format!("{context}.");
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
     expression
