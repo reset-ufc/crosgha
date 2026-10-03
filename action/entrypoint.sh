@@ -119,10 +119,11 @@ fi
 sarif="$RUNNER_TEMP/crosgha.sarif"
 args+=(--sarif-file "$sarif")
 
-read -r -a inputs <<< "${CROSGHA_INPUTS:-.}"
+# Block scalars put one path per line, so split on newlines too.
+read -r -d '' -a inputs <<< "${CROSGHA_INPUTS:-.}" || true
 report="$RUNNER_TEMP/crosgha.txt"
 set +e
-"$crosgha" "${args[@]}" "${inputs[@]}" > "$report" 2> "$RUNNER_TEMP/crosgha.err"
+"$crosgha" "${args[@]}" -- "${inputs[@]}" > "$report" 2> "$RUNNER_TEMP/crosgha.err"
 code=$?
 set -e
 cat "$report"
@@ -130,7 +131,7 @@ cat "$RUNNER_TEMP/crosgha.err" >&2
 
 if [[ "$code" == 2 ]] && grep -q "no .yml or .yaml workflow files found" "$RUNNER_TEMP/crosgha.err" \
     && [[ "${CROSGHA_FAIL_ON_NO_INPUTS:-true}" == false ]]; then
-    printf '::warning::crosgha found no workflow files in %s\n' "${CROSGHA_INPUTS:-.}"
+    printf '::warning::crosgha found no workflow files in %s\n' "${inputs[*]}"
     echo "findings=0" >> "$GITHUB_OUTPUT"
     echo "exit-code=0" >> "$GITHUB_OUTPUT"
     exit 0

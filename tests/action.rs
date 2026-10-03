@@ -61,6 +61,24 @@ fn output_value<'a>(outputs: &'a str, key: &str) -> Option<&'a str> {
         .find_map(|line| line.strip_prefix(&format!("{key}=")))
 }
 
+fn sarif_uris(run: &Run) -> Vec<String> {
+    let sarif: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_value(&run.outputs, "output-file").unwrap()).unwrap(),
+    )
+    .unwrap();
+    sarif["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| {
+            result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
 #[test]
 fn action_installs_the_verified_release_and_reports_sarif() {
     let root = release(env!("CARGO_PKG_VERSION"), false);
@@ -192,4 +210,32 @@ fn action_fails_without_outputs_when_crosgha_cannot_run_or_crashes() {
         fs::remove_dir_all(&run.temp).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+fn action_scans_every_path_of_a_multi_line_inputs_block() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+    // `inputs: |` in the caller's workflow yields one path per line.
+    let other = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/checkout-credentials.before.yml");
+    let run = run_action(
+        &base,
+        &format!(".github/workflows/ci.yml\n{}\n", other.display()),
+        &[],
+    );
+    assert!(
+        run.output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.output.stderr)
+    );
+    let uris = sarif_uris(&run);
+    for file in ["ci.yml", "checkout-credentials.before.yml"] {
+        assert!(
+            uris.iter().any(|uri| uri.ends_with(file)),
+            "{file}: {uris:?}"
+        );
+    }
+    fs::remove_dir_all(&run.temp).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
