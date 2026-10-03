@@ -212,7 +212,10 @@ fn diagnostic(output: &mut String, path: &Path, source: Option<&str>, finding: &
         finding.rule.id,
         finding.message
     );
-    let text = source.and_then(|source| source.lines().nth(finding.line.checked_sub(1)?));
+    // Columns do not count a BOM, so line 1 is shown without it.
+    let text = source
+        .map(|source| source.strip_prefix(BOM).unwrap_or(source))
+        .and_then(|source| source.lines().nth(finding.line.checked_sub(1)?));
     let number = finding.line.to_string();
     let pad = " ".repeat(number.len());
     match (finding.line, text) {

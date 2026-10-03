@@ -191,6 +191,24 @@ fn byte_order_mark_is_scanned_like_plain_utf8_and_kept_on_fix() {
     );
     let after = fs::read_to_string(fixture("checkout-credentials.after.yml")).unwrap();
     assert_eq!(fixed, format!("\u{feff}{after}"));
+
+    // The text report shows and underlines line 1 the same way with or without the BOM.
+    let text = |source: &str| {
+        fs::write(&path, source).unwrap();
+        let output = bin()
+            .args(["--persona", "auditor", "--offline", "--no-config"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let plain = "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      \
+                 - run: echo hi\n";
+    let with_bom = text(&format!("\u{feff}{plain}"));
+    let without = text(plain);
+    fs::remove_file(&path).unwrap();
+    assert!(without.contains("1 | on: push\n  | ^^ workflow"), "{without}");
+    assert_eq!(with_bom, without);
 }
 
 #[test]
