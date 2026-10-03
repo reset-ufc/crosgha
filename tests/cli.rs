@@ -1864,6 +1864,33 @@ fn hook_install_follows_hooks_path_and_never_touches_foreign_hooks() {
 }
 
 #[test]
+fn hook_install_rejects_arguments_that_stop_it_from_being_a_read_only_scan() {
+    let work = git_repo("args");
+    let hook = work.join(".git/hooks/pre-push");
+    for (args, culprit) in [
+        (&["--offline", "--fix", "--no-config"][..], "--fix"),
+        (&["migrate", "--from", "zizmor"][..], "migrate"),
+        (&["hook", "uninstall"][..], "hook"),
+        (&["--list-rules"][..], "--list-rules"),
+        (&["--version"][..], "--version"),
+        (&["-h"][..], "--help"),
+    ] {
+        let install = bin()
+            .current_dir(&work)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args(["hook", "install", "--"])
+            .args(args)
+            .output()
+            .unwrap();
+        let output = combined(&install);
+        assert_eq!(install.status.code(), Some(2), "{args:?}: {output}");
+        assert!(output.contains(culprit), "{args:?}: {output}");
+        assert!(!hook.exists(), "{args:?}");
+    }
+    fs::remove_dir_all(work.parent().unwrap()).unwrap();
+}
+
+#[test]
 fn text_report_points_at_the_source_and_colors_only_on_request() {
     let scan = |extra: &[&str]| {
         let output = bin()

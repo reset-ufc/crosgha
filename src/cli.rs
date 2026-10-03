@@ -487,12 +487,37 @@ fn api_url(host: &str) -> String {
 fn run_hook(action: &HookAction) -> ExitCode {
     let result = match action {
         HookAction::Install { args } => {
-            // A typo stored in the hook would block every later push.
-            match Args::try_parse_from(
+            // A typo stored in the hook would block every later push, and anything but a plain
+            // scan would edit files, always pass, or remove the hook on its first run.
+            let parsed = Args::try_parse_from(
                 std::iter::once("crosgha").chain(args.iter().map(String::as_str)),
-            ) {
-                Err(error) => Err(error.to_string()),
-                Ok(_) => hook::install(args).map(|hook| format!("Installed {}.", hook.display())),
+            );
+            let culprit = match &parsed {
+                Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => Some("--help"),
+                Err(error) if error.kind() == clap::error::ErrorKind::DisplayVersion => {
+                    Some("--version")
+                }
+                Ok(Args {
+                    command: Some(Commands::Migrate { .. }),
+                    ..
+                }) => Some("migrate"),
+                Ok(Args {
+                    command: Some(Commands::Hook { .. }),
+                    ..
+                }) => Some("hook"),
+                Ok(scan) if scan.fix => Some("--fix"),
+                Ok(scan) if scan.list_rules => Some("--list-rules"),
+                _ => None,
+            };
+            match (parsed, culprit) {
+                (_, Some(culprit)) => Err(format!(
+                    "`{culprit}` cannot be stored in the pre-push hook, which only scans; \
+                     pass scan options such as --offline or --persona"
+                )),
+                (Err(error), None) => Err(error.to_string()),
+                (Ok(_), None) => {
+                    hook::install(args).map(|hook| format!("Installed {}.", hook.display()))
+                }
             }
         }
         HookAction::Uninstall => hook::uninstall().map(|removed| match removed {
