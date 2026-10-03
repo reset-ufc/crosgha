@@ -4,7 +4,7 @@
 //! `CROSGHA_BLESS=1 cargo test --test rules`), and the hand-written `.clean.yml` must not be
 //! reported. Online rules run against a local server that replays `tests/fixtures/online/api.json`.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -110,24 +110,23 @@ fn scan(path: &Path, fix: bool, api: Option<&str>, config: Option<&Path>) -> Out
     command.arg(path).output().unwrap()
 }
 
-fn expected_lines(source: &str, rule: &str) -> BTreeSet<usize> {
+/// Line → number of findings of `rule` on it. A rule listed twice (`# expect: a, a`) must be
+/// reported twice on that line.
+type Lines = BTreeMap<usize, usize>;
+
+fn expected_lines(source: &str, rule: &str) -> Lines {
     source
         .lines()
         .enumerate()
-        .filter(|(_, line)| {
-            line.split_once("# expect: ")
-                .is_some_and(|(_, ids)| ids.split(',').any(|id| id.trim() == rule))
+        .filter_map(|(index, line)| {
+            let (_, ids) = line.split_once("# expect: ")?;
+            let count = ids.split(',').filter(|id| id.trim() == rule).count();
+            (count > 0).then_some((index + 1, count))
         })
-        .map(|(index, _)| index + 1)
         .collect()
 }
 
-fn reported_lines(
-    path: &Path,
-    rule: &str,
-    api: Option<&str>,
-    config: Option<&Path>,
-) -> BTreeSet<usize> {
+fn reported_lines(path: &Path, rule: &str, api: Option<&str>, config: Option<&Path>) -> Lines {
     let output = scan(path, false, api, config);
     assert!(
         output.status.success(),
@@ -137,13 +136,15 @@ fn reported_lines(
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    report["findings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|finding| finding["rule"] == rule)
-        .map(|finding| finding["line"].as_u64().unwrap() as usize)
-        .collect()
+    let mut lines = Lines::new();
+    for finding in report["findings"].as_array().unwrap() {
+        if finding["rule"] == rule {
+            *lines
+                .entry(finding["line"].as_u64().unwrap() as usize)
+                .or_default() += 1;
+        }
+    }
+    lines
 }
 
 fn check_fixtures(directory: &str, api: Option<&str>) {
@@ -170,7 +171,7 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         let reported = reported_lines(&path, rule, api, config);
         if reported != expected {
             failures.push(format!(
-                "{name}: expected lines {expected:?}, reported {reported:?}"
+                "{name}: expected {{line: count}} {expected:?}, reported {reported:?}"
             ));
         }
 
@@ -179,13 +180,11 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         fs::copy(&path, &copy).unwrap();
         scan(&copy, true, api, config);
         let fixed_source = fs::read_to_string(&copy).unwrap();
-        let fixed = reported_lines(&copy, rule, api, config).len();
+        let fixed: usize = reported_lines(&copy, rule, api, config).values().sum();
         fs::remove_file(&copy).unwrap();
-        if fixed != 0 && fixed != expected.len() {
-            failures.push(format!(
-                "{name}: --fix left {fixed} of {} findings",
-                expected.len()
-            ));
+        let total: usize = expected.values().sum();
+        if fixed != 0 && fixed != total {
+            failures.push(format!("{name}: --fix left {fixed} of {total} findings"));
         }
 
         // `.after.yml` records what `--fix` really writes, so it is compared byte for byte and
