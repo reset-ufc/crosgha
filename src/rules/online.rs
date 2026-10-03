@@ -252,6 +252,8 @@ fn release_version(github: &GitHub, pin: &Pin, version: &str) -> Result<String, 
 }
 
 const TAGS_PER_PAGE: usize = 100;
+/// A server that ignores `page` would answer forever; the walk gives up after 10,000 tags.
+const MAX_TAG_PAGES: usize = 100;
 
 /// Visits the repository's tags as `(name, commit SHA)` until `visit` breaks, one request per
 /// 100 tags: https://docs.github.com/en/rest/repos/repos#list-repository-tags
@@ -261,13 +263,15 @@ fn each_tag(
     repo: &str,
     mut visit: impl FnMut(&str, &str) -> ControlFlow<()>,
 ) -> Result<(), ApiError> {
-    for page in 1.. {
-        let tags = github
-            .get(&format!(
-                "/repos/{owner}/{repo}/tags?per_page={TAGS_PER_PAGE}&page={page}"
-            ))?
-            .unwrap_or_default();
-        let tags = tags.as_array().map_or(&[][..], Vec::as_slice);
+    let mut previous = None;
+    for page in 1..=MAX_TAG_PAGES {
+        let path = format!("/repos/{owner}/{repo}/tags?per_page={TAGS_PER_PAGE}&page={page}");
+        let answer = github.get(&path)?.unwrap_or_default();
+        let tags = answer.as_array().map_or(&[][..], Vec::as_slice);
+        if !tags.is_empty() && previous.as_ref() == Some(&answer) {
+            let detail = format!("repeats page {}; the server ignores `page`", page - 1);
+            return Err(github.reject(&path, &detail));
+        }
         for tag in tags {
             let name = tag.get("name").and_then(|name| name.as_str());
             let sha = tag
@@ -280,10 +284,15 @@ fn each_tag(
             }
         }
         if tags.len() < TAGS_PER_PAGE {
-            break;
+            return Ok(());
         }
+        previous = Some(answer);
     }
-    Ok(())
+    let detail = format!(
+        "more than {} tags; the walk stopped",
+        MAX_TAG_PAGES * TAGS_PER_PAGE
+    );
+    Err(github.reject(&format!("/repos/{owner}/{repo}/tags"), &detail))
 }
 
 pub fn outdated(

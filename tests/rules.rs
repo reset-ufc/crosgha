@@ -36,9 +36,17 @@ fn logged_github() -> (String, Arc<Mutex<Vec<String>>>) {
 /// every path), the status line, extra header lines, and GitHub's `message`.
 type Failure = (&'static str, &'static str, &'static str, &'static str);
 
-/// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.
-/// The log holds every requested path in arrival order.
 fn failing_github(failures: &'static [Failure]) -> (String, Arc<Mutex<Vec<String>>>) {
+    github_server(failures, false)
+}
+
+/// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.
+/// With `ignore_page`, every `page=` answers like page 1, as a proxy that drops the parameter.
+/// The log holds every requested path in arrival order.
+fn github_server(
+    failures: &'static [Failure],
+    ignore_page: bool,
+) -> (String, Arc<Mutex<Vec<String>>>) {
     let log = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::clone(&log);
     let routes: serde_json::Map<String, serde_json::Value> =
@@ -67,7 +75,11 @@ fn failing_github(failures: &'static [Failure]) -> (String, Arc<Mutex<Vec<String
             let failure = failures
                 .iter()
                 .find(|(failing, ..)| *failing == "*" || *failing == path);
-            let (status, headers, body) = match (failure, routes.get(&path)) {
+            let route = match path.split_once("&page=") {
+                Some((before, _)) if ignore_page => format!("{before}&page=1"),
+                _ => path.clone(),
+            };
+            let (status, headers, body) = match (failure, routes.get(&route)) {
                 _ if !authorized => (
                     "401 Unauthorized",
                     "",
@@ -439,6 +451,49 @@ fn a_rejected_token_stops_further_requests() {
     assert!(
         (1..=3).contains(&requests),
         "{requests} requests with a rejected token"
+    );
+}
+
+/// A server that ignores `page` answers every tag page with the first one; the walk must stop
+/// instead of requesting forever, and the check that needed the tags is skipped.
+#[test]
+fn a_tag_page_that_repeats_stops_the_walk() {
+    let (api, log) = github_server(&[], true);
+    let mut child = bin()
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .args(["--persona", "auditor", "--fail-on", "none", "--no-config"])
+        .args(["--gh-token", TOKEN, "--gh-hostname", &api])
+        .arg(fixtures().join("online/impostor-commit.before.yml"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(60) {
+            child.kill().unwrap();
+            panic!("the tag walk never ended");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let output = child.wait_with_output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert_eq!(stderr.matches("repeats page 1").count(), 1, "{stderr}");
+    let pages = log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|path| path.starts_with("/repos/example/many-tags/tags"))
+        .count();
+    assert_eq!(pages, 2);
+    // Without the tags, the commit cannot be called an impostor.
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("cdcdcdcd"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
     );
 }
 

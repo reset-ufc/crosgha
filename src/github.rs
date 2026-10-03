@@ -88,6 +88,25 @@ impl GitHub {
         answer
     }
 
+    /// Caches `path` as failed although it was answered, because the answer is unusable (a page
+    /// that repeats the previous one). Like any failure, it is named once.
+    pub fn reject(&self, path: &str, detail: &str) -> ApiError {
+        let error = ApiError {
+            status: None,
+            rate_limited: false,
+            message: format!("GitHub API {path}: {detail}"),
+        };
+        let slot = Arc::clone(
+            self.cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(path.to_owned())
+                .or_default(),
+        );
+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(Err(error.clone()));
+        error
+    }
+
     /// Distinct failures of cached requests, in path order.
     pub fn failures(&self) -> Vec<ApiError> {
         let cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
