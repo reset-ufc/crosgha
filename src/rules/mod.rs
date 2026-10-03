@@ -370,7 +370,9 @@ pub fn detect_all(
             }
         }
     }
-    if settings.ignores {
+    // Few workflows carry an ignore comment, and a comment is a slice of the source.
+    let source = workflow.document.source();
+    if settings.ignores && IGNORE_MARKERS.iter().any(|marker| source.contains(marker)) {
         findings.retain(|finding| !ignored(workflow, finding));
     }
     finish(&mut findings, settings, file);
@@ -411,8 +413,10 @@ pub(super) fn ignored(workflow: &Workflow, finding: &Finding) -> bool {
         .any(|id| finding.answers_to(id))
 }
 
+const IGNORE_MARKERS: [&str; 2] = ["crosgha: ignore[", "zizmor: ignore["];
+
 fn ignore_list(comment: &str) -> Vec<&str> {
-    ["crosgha: ignore[", "zizmor: ignore["]
+    IGNORE_MARKERS
         .iter()
         .filter_map(|marker| comment.split_once(marker))
         .filter_map(|(_, rest)| rest.split_once(']'))
