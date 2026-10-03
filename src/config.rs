@@ -29,6 +29,9 @@ struct RuleConfig {
     options: Option<Value>,
 }
 
+/// Per directory, `.github/` comes before the directory itself, as zizmor's discovery orders
+/// `.github/zizmor.yml` before `zizmor.yml` (https://docs.zizmor.sh/configuration/#discovery);
+/// crosgha's own file wins over zizmor's.
 const NAMES: &[&str] = &[
     ".github/crosgha.yml",
     ".github/crosgha.yaml",
@@ -63,21 +66,27 @@ fn ignore_entry(entry: &str) -> Option<(String, Option<usize>)> {
 
 impl Config {
     /// The first config file found walking up from `input`, stopping at the Git root. A
-    /// `.github/workflows` directory, or a file in it, starts two levels up so a workflow named
-    /// `zizmor.yml` is never read as configuration.
+    /// repository root, its `.github`, its `.github/workflows`, and a workflow in it all start at
+    /// the root, so the config never depends on how inputs are spelled or ordered, and a workflow
+    /// named `zizmor.yml` is never read as configuration.
     pub fn discover(input: &Path) -> Result<Option<(PathBuf, Self)>, String> {
-        let input = fs::canonicalize(input)
-            .map_err(|error| format!("cannot resolve `{}`: {error}", input.display()))?;
+        // A symlinked workflow belongs to the directory that holds the link.
         let directory = if input.is_dir() {
-            Some(input.as_path())
+            input
         } else {
-            input.parent()
+            input
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new("."))
         };
-        let mut current = match directory {
-            Some(workflows) if workflows.ends_with(".github/workflows") => {
-                workflows.parent().and_then(Path::parent)
-            }
-            other => other,
+        let directory = fs::canonicalize(directory)
+            .map_err(|error| format!("cannot resolve `{}`: {error}", input.display()))?;
+        let mut current = if directory.ends_with(".github/workflows") {
+            directory.parent().and_then(Path::parent)
+        } else if directory.ends_with(".github") {
+            directory.parent()
+        } else {
+            Some(directory.as_path())
         };
         while let Some(directory) = current {
             if let Some(path) = NAMES

@@ -1734,6 +1734,63 @@ fn each_input_uses_its_own_config_whatever_the_order() {
     assert_eq!(scan(&["insecure", "configured"]), alone);
 }
 
+#[test]
+fn the_config_depends_on_the_repository_not_on_how_inputs_are_spelled() {
+    // The root `crosgha.yml` disables persist-credentials; `.github/zizmor.yml` does not, and
+    // crosgha's own file wins over zizmor's wherever each sits.
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let repo = std::env::temp_dir().join(format!("crosgha-config-spelling-{unique}"));
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    fs::create_dir_all(repo.join(".github/workflows")).unwrap();
+    fs::copy(
+        fixture("checkout-credentials.before.yml"),
+        repo.join(".github/workflows/ci.yml"),
+    )
+    .unwrap();
+    fs::write(
+        repo.join("crosgha.yml"),
+        "rules:\n  persist-credentials:\n    disable: true\n",
+    )
+    .unwrap();
+    fs::write(repo.join(".github/zizmor.yml"), "rules: {}\n").unwrap();
+    let scan = |inputs: &[&str]| {
+        let output = bin()
+            .current_dir(&repo)
+            .args(["--offline", "--fail-on", "none", "-f", "agent"])
+            .args(inputs)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{inputs:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let reports: Vec<(&[&str], String)> = [
+        &["."][..],
+        &[".github"],
+        &[".github/workflows"],
+        &[".github/workflows/ci.yml"],
+        &[".github", ".github/workflows/ci.yml"],
+        &[".github/workflows/ci.yml", ".github"],
+    ]
+    .into_iter()
+    .map(|inputs| (inputs, scan(inputs)))
+    .collect();
+    fs::remove_dir_all(&repo).unwrap();
+
+    for (inputs, report) in &reports {
+        assert!(
+            !report.contains("persist-credentials"),
+            "{inputs:?}: {report}"
+        );
+    }
+}
+
 /// A throwaway repository whose git ignores the user's global and system config (hooksPath, signing).
 fn git_repo(name: &str) -> PathBuf {
     let unique = SystemTime::now()
