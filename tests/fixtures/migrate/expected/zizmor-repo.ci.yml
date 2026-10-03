@@ -11,6 +11,8 @@ jobs:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
         with:
           persist-credentials: false
+      - name: Install zizmor
+        run: pip install zizmor==1.30.0
       - name: Run zizmor
         uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
         with:
@@ -25,3 +27,26 @@ jobs:
         run: |
           zizmor --format sarif . > results.sarif
           cat results.sarif
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Lint
+        run: pip install zizmor ruff
+      - run: ruff check .
+      - name: Build
+        run: pip install zizmor && npm ci && npm run build
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          persona: auditor
+          advanced-security: 'false'

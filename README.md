@@ -117,8 +117,9 @@ crosgha hook uninstall
 - **Action steps:** `zizmorcore/zizmor-action`, `raven-actions/actionlint`, `reviewdog/action-actionlint`, and
   `rhysd/actionlint` steps become crosgha Action steps. zizmor steps keep their `with:` block (the crosgha Action
   accepts zizmor-action's inputs); actionlint steps lose theirs.
-- **Shell steps:** steps that only install the tool are removed. Steps that only run it become crosgha Action steps,
-  with CLI flags translated to inputs. Steps that mix the tool with other commands are listed for a manual change.
+- **Shell steps:** steps that only install the tool are removed, unless a step of the same job still runs it. Steps
+  that only run it become crosgha Action steps, with CLI flags translated to inputs. Steps that install or run the
+  tool next to other commands stay in place and are listed for a manual change.
 - **Config:** `zizmor.yml` becomes `crosgha.yml` next to it, with rule keys renamed where the match is one to one and
   keys without a crosgha rule dropped. `actionlint.yaml` self-hosted runner labels become
   `rules.self-hosted-runner.config.labels`. The original config stays in place.

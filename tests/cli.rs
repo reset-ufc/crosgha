@@ -872,6 +872,16 @@ fn migrate_converts_configs_and_shell_steps() {
                     "{stderr}"
                 );
                 assert!(stderr.contains("ci.yml:21"), "{stderr}");
+                // Steps that install zizmor next to other tools or commands stay, with a note.
+                for line in ["ci.yml:32", "ci.yml:35"] {
+                    assert!(
+                        stderr
+                            .lines()
+                            .any(|note| note.contains(line)
+                                && note.contains("next to other commands")),
+                        "{line}: {stderr}"
+                    );
+                }
             }
             _ => {
                 assert!(stderr.contains("`config-variables`"), "{stderr}");
