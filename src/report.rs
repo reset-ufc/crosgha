@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::Inspection,
-    fix::FixOutcome,
     policy::Severity,
     rules::{self, Finding, Located, Rule},
 };
@@ -28,6 +27,8 @@ pub enum Format {
     Agent,
 }
 
+/// `fix` is whether `--fix` was requested; each file's `unwritten` says whether its fixes reached
+/// the disk.
 pub fn render(
     format: Format,
     files: &[FileReport],
@@ -37,16 +38,36 @@ pub fn render(
 ) -> String {
     match format {
         Format::Text => text(files, repository, errors, fix),
-        Format::Json => json(files, repository, errors, fix),
-        Format::Sarif => sarif(files, repository, errors, fix),
-        Format::Github => github(files, repository, fix),
-        Format::Agent => agent(files, repository, fix),
+        Format::Json => json(files, repository, errors),
+        Format::Sarif => sarif(files, repository, errors),
+        Format::Github => github(files, repository),
+        Format::Agent => agent(files, repository),
     }
 }
 
 pub struct FileReport {
     pub path: PathBuf,
     pub inspection: Inspection,
+    /// Why the verified fixes of this file were not written.
+    pub unwritten: Option<String>,
+}
+
+impl FileReport {
+    /// The source and findings to report: what remains in the written fix, or the original.
+    pub fn shown(&self) -> (&str, &[Finding]) {
+        match (&self.inspection.fix, &self.unwritten) {
+            (Some(outcome), None) => (&outcome.source, &outcome.remaining),
+            _ => (&self.inspection.source, &self.inspection.findings),
+        }
+    }
+
+    /// Fixes written to the file.
+    pub fn fixed(&self) -> usize {
+        match (&self.inspection.fix, &self.unwritten) {
+            (Some(outcome), None) => outcome.applied(),
+            _ => 0,
+        }
+    }
 }
 
 /// A workflow that could not be read or parsed; the text formats print it on stderr as it
@@ -61,7 +82,7 @@ pub struct FileError {
 fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix: bool) -> String {
     let mut output = String::new();
     let mut shown = Vec::new();
-    for (path, source, findings) in workflows(files, fix) {
+    for (path, source, findings) in workflows(files) {
         for finding in findings {
             diagnostic(&mut output, path, Some(source), finding);
             shown.push(finding);
@@ -77,33 +98,26 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
         );
         shown.push(&located.finding);
     }
-    if fix {
-        let changed = files
-            .iter()
-            .filter(|file| {
-                file.inspection
-                    .fix
-                    .as_ref()
-                    .is_some_and(|outcome| outcome.applied() > 0)
-            })
-            .count();
+    for (path, finding, _, reason) in attempts(files) {
+        if let Some(reason) = reason {
+            let _ = writeln!(
+                output,
+                "Not fixed: {}:{}:{} [{}]: {reason}",
+                path.display(),
+                finding.line,
+                finding.column,
+                finding.rule.id
+            );
+        }
+    }
+    let fixed: usize = files.iter().map(FileReport::fixed).sum();
+    if fixed > 0 {
+        let changed = files.iter().filter(|file| file.fixed() > 0).count();
         output.push_str(&format!(
             "{SUCCESS}Fixed{SUCCESS:#} {} in {}.\n",
-            count(fixed(files), "finding"),
+            count(fixed, "finding"),
             count(changed, "workflow file")
         ));
-        for (path, finding, reason) in attempts(files) {
-            if let Some(reason) = reason {
-                let _ = writeln!(
-                    output,
-                    "Not fixed: {}:{}:{} [{}]: {reason}",
-                    path.display(),
-                    finding.line,
-                    finding.column,
-                    finding.rule.id
-                );
-            }
-        }
         if !shown.is_empty() {
             output.push_str(&format!(
                 "Remaining: {}{}.\n",
@@ -132,7 +146,7 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
         breakdown(&shown)
     ));
     let fixable = shown.iter().filter(|finding| finding.fix.is_some()).count();
-    if fixable > 0 {
+    if fixable > 0 && !fix {
         output.push_str(&format!(
             "{} a fix: rerun with {BOLD}--fix{BOLD:#}.\n",
             match fixable {
@@ -328,33 +342,20 @@ pub fn rules_json() -> String {
     format!("{report:#}\n")
 }
 
-/// Each workflow's reported findings with the source their lines point into: what remains in the
-/// fixed source after `--fix`, or everything found in the original.
-fn workflows(files: &[FileReport], fix: bool) -> impl Iterator<Item = (&Path, &str, &[Finding])> {
-    files
-        .iter()
-        .filter_map(move |file| match (&file.inspection.fix, fix) {
-            (Some(outcome), true) => Some((
-                file.path.as_path(),
-                outcome.source.as_str(),
-                &outcome.remaining[..],
-            )),
-            (None, true) => None,
-            (_, false) => Some((
-                file.path.as_path(),
-                file.inspection.source.as_str(),
-                &file.inspection.findings[..],
-            )),
-        })
+/// Each workflow's reported findings with the source their lines point into.
+fn workflows(files: &[FileReport]) -> impl Iterator<Item = (&Path, &str, &[Finding])> {
+    files.iter().map(|file| {
+        let (source, findings) = file.shown();
+        (file.path.as_path(), source, findings)
+    })
 }
 
 /// Every reported finding with its path: what remains after `--fix`, or everything found.
 fn reported<'a>(
     files: &'a [FileReport],
     repository: &'a [Located],
-    fix: bool,
 ) -> Vec<(&'a Path, &'a Finding)> {
-    workflows(files, fix)
+    workflows(files)
         .flat_map(|(path, _, findings)| findings.iter().map(move |finding| (path, finding)))
         .chain(
             repository
@@ -364,26 +365,27 @@ fn reported<'a>(
         .collect()
 }
 
-fn fixed(files: &[FileReport]) -> usize {
-    files
-        .iter()
-        .filter_map(|file| file.inspection.fix.as_ref())
-        .map(FixOutcome::applied)
-        .sum()
-}
-
-/// Every proposed fix with its finding in the original source and why it was not applied.
-fn attempts(files: &[FileReport]) -> impl Iterator<Item = (&Path, &Finding, Option<&str>)> {
+/// Every proposed fix with its finding in the original source, its status, and why it is not
+/// in the file.
+fn attempts(
+    files: &[FileReport],
+) -> impl Iterator<Item = (&Path, &Finding, &'static str, Option<&str>)> {
     files.iter().flat_map(|file| {
         file.inspection
             .fix
             .iter()
             .flat_map(|outcome| &outcome.attempts)
             .map(|attempt| {
+                let (status, reason) = match (&attempt.rejected, &file.unwritten) {
+                    (Some(reason), _) => ("rejected", Some(reason.as_str())),
+                    (None, Some(reason)) => ("not-written", Some(reason.as_str())),
+                    (None, None) => ("applied", None),
+                };
                 (
                     file.path.as_path(),
                     &file.inspection.findings[attempt.finding],
-                    attempt.rejected.as_deref(),
+                    status,
+                    reason,
                 )
             })
     })
@@ -397,8 +399,8 @@ fn equivalents(rule: &Rule) -> Value {
 }
 
 /// A stable, versioned JSON report for scripts and the Action.
-fn json(files: &[FileReport], repository: &[Located], errors: &[FileError], fix: bool) -> String {
-    let findings: Vec<Value> = reported(files, repository, fix)
+fn json(files: &[FileReport], repository: &[Located], errors: &[FileError]) -> String {
+    let findings: Vec<Value> = reported(files, repository)
         .into_iter()
         .map(|(path, finding)| {
             json!({
@@ -417,14 +419,14 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
         })
         .collect();
     let fixes: Vec<Value> = attempts(files)
-        .map(|(path, finding, reason)| {
+        .map(|(path, finding, status, reason)| {
             json!({
                 "rule": finding.rule.id,
                 "path": path.display().to_string(),
                 "line": finding.line,
                 "column": finding.column,
                 "location": finding.location,
-                "status": if reason.is_some() { "rejected" } else { "applied" },
+                "status": status,
                 "reason": reason,
             })
         })
@@ -439,7 +441,7 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[FileError], fix:
         "summary": {
             "files": files.len(),
             "findings": findings.len(),
-            "fixed": fixed(files),
+            "fixed": files.iter().map(FileReport::fixed).sum::<usize>(),
             "errors": errors.len(),
         },
         "findings": findings,
@@ -470,12 +472,7 @@ const QUALITY_TAGS: &[&str] = &[
 /// SARIF 2.1.0 with the fields GitHub code scanning requires:
 /// https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support
 /// `partialFingerprints` is left to `upload-sarif`, which computes GitHub's line hash.
-pub fn sarif(
-    files: &[FileReport],
-    repository: &[Located],
-    errors: &[FileError],
-    fix: bool,
-) -> String {
+pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[FileError]) -> String {
     let catalog: Vec<&Rule> = rules::all().map(|(rule, _)| rule).collect();
     let descriptors: Vec<Value> = catalog
         .iter()
@@ -523,7 +520,7 @@ pub fn sarif(
             })
         })
         .collect();
-    let results: Vec<Value> = reported(files, repository, fix)
+    let results: Vec<Value> = reported(files, repository)
         .into_iter()
         .map(|(path, finding)| {
             let index = catalog
@@ -588,14 +585,14 @@ pub fn sarif(
 
 /// `::error`/`::warning`/`::notice` workflow commands, escaped like actions/toolkit does:
 /// https://github.com/actions/toolkit/blob/main/packages/core/src/command.ts
-fn github(files: &[FileReport], repository: &[Located], fix: bool) -> String {
+fn github(files: &[FileReport], repository: &[Located]) -> String {
     let data = |text: &str| {
         text.replace('%', "%25")
             .replace('\r', "%0D")
             .replace('\n', "%0A")
     };
     let property = |text: &str| data(text).replace(':', "%3A").replace(',', "%2C");
-    reported(files, repository, fix)
+    reported(files, repository)
         .into_iter()
         .map(|(path, finding)| {
             let command = match finding.severity {
@@ -624,8 +621,8 @@ fn github(files: &[FileReport], repository: &[Located], fix: bool) -> String {
 
 /// `path:line:col: severity rule: message help: summary`, one line each, like oxlint's agent
 /// format; the rule summary is the help because it states what the rule requires.
-fn agent(files: &[FileReport], repository: &[Located], fix: bool) -> String {
-    reported(files, repository, fix)
+fn agent(files: &[FileReport], repository: &[Located]) -> String {
+    reported(files, repository)
         .into_iter()
         .map(|(path, finding)| {
             let line = format!(

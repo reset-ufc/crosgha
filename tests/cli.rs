@@ -214,6 +214,11 @@ fn invalid_workflow_does_not_hide_findings_in_the_others() {
     let json = bin().args(["-f", "json"]).arg(&dir).output().unwrap();
     let sarif = bin().args(["-f", "sarif"]).arg(&dir).output().unwrap();
     let fix = bin().arg("--fix").arg(&dir).output().unwrap();
+    let fix_json = bin()
+        .args(["--fix", "-f", "json"])
+        .arg(&dir)
+        .output()
+        .unwrap();
     let after = fs::read(&valid).unwrap();
     fs::remove_dir_all(&dir).unwrap();
 
@@ -259,11 +264,30 @@ fn invalid_workflow_does_not_hide_findings_in_the_others() {
     assert_eq!(before, after);
     let stdout = String::from_utf8(fix.stdout).unwrap();
     assert_eq!(
-        stdout.matches("[persist-credentials]").count(),
+        stdout.matches("warning[persist-credentials]").count(),
+        3,
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches("[persist-credentials]: not written because a workflow failed to parse")
+            .count(),
         3,
         "{stdout}"
     );
     assert!(!stdout.contains("Fixed"), "{stdout}");
+    assert!(!stdout.contains("rerun with --fix"), "{stdout}");
+    // The report never claims a fix that was not written.
+    assert_eq!(fix_json.status.code(), Some(2));
+    let fix_json: serde_json::Value = serde_json::from_slice(&fix_json.stdout).unwrap();
+    assert_eq!(fix_json["summary"]["fixed"], 0, "{fix_json}");
+    assert_eq!(fix_json["summary"]["findings"], 3, "{fix_json}");
+    let fixes = fix_json["fixes"].as_array().unwrap();
+    assert_eq!(fixes.len(), 3, "{fix_json}");
+    assert!(
+        fixes.iter().all(|fix| fix["status"] == "not-written"),
+        "{fix_json}"
+    );
 }
 
 #[test]

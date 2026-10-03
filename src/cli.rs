@@ -230,7 +230,11 @@ pub fn run() -> ExitCode {
     );
     for ((path, _), inspected) in workflows.into_iter().zip(inspections) {
         match inspected {
-            Ok(inspection) => files.push(report::FileReport { path, inspection }),
+            Ok(inspection) => files.push(report::FileReport {
+                path,
+                inspection,
+                unwritten: None,
+            }),
             Err(error) => {
                 report::error(format_args!("{}: {error}", path.display()));
                 failures.push(report::FileError {
@@ -240,8 +244,6 @@ pub fn run() -> ExitCode {
             }
         }
     }
-    // One unreadable workflow must not hide the others' findings, but exit 2 promises no writes.
-    let fix = args.fix && failures.is_empty();
     let mut github_dirs: Vec<(PathBuf, usize)> = args
         .paths
         .iter()
@@ -325,22 +327,41 @@ pub fn run() -> ExitCode {
             "the scan is incomplete: some online checks did not run; exiting with status 2",
         );
     }
-    let fix = fix && !incomplete;
 
-    if fix {
-        for file in &files {
-            if let Some(outcome) = &file.inspection.fix
-                && outcome.applied() > 0
-                && let Err(error) = filesystem::write_verified(&file.path, &outcome.source)
+    let mut write_failed = false;
+    if args.fix {
+        // Exit 2 promises that no file changed, so a workflow that failed to parse or an incomplete
+        // scan blocks every write; the report then shows the original findings.
+        let blocked = if !failures.is_empty() {
+            Some("not written because a workflow failed to parse".to_owned())
+        } else if incomplete {
+            Some("not written because the scan is incomplete".to_owned())
+        } else {
+            None
+        };
+        for file in &mut files {
+            let Some(outcome) = file
+                .inspection
+                .fix
+                .as_ref()
+                .filter(|outcome| outcome.applied() > 0)
+            else {
+                continue;
+            };
+            file.unwritten = match &blocked {
+                Some(reason) => Some(reason.clone()),
+                None => filesystem::write_verified(&file.path, &outcome.source).err(),
+            };
+            if blocked.is_none()
+                && let Some(error) = &file.unwritten
             {
                 report::error(format_args!("{}: {error}", file.path.display()));
-                return ExitCode::from(2);
+                write_failed = true;
             }
         }
     }
     if let Some(target) = &args.sarif_file
-        && let Err(error) =
-            std::fs::write(target, report::sarif(&files, &repository, &failures, fix))
+        && let Err(error) = std::fs::write(target, report::sarif(&files, &repository, &failures))
     {
         report::error(format_args!("{}: {error}", target.display()));
         return ExitCode::from(2);
@@ -354,22 +375,15 @@ pub fn run() -> ExitCode {
     );
     anstream::print!(
         "{}",
-        report::render(format, &files, &repository, &failures, fix)
+        report::render(format, &files, &repository, &failures, args.fix)
     );
-    if !failures.is_empty() || incomplete {
+    if !failures.is_empty() || incomplete || write_failed {
         return ExitCode::from(2);
     }
 
     let should_fail = files.iter().any(|file| {
-        let findings = if fix {
-            file.inspection
-                .fix
-                .as_ref()
-                .map_or(&[][..], |outcome| outcome.remaining.as_slice())
-        } else {
-            &file.inspection.findings
-        };
-        findings
+        file.shown()
+            .1
             .iter()
             .any(|finding| args.fail_on.matches(finding.severity))
     });

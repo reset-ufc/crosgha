@@ -103,7 +103,9 @@ and verify its intended node changes remains detection-only.
 Text (`plain` in zizmor's terms), JSON, SARIF, GitHub annotations, and agent lines render the same findings; no format runs its
 own detection. JSON is versioned (`version: 1`) with a `summary` and one object per finding,
 including its span and equivalents. Under `--fix`, `fixes` lists every proposed fix with its
-status: `applied`, or `rejected` with the validation reason. SARIF follows GitHub's
+status: `applied`, `rejected` with the validation reason, or `not-written` with the reason the
+file kept its original content. Every format reports what is on disk: the findings that remain
+in a written file, and the original findings of a file whose fixes were not written. SARIF follows GitHub's
 [SARIF support](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support):
 - every rule has descriptions, help, a default level, and a precision derived from its persona;
 - security rules carry `security-severity`, and maintainability and correctness rules carry
