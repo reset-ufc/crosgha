@@ -13,7 +13,11 @@ use clap::ValueEnum;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use crate::{filesystem, rules, rules::common, workflow::Workflow};
+use crate::{
+    filesystem, rules,
+    rules::{common, expression},
+    workflow::Workflow,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Tool {
@@ -78,8 +82,9 @@ pub fn run(
     for file in filesystem::discover(path)? {
         let located = |error: String| format!("{}: {error}", file.display());
         // A symbolic link is refused only when it needs an edit, below.
-        let source = filesystem::read(&file, false).map_err(located)?;
-        let workflow = Workflow::parse(source).map_err(located)?;
+        let source = filesystem::read(&file)
+            .map_err(|error| located(format!("cannot read workflow: {error}")))?;
+        let workflow = Workflow::parse(source.text.clone()).map_err(located)?;
         let mut edits = Vec::new();
         let mut steps = 0;
         for job in common::jobs(&workflow) {
@@ -161,15 +166,13 @@ pub fn run(
         if edits.is_empty() {
             continue;
         }
-        if fs::symlink_metadata(&file).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-            return Err(located("refusing to replace a symbolic link".to_owned()));
-        }
+        filesystem::refuse_link(&file).map_err(located)?;
         summary.steps += steps;
         summary.files += 1;
         let migrated = apply(workflow.document.source(), edits);
         Workflow::parse(migrated.clone())
             .map_err(|error| located(format!("migration produced invalid YAML: {error}")))?;
-        rewrites.push((file, migrated));
+        rewrites.push((file, source, migrated));
     }
 
     let config = match filesystem::github_dir(path) {
@@ -181,8 +184,8 @@ pub fn run(
     };
 
     // Every file is migrated in memory before any is written.
-    for (file, migrated) in rewrites {
-        filesystem::write_verified(&file, &migrated)
+    for (file, source, migrated) in rewrites {
+        filesystem::replace(&file, &source, &migrated)
             .map_err(|error| format!("{}: {error}", file.display()))?;
     }
     if let Some((target, text)) = config {
@@ -477,20 +480,13 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
 /// Whether the word holds shell syntax anywhere (`.;`, `2>/dev/null`, `$(...)`, `$VAR`); an
 /// Action input would pass it on literally. `${{ ... }}` is expanded by Actions, not the shell.
 fn shell_syntax(word: &str) -> bool {
-    let mut rest = word;
-    let mut outside = String::new();
-    while let Some(start) = rest.find("${{") {
-        outside.push_str(&rest[..start]);
-        match rest[start..].find("}}") {
-            Some(end) => rest = &rest[start + end + 2..],
-            None => {
-                rest = &rest[start..];
-                break;
-            }
-        }
-    }
-    outside.push_str(rest);
-    outside.contains([';', '>', '<', '|', '&', '`', '$'])
+    let expressions = expression::spans(word);
+    word.char_indices().any(|(index, char)| {
+        ";><|&`$".contains(char)
+            && !expressions
+                .iter()
+                .any(|&(start, end)| (start..end).contains(&index))
+    })
 }
 
 /// Replaces the step's `run:` with `uses:` and `with:`, and drops `shell:`, which `uses`

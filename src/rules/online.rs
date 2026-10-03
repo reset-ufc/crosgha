@@ -5,7 +5,7 @@ use std::{ops::ControlFlow, path::Path, sync::PoisonError};
 
 use yamlpath::Route;
 
-use super::{Finding, Located, Options, Rule, common};
+use super::{Finding, Located, Options, Place, Rule, common};
 use crate::{
     github::{ApiError, GitHub},
     policy::{Persona, Severity},
@@ -545,6 +545,7 @@ pub fn settings(github: &GitHub, repository: &str, path: &Path) -> Result<Vec<Lo
         .into_iter()
         .map(|message| Located {
             path: path.to_path_buf(),
+            place: Place::Repository { anchor: None },
             finding: Finding {
                 rule: &SETTINGS,
                 severity: SETTINGS.severity,

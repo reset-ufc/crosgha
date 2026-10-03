@@ -126,7 +126,7 @@ pub enum ChangeKind {
     Replace,
 }
 
-pub use repository::{Located, Parsed, Scanned, local_actions};
+pub use repository::{Located, Parsed, Place, Scanned, local_actions};
 
 /// The rule's `rules.<id>.config` block, if the config has one.
 pub type Options<'a> = Option<&'a yaml_serde::Value>;

@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    fmt::Display,
     io::Write,
     path::{Path, PathBuf},
     process::ExitCode,
@@ -7,7 +8,13 @@ use std::{
 
 use clap::{ColorChoice, Parser, Subcommand};
 
-use crate::{config, engine, filesystem, github::GitHub, hook, migrate, policy, report, rules};
+use crate::{
+    config, engine, filesystem,
+    github::GitHub,
+    hook, migrate, policy,
+    report::{self, FileReport, RunError, Unwritten},
+    rules::{self, Located, Place},
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -23,9 +30,8 @@ struct Args {
     #[arg(value_name = "PATH", default_value = ".github/workflows")]
     paths: Vec<PathBuf>,
 
-    /// Apply verified fixes to workflow files.
-    #[arg(long)]
-    fix: bool,
+    #[command(flatten)]
+    modes: Modes,
 
     /// Sensitivity: regular (default), pedantic (adds code smells), or auditor (everything).
     #[arg(long, value_enum, default_value_t = policy::Persona::Regular)]
@@ -78,11 +84,6 @@ struct Args {
     #[arg(long, env = "GITHUB_REPOSITORY")]
     repository: Option<String>,
 
-    /// Print every rule with its taxonomy tag, severity, persona, and scope, then exit;
-    /// `--format json` adds each rule's summary, equivalents, and whether it reads a config.
-    #[arg(long)]
-    list_rules: bool,
-
     /// Also write a SARIF report to this file, whatever `--format` prints.
     #[arg(long, value_name = "FILE")]
     sarif_file: Option<PathBuf>,
@@ -99,6 +100,30 @@ struct Args {
     /// Minimum severity that makes a scan fail (any, note, warning, error, or none).
     #[arg(long, value_enum, default_value_t = policy::FailOn::Any)]
     fail_on: policy::FailOn,
+}
+
+/// Flags that make a run do something other than a read-only scan, which the pre-push hook must
+/// not store.
+#[derive(Debug, clap::Args)]
+struct Modes {
+    /// Apply verified fixes to workflow files.
+    #[arg(long)]
+    fix: bool,
+
+    /// Print every rule with its taxonomy tag, severity, persona, and scope, then exit;
+    /// `--format json` adds each rule's summary, equivalents, and whether it reads a config.
+    #[arg(long)]
+    list_rules: bool,
+}
+
+impl Modes {
+    /// The first mode flag set. Destructured without `..`, so a new mode cannot be left out.
+    fn flag(&self) -> Option<&'static str> {
+        let Modes { fix, list_rules } = self;
+        [(*fix, "--fix"), (*list_rules, "--list-rules")]
+            .into_iter()
+            .find_map(|(set, flag)| set.then_some(flag))
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -129,6 +154,15 @@ enum Commands {
     },
 }
 
+impl Commands {
+    fn name(&self) -> &'static str {
+        match self {
+            Commands::Migrate { .. } => "migrate",
+            Commands::Hook { .. } => "hook",
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum HookAction {
     /// Write the pre-push hook; arguments after `--` are passed to every scan.
@@ -155,28 +189,48 @@ pub fn run() -> ExitCode {
         ColorChoice::Always => anstream::ColorChoice::Always.write_global(),
         ColorChoice::Never => anstream::ColorChoice::Never.write_global(),
     }
-    if let Some(Commands::Migrate {
-        from,
-        action,
-        action_version,
-        path,
-    }) = &args.command
-    {
-        return run_migrate(*from, action.clone().zip(action_version.clone()), path);
+    match &args.command {
+        Some(Commands::Migrate {
+            from,
+            action,
+            action_version,
+            path,
+        }) => return run_migrate(*from, action.clone().zip(action_version.clone()), path),
+        Some(Commands::Hook { action }) => return run_hook(action),
+        None => {}
     }
-    if let Some(Commands::Hook { action }) = &args.command {
-        return run_hook(action);
-    }
-    if args.list_rules {
+    if args.modes.list_rules {
         return match args.format {
             None | Some(report::Format::Text) => emit(&report::rules(), ExitCode::SUCCESS),
             Some(report::Format::Json) => emit(&report::rules_json(), ExitCode::SUCCESS),
-            Some(_) => {
-                report::error("--list-rules prints text or json");
-                ExitCode::from(2)
-            }
+            Some(_) => fail("--list-rules prints text or json"),
         };
     }
+    match scan(&args) {
+        Ok(mut scan) => {
+            if args.modes.fix {
+                write_fixes(&mut scan.files, &scan.errors);
+            }
+            finish(&args, &scan)
+        }
+        Err(error) => fail(error),
+    }
+}
+
+/// Reports `error` and exits 2.
+fn fail(error: impl Display) -> ExitCode {
+    report::error(error);
+    ExitCode::from(2)
+}
+
+/// What a scan found, and what kept it from checking everything.
+struct Scan {
+    files: Vec<FileReport>,
+    repository: Vec<Located>,
+    errors: Vec<RunError>,
+}
+
+fn scan(args: &Args) -> Result<Scan, String> {
     // Each workflow, `.github`, and Dependabot file is paired with the index of its input path.
     let (dependabot, inputs): (Vec<_>, Vec<_>) = args
         .paths
@@ -184,38 +238,13 @@ pub fn run() -> ExitCode {
         .cloned()
         .zip(0..)
         .partition(|(path, _)| filesystem::is_dependabot(path));
-    let mut workflows = Vec::new();
-    for (path, input) in &inputs {
-        match filesystem::discover(path) {
-            Ok(found) => workflows.extend(found.into_iter().map(|workflow| (workflow, *input))),
-            Err(error) => {
-                report::error(error);
-                return ExitCode::from(2);
-            }
-        }
-    }
-    workflows.sort();
-    let mut seen = HashSet::new();
-    workflows.retain(|(path, _)| seen.insert(filesystem::identity(path)));
-    // A link to another scanned workflow is reported, and fixed, once through its target.
-    workflows.retain(|(path, _)| {
-        filesystem::link_target(path).is_none_or(|target| !seen.contains(&target))
-    });
-
-    let mut files = Vec::new();
-    let mut failures: Vec<report::FileError> = Vec::new();
+    let workflows = discover(&inputs)?;
     let token = args
         .gh_token
         .clone()
         .or_else(|| std::env::var("GITHUB_TOKEN").ok())
         .filter(|token| !token.is_empty());
-    let (mut configs, owners) = match load_configs(&args) {
-        Ok(loaded) => loaded,
-        Err(error) => {
-            report::error(error);
-            return ExitCode::from(2);
-        }
-    };
+    let (mut configs, owners) = load_configs(args)?;
     for id in configs.iter().flat_map(rules::unused_options) {
         report::warning(format_args!(
             "`rules.{id}.config` has no crosgha equivalent and is ignored"
@@ -246,54 +275,31 @@ pub fn run() -> ExitCode {
         &workflows,
         &mut configs,
         &mut settings,
-        |paths, settings| engine::inspect_files(paths, args.fix, settings),
+        |paths, settings| engine::inspect_files(paths, args.modes.fix, settings),
     );
+    let mut files = Vec::new();
+    let mut errors = Vec::new();
     for ((path, _), inspected) in workflows.into_iter().zip(inspections) {
         match inspected {
-            Ok(inspection) => files.push(report::FileReport {
+            Ok(inspection) => files.push(FileReport {
                 path,
                 inspection,
                 unwritten: None,
             }),
-            Err(error) => {
-                report::error(format_args!("{}: {error}", path.display()));
-                failures.push(report::FileError {
-                    path: Some(path),
-                    message: error,
-                });
+            Err(message) => {
+                report::error(format_args!("{}: {message}", path.display()));
+                errors.push(RunError::File { path, message });
             }
         }
     }
-    let mut github_dirs: Vec<(PathBuf, usize)> = args
-        .paths
-        .iter()
-        .zip(0..)
-        .filter_map(|(path, input)| filesystem::github_dir(path).map(|github| (github, input)))
-        .collect();
-    github_dirs.sort();
-    let mut seen = HashSet::new();
-    github_dirs.retain(|(github, _)| seen.insert(filesystem::identity(github)));
-    let github_dirs = owned(github_dirs);
-    // A Dependabot file inside a scanned `.github` is already checked by the repository rules.
-    let scanned: Vec<PathBuf> = github_dirs
-        .iter()
-        .filter_map(|(github, _)| github.canonicalize().ok())
-        .collect();
-    let dependabot = owned(dependabot)
-        .into_iter()
-        .filter(|(path, _)| {
-            path.canonicalize()
-                .ok()
-                .and_then(|path| path.parent().map(Path::to_path_buf))
-                .is_none_or(|parent| !scanned.contains(&parent))
-        })
-        .collect::<Vec<_>>();
+    let github_dirs = owned(github_dirs(&args.paths));
+    let dependabot = outside(owned(dependabot), &github_dirs);
     // Repository rules read the workflows parsed above instead of reading them again.
     let parsed: rules::Scanned = files
         .iter()
         .map(|file| {
             let parsed = rules::Parsed {
-                source: &file.inspection.source,
+                source: &file.inspection.source.text,
                 local_actions: &file.inspection.local_actions,
             };
             (filesystem::identity(&file.path), parsed)
@@ -320,23 +326,21 @@ pub fn run() -> ExitCode {
                 .collect()
         },
     ));
-    let mut repository = match repository.into_iter().collect::<Result<Vec<_>, _>>() {
-        Ok(found) => found.into_iter().flatten().collect::<Vec<_>>(),
-        Err(error) => {
-            report::error(error);
-            return ExitCode::from(2);
-        }
-    };
+    let mut repository: Vec<Located> = repository
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
     // A GitHub API failure (rate limit, 5xx, network, bad token) skips only the online checks that
     // needed the answer; the rest is still reported. The scan is then incomplete and exits 2
     // without writing fixes, so CI does not pass on checks that never ran. A settings read the token
     // is not permitted to make is expected in Actions and only skips `repo-org-settings`.
-    let mut skipped = Vec::new();
     if let Some(github) = &settings.github {
         for failure in github.failures() {
             let message = format!("{failure}; online checks that needed it were skipped");
-            report::warning(&message);
-            skipped.push(message);
+            report::warning(format_args!("{message}, so the scan is incomplete"));
+            errors.push(RunError::Skipped(message));
         }
     }
     if let Some(name) = &args.repository {
@@ -349,70 +353,136 @@ pub fn run() -> ExitCode {
                 Ok(found) => repository.extend(found),
                 Err(error) => {
                     let message = format!("repo-org-settings was skipped: {error}");
-                    report::warning(&message);
-                    if !error.denied() {
-                        skipped.push(message);
+                    if error.denied() {
+                        report::warning(&message);
+                    } else {
+                        report::warning(format_args!("{message}; the scan is incomplete"));
+                        errors.push(RunError::Skipped(message));
                     }
                 }
             }
         }
     }
-    let incomplete = !skipped.is_empty();
-    if incomplete {
-        report::warning(
-            "the scan is incomplete: some online checks did not run; exiting with status 2",
-        );
-    }
+    anchor(&mut repository, &files);
+    Ok(Scan {
+        files,
+        repository,
+        errors,
+    })
+}
 
-    if args.fix {
-        // A workflow that failed to parse or an incomplete scan blocks every write, so those
-        // runs leave every file as it was and report the original findings. A failed write
-        // still exits 2, after the other files were written.
-        let blocked = if !failures.is_empty() {
-            Some("not written because a workflow failed to parse".to_owned())
-        } else if incomplete {
-            Some("not written because the scan is incomplete".to_owned())
-        } else {
-            None
-        };
-        for file in &mut files {
-            let Some(outcome) = file
-                .inspection
-                .fix
-                .as_ref()
-                .filter(|outcome| outcome.applied() > 0)
-            else {
-                continue;
-            };
-            file.unwritten = match &blocked {
-                Some(reason) => Some(reason.clone()),
-                None => filesystem::write_unchanged(
-                    &file.path,
-                    &outcome.source,
-                    &file.inspection.source,
-                )
-                .err(),
-            };
-            if blocked.is_none()
-                && let Some(error) = &file.unwritten
-            {
-                report::error(format_args!("{}: {error}", file.path.display()));
-                failures.push(report::FileError {
-                    path: Some(file.path.clone()),
-                    message: error.clone(),
-                });
-            }
+/// The workflows of every input, each scanned once.
+fn discover(inputs: &[(PathBuf, usize)]) -> Result<Vec<(PathBuf, usize)>, String> {
+    let mut workflows = Vec::new();
+    for (path, input) in inputs {
+        let found = filesystem::discover(path)?;
+        workflows.extend(found.into_iter().map(|workflow| (workflow, *input)));
+    }
+    workflows.sort();
+    let mut seen = HashSet::new();
+    workflows.retain(|(path, _)| seen.insert(filesystem::identity(path)));
+    // A link to another scanned workflow is reported, and fixed, once through its target.
+    workflows.retain(|(path, _)| {
+        filesystem::link_target(path).is_none_or(|target| !seen.contains(&target))
+    });
+    Ok(workflows)
+}
+
+/// The `.github` directory of each input that has one, each once.
+fn github_dirs(paths: &[PathBuf]) -> Vec<(PathBuf, usize)> {
+    let mut github_dirs: Vec<(PathBuf, usize)> = paths
+        .iter()
+        .zip(0..)
+        .filter_map(|(path, input)| filesystem::github_dir(path).map(|github| (github, input)))
+        .collect();
+    github_dirs.sort();
+    let mut seen = HashSet::new();
+    github_dirs.retain(|(github, _)| seen.insert(filesystem::identity(github)));
+    github_dirs
+}
+
+/// Dependabot files outside the scanned `.github` directories, whose repository rules already
+/// check them.
+fn outside(
+    dependabot: Vec<(PathBuf, usize)>,
+    github_dirs: &[(PathBuf, usize)],
+) -> Vec<(PathBuf, usize)> {
+    let scanned: Vec<PathBuf> = github_dirs
+        .iter()
+        .filter_map(|(github, _)| github.canonicalize().ok())
+        .collect();
+    dependabot
+        .into_iter()
+        .filter(|(path, _)| {
+            path.canonicalize()
+                .ok()
+                .and_then(|path| path.parent().map(Path::to_path_buf))
+                .is_none_or(|parent| !scanned.contains(&parent))
+        })
+        .collect()
+}
+
+/// Places each repository-wide finding on the first scanned workflow inside its directory, in
+/// path order.
+fn anchor(repository: &mut [Located], files: &[FileReport]) {
+    for located in repository {
+        if let Place::Repository { anchor } = &mut located.place {
+            let directory = filesystem::identity(&located.path);
+            *anchor = files
+                .iter()
+                .find(|file| filesystem::identity(&file.path).starts_with(&directory))
+                .map(|file| file.path.clone());
         }
     }
-    failures.extend(skipped.into_iter().map(|message| report::FileError {
-        path: None,
-        message,
-    }));
-    if let Some(target) = &args.sarif_file
-        && let Err(error) = std::fs::write(target, report::sarif(&files, &repository, &failures))
+}
+
+/// A workflow that failed to parse or an incomplete scan blocks every write, so those runs leave
+/// every file as it was and report the original findings. A failed write still exits 2, after
+/// the other files were written.
+fn write_fixes(files: &mut [FileReport], errors: &[RunError]) {
+    let blocked = if errors
+        .iter()
+        .any(|error| matches!(error, RunError::File { .. }))
     {
-        report::error(format_args!("{}: {error}", target.display()));
-        return ExitCode::from(2);
+        Some("not written because a workflow failed to parse")
+    } else if !errors.is_empty() {
+        Some("not written because the scan is incomplete")
+    } else {
+        None
+    };
+    for file in files {
+        let Some(outcome) = file
+            .inspection
+            .fix
+            .as_ref()
+            .filter(|outcome| outcome.applied() > 0)
+        else {
+            continue;
+        };
+        file.unwritten = match blocked {
+            Some(reason) => Some(Unwritten::Blocked(reason.to_owned())),
+            None => filesystem::replace(&file.path, &file.inspection.source, &outcome.source)
+                .err()
+                .map(|error| {
+                    report::error(format_args!("{}: {error}", file.path.display()));
+                    Unwritten::Failed(error)
+                }),
+        };
+    }
+}
+
+/// Writes the reports and picks the exit status: 2 for a run failure, 1 for findings at the
+/// `--fail-on` level, 0 otherwise.
+fn finish(args: &Args, scan: &Scan) -> ExitCode {
+    let Scan {
+        files,
+        repository,
+        errors,
+    } = scan;
+    if let Some(target) = &args.sarif_file
+        && let Err(error) = std::fs::write(target, report::sarif(files, repository, errors))
+    {
+        return fail(format_args!("{}: {error}", target.display()));
     }
     let format = args.format.unwrap_or(
         if std::env::var_os("GITHUB_ACTIONS").is_some_and(|value| value == "true") {
@@ -421,24 +491,21 @@ pub fn run() -> ExitCode {
             report::Format::Text
         },
     );
-    let should_fail = files.iter().any(|file| {
-        file.shown()
-            .1
-            .iter()
-            .any(|finding| args.fail_on.matches(finding.severity))
-    });
-    let should_fail = should_fail
-        || repository
-            .iter()
-            .any(|located| args.fail_on.matches(located.finding.severity));
-    let status = if !failures.is_empty() {
+    let findings = files
+        .iter()
+        .flat_map(|file| file.shown().1)
+        .chain(repository.iter().map(|located| &located.finding));
+    let status = if !report::failures(files, errors).is_empty() {
         ExitCode::from(2)
-    } else if should_fail {
+    } else if findings
+        .map(|finding| finding.severity)
+        .any(|severity| args.fail_on.matches(severity))
+    {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     };
-    let report = report::render(format, &files, &repository, &failures, args.fix);
+    let report = report::render(format, files, repository, errors, args.modes.fix);
     emit(&report, status)
 }
 
@@ -549,17 +616,11 @@ fn run_hook(action: &HookAction) -> ExitCode {
                 Err(error) if error.kind() == clap::error::ErrorKind::DisplayVersion => {
                     Some("--version")
                 }
-                Ok(Args {
-                    command: Some(Commands::Migrate { .. }),
-                    ..
-                }) => Some("migrate"),
-                Ok(Args {
-                    command: Some(Commands::Hook { .. }),
-                    ..
-                }) => Some("hook"),
-                Ok(scan) if scan.fix => Some("--fix"),
-                Ok(scan) if scan.list_rules => Some("--list-rules"),
-                _ => None,
+                Err(_) => None,
+                Ok(parsed) => match &parsed.command {
+                    Some(command) => Some(command.name()),
+                    None => parsed.modes.flag(),
+                },
             };
             match (parsed, culprit) {
                 (_, Some(culprit)) => Err(format!(
@@ -579,10 +640,7 @@ fn run_hook(action: &HookAction) -> ExitCode {
     };
     match result {
         Ok(message) => emit(&format!("{message}\n"), ExitCode::SUCCESS),
-        Err(error) => {
-            report::error(error);
-            ExitCode::from(2)
-        }
+        Err(error) => fail(error),
     }
 }
 
@@ -611,10 +669,7 @@ fn run_migrate(
             }
             emit(&text, ExitCode::SUCCESS)
         }
-        Err(error) => {
-            report::error(error);
-            ExitCode::from(2)
-        }
+        Err(error) => fail(error),
     }
 }
 

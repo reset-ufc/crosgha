@@ -28,6 +28,16 @@ pub struct Attempt {
     pub finding: usize,
     /// Why validation refused the fix; `None` when it is part of `FixOutcome::source`.
     pub rejected: Option<String>,
+    /// Index of a rejected fix's finding in `FixOutcome::remaining`, whose lines the applied
+    /// fixes may have moved.
+    pub remaining: Option<usize>,
+}
+
+/// What every patch is checked against: the findings of the file as read, and how they were found.
+struct Context<'a> {
+    original: &'a [Finding],
+    settings: &'a Settings,
+    file: &'a str,
 }
 
 /// Applies every proposal that passes validation. A rejected proposal leaves the source as it
@@ -38,53 +48,43 @@ pub fn apply(
     settings: &Settings,
     file: &str,
 ) -> Result<FixOutcome, String> {
-    // yamlpatch writes `\n` line breaks and ends the file with one, so the file is patched in
-    // that form and each line gets its own break back. YAML normalizes line breaks in scalars,
-    // so neither conversion changes a value.
-    let source = workflow.document.source();
-    let unterminated = !source.ends_with('\n');
-    let mut breaks = None;
-    let mut normalized = None;
-    if unterminated || source.contains("\r\n") {
-        let mut lf = source.replace("\r\n", "\n");
-        if unterminated {
-            lf.push('\n');
-        }
-        if let Ok(parsed) = Workflow::parse(lf) {
-            breaks = Some(line_breaks(source));
-            normalized = Some(parsed);
-        }
-    }
-    let mut current = normalized.unwrap_or(workflow);
-    let unterminated = unterminated && breaks.is_some();
+    let context = Context {
+        original: findings,
+        settings,
+        file,
+    };
+    let normalized = LineBreaks::normalize(workflow.document.source())
+        .and_then(|(lf, breaks)| Some((Workflow::parse(lf).ok()?, breaks)));
+    let (mut current, mut breaks) = match normalized {
+        Some((parsed, breaks)) => (parsed, Some(breaks)),
+        None => (workflow, None),
+    };
     // Findings of `current`. The caller's findings describe it until the source is normalized;
     // after that, each accepted patch's validation has already found them.
     let mut known: Option<Vec<Finding>> = None;
-    let normalized = breaks.is_some();
     let mut attempts = Vec::new();
     for (index, finding) in findings.iter().enumerate() {
         let Some(proposal) = &finding.fix else {
             continue;
         };
-        if normalized && known.is_none() {
+        if breaks.is_some() && known.is_none() {
             match rules::detect_all(&current, settings, file) {
                 Ok(found) => known = Some(found),
                 Err(reason) => {
                     attempts.push(Attempt {
                         finding: index,
                         rejected: Some(reason),
+                        remaining: None,
                     });
                     continue;
                 }
             }
         }
         let before = known.as_deref().unwrap_or(findings);
-        let rejected = match patch(
-            &current, finding, proposal, before, findings, settings, file,
-        ) {
+        let rejected = match patch(&current, finding, proposal, before, &context) {
             Ok((next, after)) => {
                 if let Some(breaks) = &mut breaks {
-                    *breaks = carry(breaks, current.document.source(), next.document.source());
+                    breaks.carry(current.document.source(), next.document.source());
                 }
                 current = next;
                 known = Some(after);
@@ -95,26 +95,28 @@ pub fn apply(
         attempts.push(Attempt {
             finding: index,
             rejected,
+            remaining: None,
         });
     }
     let remaining = match known {
         Some(found) => found,
         None => rules::detect_all(&current, settings, file)?,
     };
-    let source = current.document.source();
-    let source = match breaks {
-        None => source.to_owned(),
-        Some(breaks) => {
-            let mut restored = String::with_capacity(source.len() + breaks.len());
-            for (line, end) in source.split_inclusive('\n').zip(breaks) {
-                restored.push_str(line.strip_suffix('\n').unwrap_or(line));
-                restored.push_str(end);
-            }
-            if unterminated {
-                restored.truncate(restored.trim_end_matches(['\r', '\n']).len());
-            }
-            restored
+    let mut taken = vec![false; remaining.len()];
+    for attempt in attempts
+        .iter_mut()
+        .filter(|attempt| attempt.rejected.is_some())
+    {
+        let original = &findings[attempt.finding];
+        attempt.remaining = (0..remaining.len())
+            .find(|&index| !taken[index] && same_target(&remaining[index], original));
+        if let Some(index) = attempt.remaining {
+            taken[index] = true;
         }
+    }
+    let source = match &breaks {
+        None => current.document.source().to_owned(),
+        Some(breaks) => breaks.restore(current.document.source()),
     };
     Ok(FixOutcome {
         source,
@@ -123,60 +125,90 @@ pub fn apply(
     })
 }
 
-/// The break (`\r\n` or `\n`) ending each line of `source`; a last line without one takes the
-/// break of the line before it.
-fn line_breaks(source: &str) -> Vec<&'static str> {
-    let mut breaks: Vec<&'static str> = Vec::new();
-    for line in source.split_inclusive('\n') {
-        breaks.push(match line {
-            _ if line.ends_with("\r\n") => "\r\n",
-            _ if line.ends_with('\n') => "\n",
-            _ => breaks.last().copied().unwrap_or("\n"),
-        });
-    }
-    breaks
+/// yamlpatch writes `\n` line breaks and ends the file with one, so a file with `\r\n` breaks or
+/// no final break is patched in that form and each line gets its own break back. YAML normalizes
+/// line breaks in scalars, so neither conversion changes a value.
+struct LineBreaks {
+    /// The break (`\r\n` or `\n`) ending each line; a last line without one takes the break of
+    /// the line before it.
+    ends: Vec<&'static str>,
+    unterminated: bool,
 }
 
-/// The breaks of `before`'s lines moved onto `after`'s, which differ in one region: lines around
-/// it keep their break, a changed line keeps the break of the line it replaces, and an added
-/// line takes the break of the line before it.
-fn carry(breaks: &[&'static str], before: &str, after: &str) -> Vec<&'static str> {
-    let old: Vec<&str> = before.split_inclusive('\n').collect();
-    let new: Vec<&str> = after.split_inclusive('\n').collect();
-    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-    let suffix = old[prefix..]
-        .iter()
-        .rev()
-        .zip(new[prefix..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let replaced = old.len() - prefix - suffix;
-    let mut carried = breaks[..prefix].to_vec();
-    for index in 0..new.len() - prefix - suffix {
-        let end = match index < replaced {
-            true => breaks[prefix + index],
-            false => carried
-                .last()
-                .or(breaks.get(prefix))
-                .copied()
-                .unwrap_or("\n"),
-        };
-        carried.push(end);
+impl LineBreaks {
+    /// `source` in yamlpatch's form and the breaks to restore, or `None` when it already is.
+    fn normalize(source: &str) -> Option<(String, Self)> {
+        let unterminated = !source.ends_with('\n');
+        if !unterminated && !source.contains("\r\n") {
+            return None;
+        }
+        let mut lf = source.replace("\r\n", "\n");
+        if unterminated {
+            lf.push('\n');
+        }
+        let mut ends: Vec<&'static str> = Vec::new();
+        for line in source.split_inclusive('\n') {
+            ends.push(match line {
+                _ if line.ends_with("\r\n") => "\r\n",
+                _ if line.ends_with('\n') => "\n",
+                _ => ends.last().copied().unwrap_or("\n"),
+            });
+        }
+        Some((lf, Self { ends, unterminated }))
     }
-    carried.extend_from_slice(&breaks[old.len() - suffix..]);
-    carried
+
+    /// Moves the breaks of `before`'s lines onto `after`'s, which differ in one region: lines
+    /// around it keep their break, a changed line keeps the break of the line it replaces, and an
+    /// added line takes the break of the line before it.
+    fn carry(&mut self, before: &str, after: &str) {
+        let old: Vec<&str> = before.split_inclusive('\n').collect();
+        let new: Vec<&str> = after.split_inclusive('\n').collect();
+        let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+        let suffix = old[prefix..]
+            .iter()
+            .rev()
+            .zip(new[prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let replaced = old.len() - prefix - suffix;
+        let mut carried = self.ends[..prefix].to_vec();
+        for index in 0..new.len() - prefix - suffix {
+            let end = match index < replaced {
+                true => self.ends[prefix + index],
+                false => carried
+                    .last()
+                    .or(self.ends.get(prefix))
+                    .copied()
+                    .unwrap_or("\n"),
+            };
+            carried.push(end);
+        }
+        carried.extend_from_slice(&self.ends[old.len() - suffix..]);
+        self.ends = carried;
+    }
+
+    /// `lf`, the patched source, with the file's own breaks.
+    fn restore(&self, lf: &str) -> String {
+        let mut restored = String::with_capacity(lf.len() + self.ends.len());
+        for (line, end) in lf.split_inclusive('\n').zip(&self.ends) {
+            restored.push_str(line.strip_suffix('\n').unwrap_or(line));
+            restored.push_str(end);
+        }
+        if self.unterminated {
+            restored.truncate(restored.trim_end_matches(['\r', '\n']).len());
+        }
+        restored
+    }
 }
 
 /// The patched workflow and its findings, once the patch passes validation. `before` holds the
-/// findings of `current`, `original` those of the file as it was read.
+/// findings of `current`.
 fn patch(
     current: &Workflow,
     finding: &Finding,
     proposal: &ProposedFix,
     before: &[Finding],
-    original: &[Finding],
-    settings: &Settings,
-    file: &str,
+    context: &Context,
 ) -> Result<(Workflow, Vec<Finding>), String> {
     let patched = apply_yaml_patches(&current.document, std::slice::from_ref(&proposal.patch))
         .map_err(|error| error.to_string())?;
@@ -187,18 +219,14 @@ fn patch(
         source = moved;
     }
     let next = Workflow::parse(source)?;
-    let after = rules::detect_all(&next, settings, file)?;
-    compare_findings(finding, before, &after, original)?;
+    let after = rules::detect_all(&next, context.settings, context.file)?;
+    compare_findings(finding, before, &after, context.original)?;
     validate_change(current, &next, proposal)?;
     Ok((next, after))
 }
 
-/// Rules that compare steps with each other: fixing one of two equal steps clears their finding
-/// until the other step gets the same fix, which restores it.
-const STEP_EQUALITY: &[&str] = &["duplicated-steps"];
-
 /// The target must disappear and no other finding may change, except that findings of
-/// `STEP_EQUALITY` rules may disappear, or come back when the file as read had them.
+/// `relational` rules may disappear, or come back when the file as read had them.
 fn compare_findings(
     target: &Finding,
     old: &[Finding],
@@ -208,7 +236,7 @@ fn compare_findings(
     let compared = |findings: &[Finding]| {
         findings
             .iter()
-            .filter(|finding| !STEP_EQUALITY.contains(&finding.rule.id))
+            .filter(|finding| !finding.rule.relational)
             .count()
     };
     if new.iter().any(|finding| same_target(finding, target)) || compared(new) + 1 != compared(old)
@@ -216,7 +244,7 @@ fn compare_findings(
         return Err("fix did not remove exactly the targeted finding".to_owned());
     }
     let known = |finding: &Finding| {
-        let restored = match STEP_EQUALITY.contains(&finding.rule.id) {
+        let restored = match finding.rule.relational {
             true => original,
             false => &[],
         };

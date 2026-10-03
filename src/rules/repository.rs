@@ -11,6 +11,7 @@ use yamlpath::Route;
 
 use super::{Finding, Options, Rule, common};
 use crate::{
+    filesystem,
     policy::{Persona, Severity},
     workflow::Workflow,
 };
@@ -43,7 +44,18 @@ pub const TOOLING: Rule = Rule {
 
 pub struct Located {
     pub path: PathBuf,
+    pub place: Place,
     pub finding: Finding,
+}
+
+/// What a repository finding's lines point into.
+pub enum Place {
+    /// The text of the file at `path`.
+    File(String),
+    /// The repository as a whole, named by its `.github` directory or the scanned input. A
+    /// directory is not a file, so annotations and SARIF place the finding on `anchor`, a scanned
+    /// workflow inside it, which the scan sets once the workflows are known.
+    Repository { anchor: Option<PathBuf> },
 }
 
 /// What the workflow scan already read from one file, so repository rules do not read and parse
@@ -121,11 +133,11 @@ pub fn cooldown_file(
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_COOLDOWN_DAYS);
     let mut found = Vec::new();
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = filesystem::read(path) else {
         return Ok(found);
     };
-    let config =
-        Workflow::parse_yaml(source).map_err(|error| format!("{}: {error}", path.display()))?;
+    let config = Workflow::parse_yaml(source.text)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
     let Some(updates) = config.value.get("updates").and_then(Value::as_sequence) else {
         return Ok(found);
     };
@@ -159,6 +171,7 @@ pub fn cooldown_file(
         if !honor_ignores || !super::ignored(&config, &finding) {
             found.push(Located {
                 path: path.to_path_buf(),
+                place: Place::File(config.document.source().to_owned()),
                 finding,
             });
         }
@@ -194,9 +207,9 @@ pub fn tooling(
     for (path, parsed) in workflow_files(github, scanned) {
         let source = match parsed {
             Some(parsed) => parsed.source.to_ascii_lowercase(),
-            None => fs::read_to_string(path)
-                .unwrap_or_default()
-                .to_ascii_lowercase(),
+            None => filesystem::read(&path)
+                .map(|source| source.text.to_ascii_lowercase())
+                .unwrap_or_default(),
         };
         workflows.push_str(&source);
     }
@@ -216,6 +229,7 @@ pub fn tooling(
         .into_iter()
         .map(|what| Located {
             path: github.to_path_buf(),
+            place: Place::Repository { anchor: None },
             finding: Finding {
                 rule: &TOOLING,
                 severity: TOOLING.severity,
@@ -263,9 +277,9 @@ pub fn runtime(
     for (path, parsed) in workflow_files(github, scanned) {
         let used = match parsed {
             Some(parsed) => parsed.local_actions.to_vec(),
-            None => match fs::read_to_string(path)
+            None => match filesystem::read(&path)
                 .ok()
-                .and_then(|source| Workflow::parse_yaml(source).ok())
+                .and_then(|source| Workflow::parse_yaml(source.text).ok())
             {
                 Some(workflow) => local_actions(&workflow),
                 None => continue,
@@ -280,7 +294,7 @@ pub fn runtime(
     for directory in actions {
         let Some((path, action)) = ["action.yml", "action.yaml"].iter().find_map(|name| {
             let path = directory.join(name);
-            let action = Workflow::parse_yaml(fs::read_to_string(&path).ok()?).ok()?;
+            let action = Workflow::parse_yaml(filesystem::read(&path).ok()?.text).ok()?;
             Some((path, action))
         }) else {
             continue;
@@ -304,7 +318,11 @@ pub fn runtime(
             ),
         )?;
         if !honor_ignores || !super::ignored(&action, &finding) {
-            found.push(Located { path, finding });
+            found.push(Located {
+                path,
+                place: Place::File(action.document.source().to_owned()),
+                finding,
+            });
         }
     }
     Ok(found)
