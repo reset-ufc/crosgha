@@ -15,16 +15,24 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     break
 done < "$msg_file"
 
-# Messages git writes itself: merges, reverts, and `commit --fixup/--squash` markers that
-# `rebase --autosquash` folds away.
-case "$first_line" in
-    "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
-esac
+# Git wraps a subject in `Revert "…"` or `Reapply "…"`, and `commit --fixup/--squash/--amend`
+# prefixes it with a marker that `rebase --autosquash` folds away; the wrapped subject must
+# still pass.
+subject="$first_line"
+while :; do
+    case "$subject" in
+        "fixup! "*|"squash! "*|"amend! "*) subject="${subject#*! }" ;;
+        'Revert "'*'"'|'Reapply "'*'"') subject="${subject#* \"}"; subject="${subject%\"}" ;;
+        *) break ;;
+    esac
+done
 
 types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
 pattern="^($types)(\\([a-zA-Z0-9_./-]+\\))?!?: .+"
+# Merge subjects git and GitHub generate.
+merge="^Merge (((branch|branches|remote-tracking branch|tag|commit) '.+)|(pull request #[0-9]+ from .+))"
 
-if [[ ! "$first_line" =~ $pattern ]]; then
+if [[ ! "$subject" =~ $pattern && ! "$subject" =~ $merge ]]; then
     echo "commit-msg: rejected — not a Conventional Commit." >&2
     echo "  got:      $first_line" >&2
     echo "  expected: <type>(<scope>)?!: <description>" >&2
