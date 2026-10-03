@@ -4,27 +4,18 @@
 //! `CROSGHA_BLESS=1 cargo test --test rules`), and the hand-written `.clean.yml` must not be
 //! reported. Online rules run against a local server that replays `tests/fixtures/online/api.json`.
 
+mod common;
+
+use common::{bin, fixture};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::{Arc, Mutex};
 
 const TOKEN: &str = "test-token";
-
-fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-}
-
-fn bin() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_crosgha"));
-    command
-        .env_remove("GITHUB_ACTIONS")
-        .env_remove("GITHUB_REPOSITORY");
-    command
-}
 
 fn fake_github() -> String {
     logged_github().0
@@ -52,8 +43,7 @@ fn github_server(
     let log = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::clone(&log);
     let routes: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(&fs::read_to_string(fixtures().join("online/api.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&fs::read_to_string(fixture("online/api.json")).unwrap()).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     std::thread::spawn(move || {
@@ -108,8 +98,6 @@ fn github_server(
 fn scan(path: &Path, fix: bool, api: Option<&str>, config: Option<&Path>) -> Output {
     let mut command = bin();
     command
-        .env_remove("GH_TOKEN")
-        .env_remove("GITHUB_TOKEN")
         .args(["--persona", "auditor", "--fail-on", "none"])
         .args(fix.then_some("--fix"))
         .args(["--format", "json"]);
@@ -164,7 +152,7 @@ fn reported_lines(path: &Path, rule: &str, api: Option<&str>, config: Option<&Pa
 fn check_fixtures(directory: &str, api: Option<&str>) {
     let mut failures = Vec::new();
     let mut checked = 0;
-    for entry in fs::read_dir(fixtures().join(directory)).unwrap() {
+    for entry in fs::read_dir(fixture(directory)).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_str().unwrap().to_owned();
         let Some(stem) = name.strip_suffix(".before.yml") else {
@@ -257,7 +245,7 @@ fn a_parallel_batch_matches_single_scans_and_shares_the_api_cache() {
     let batch = std::env::temp_dir().join(format!("crosgha-batch-{}", std::process::id()));
     fs::create_dir_all(&batch).unwrap();
     let mut expected: Vec<(String, String, u64)> = Vec::new();
-    for entry in fs::read_dir(fixtures().join("online")).unwrap() {
+    for entry in fs::read_dir(fixture("online")).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_str().unwrap().to_owned();
         if !name.ends_with(".before.yml") {
@@ -319,7 +307,7 @@ fn a_parallel_batch_matches_single_scans_and_shares_the_api_cache() {
 
 #[test]
 fn online_rules_stay_silent_offline() {
-    for entry in fs::read_dir(fixtures().join("online")).unwrap() {
+    for entry in fs::read_dir(fixture("online")).unwrap() {
         let path = entry.unwrap().path();
         if !path.to_string_lossy().ends_with(".before.yml") {
             continue;
@@ -364,13 +352,13 @@ fn mixed_batch(label: &str) -> PathBuf {
     let batch = std::env::temp_dir().join(format!("crosgha-{label}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&batch);
     fs::create_dir_all(&batch).unwrap();
-    for fixture in [
+    for path in [
         "online/impostor-commit.before.yml",
         "online/known-vulnerable-action.before.yml",
         "rules/persist-credentials.before.yml",
     ] {
-        let name = fixture.replace('/', "-");
-        fs::copy(fixtures().join(fixture), batch.join(name)).unwrap();
+        let name = path.replace('/', "-");
+        fs::copy(fixture(path), batch.join(name)).unwrap();
     }
     batch
 }
@@ -467,8 +455,6 @@ fn a_rejected_token_stops_further_requests() {
     let batch = mixed_batch("bad-token");
     let (api, log) = logged_github();
     let rejected = bin()
-        .env_remove("GH_TOKEN")
-        .env_remove("GITHUB_TOKEN")
         .args(["--persona", "auditor", "--fail-on", "none", "--no-config"])
         .args(["--gh-token", "revoked-token", "--gh-hostname", &api])
         .arg(&batch)
@@ -493,11 +479,9 @@ fn a_rejected_token_stops_further_requests() {
 fn a_tag_page_that_repeats_stops_the_walk() {
     let (api, log) = github_server(&[], true);
     let mut child = bin()
-        .env_remove("GH_TOKEN")
-        .env_remove("GITHUB_TOKEN")
         .args(["--persona", "auditor", "--fail-on", "none", "--no-config"])
         .args(["--gh-token", TOKEN, "--gh-hostname", &api])
-        .arg(fixtures().join("online/impostor-commit.before.yml"))
+        .arg(fixture("online/impostor-commit.before.yml"))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -539,7 +523,7 @@ fn a_failing_api_path_skips_only_the_checks_that_need_it() {
     let batch = mixed_batch("server-error");
     for copy in 0..4 {
         fs::copy(
-            fixtures().join("online/impostor-commit.before.yml"),
+            fixture("online/impostor-commit.before.yml"),
             batch.join(format!("copy-{copy}.yml")),
         )
         .unwrap();
@@ -576,7 +560,7 @@ fn unreadable_repository_settings_skip_only_that_rule() {
         "Resource not accessible by integration",
     )];
     const BROKEN: &[Failure] = &[(SETTINGS, "500 Internal Server Error", "", "Server Error")];
-    let workflow = fixtures().join("rules/missing-concurrency.before.yml");
+    let workflow = fixture("rules/missing-concurrency.before.yml");
     for (failures, repository, code) in [
         (DENIED, "example/project", 0),
         (&[][..], "example/missing", 0),
@@ -591,8 +575,6 @@ fn unreadable_repository_settings_skip_only_that_rule() {
             .replace('/', "-"),
         );
         let output = bin()
-            .env_remove("GH_TOKEN")
-            .env_remove("GITHUB_TOKEN")
             .args([
                 "--persona",
                 "pedantic",
@@ -632,11 +614,9 @@ fn unreadable_repository_settings_skip_only_that_rule() {
 
 #[test]
 fn repo_org_settings_are_read_for_the_named_repository() {
-    let workflow = fixtures().join("online/archived-action.clean.yml");
+    let workflow = fixture("online/archived-action.clean.yml");
     let api = fake_github();
     let output = bin()
-        .env_remove("GH_TOKEN")
-        .env_remove("GITHUB_TOKEN")
         .args([
             "--persona",
             "pedantic",
@@ -672,8 +652,6 @@ fn repo_org_settings_are_read_for_the_named_repository() {
     );
 
     let rejected = bin()
-        .env_remove("GH_TOKEN")
-        .env_remove("GITHUB_TOKEN")
         .args([
             "--repository",
             "example/project",
@@ -708,12 +686,12 @@ fn every_registered_rule_has_a_fixture() {
     let missing: Vec<String> = catalog()
         .into_iter()
         .filter(|(rule, scope)| {
-            let fixture = match scope.as_str() {
+            let path = match scope.as_str() {
                 "workflow" => format!("rules/{rule}.before.yml"),
                 "online" => format!("online/{rule}.before.yml"),
                 _ => format!("repos/{rule}"),
             };
-            !fixtures().join(fixture).exists()
+            !fixture(&path).exists()
         })
         .map(|(rule, scope)| format!("{rule} ({scope})"))
         .collect();
@@ -740,8 +718,6 @@ fn every_repository_rule_reports_its_fixture_repository() {
     {
         let reported = [&["--offline"][..], &online[..]].iter().any(|mode| {
             let output = bin()
-                .env_remove("GH_TOKEN")
-                .env_remove("GITHUB_TOKEN")
                 .args([
                     "--persona",
                     "auditor",
@@ -751,7 +727,7 @@ fn every_repository_rule_reports_its_fixture_repository() {
                     "json",
                 ])
                 .args(*mode)
-                .arg(fixtures().join(format!("repos/{rule}")))
+                .arg(fixture(&format!("repos/{rule}")))
                 .output()
                 .unwrap();
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -772,18 +748,15 @@ fn migrate_looks_up_the_latest_crosgha_release() {
     let api = fake_github();
     let path =
         std::env::temp_dir().join(format!("crosgha-migrate-latest-{}.yml", std::process::id()));
-    fs::copy(fixtures().join("migrate/zizmor.before.yml"), &path).unwrap();
+    fs::copy(fixture("migrate/zizmor.before.yml"), &path).unwrap();
 
     let offline = bin()
-        .env_remove("GH_TOKEN")
-        .env_remove("GITHUB_TOKEN")
         .args(["migrate", "--from", "zizmor"])
         .arg(&path)
         .output()
         .unwrap();
     let untouched = fs::read_to_string(&path).unwrap();
     let online = bin()
-        .env_remove("GITHUB_TOKEN")
         .env("GH_TOKEN", TOKEN)
         .env("GH_HOST", &api)
         .args(["migrate", "--from", "zizmor"])
@@ -797,7 +770,7 @@ fn migrate_looks_up_the_latest_crosgha_release() {
     assert!(String::from_utf8_lossy(&offline.stderr).contains("--action"));
     assert_eq!(
         untouched,
-        fs::read_to_string(fixtures().join("migrate/zizmor.before.yml")).unwrap()
+        fs::read_to_string(fixture("migrate/zizmor.before.yml")).unwrap()
     );
     assert!(
         online.status.success(),
@@ -806,6 +779,6 @@ fn migrate_looks_up_the_latest_crosgha_release() {
     );
     assert_eq!(
         migrated,
-        fs::read_to_string(fixtures().join("migrate/zizmor.after.yml")).unwrap()
+        fs::read_to_string(fixture("migrate/zizmor.after.yml")).unwrap()
     );
 }
