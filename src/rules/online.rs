@@ -1,7 +1,7 @@
 //! Rules that need the GitHub API. They run only when a token is available and `--offline`
 //! is not set, like zizmor's online audits: https://docs.zizmor.sh/usage/#operating-modes
 
-use std::{ops::ControlFlow, path::Path};
+use std::{ops::ControlFlow, path::Path, sync::PoisonError};
 
 use yamlpath::Route;
 
@@ -88,7 +88,13 @@ struct Pin<'a> {
     owner: &'a str,
     repo: &'a str,
     sha: Option<&'a str>,
-    version: Option<String>,
+    git_ref: &'a str,
+}
+
+impl Pin<'_> {
+    fn version(&self, workflow: &Workflow) -> Option<String> {
+        ref_version(workflow, &self.route, self.git_ref)
+    }
 }
 
 fn pins(workflow: &Workflow) -> Vec<Pin<'_>> {
@@ -99,14 +105,13 @@ fn pins(workflow: &Workflow) -> Vec<Pin<'_>> {
             let sha = Some(reference.git_ref).filter(|git_ref| {
                 git_ref.len() == 40 && git_ref.bytes().all(|byte| byte.is_ascii_hexdigit())
             });
-            let version = ref_version(workflow, &route, reference.git_ref);
             Some(Pin {
                 route,
                 location,
                 owner: reference.owner,
                 repo: reference.repo,
                 sha,
-                version,
+                git_ref: reference.git_ref,
             })
         })
         .collect()
@@ -123,11 +128,22 @@ pub(super) fn ref_version(workflow: &Workflow, route: &Route, git_ref: &str) -> 
 
 /// The first word of the YAML comment on a `uses` line, such as `v4.2.2` in `# v4.2.2`.
 fn comment_version(workflow: &Workflow, route: &Route) -> Option<String> {
-    let feature = workflow.document.query_pretty(route).ok()?;
-    let comments = workflow.document.feature_comments(&feature);
-    let text = workflow.document.extract(comments.first()?);
-    let word = text.trim_start_matches('#').split_whitespace().next()?;
-    is_version(word).then(|| word.to_owned())
+    // `Route` has no `Eq`; its debug form names one route.
+    let key = format!("{route:?}");
+    let mut known = workflow
+        .comment_versions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    known
+        .entry(key)
+        .or_insert_with(|| {
+            let feature = workflow.document.query_pretty(route).ok()?;
+            let comments = workflow.document.feature_comments(&feature);
+            let text = workflow.document.extract(comments.first()?);
+            let word = text.trim_start_matches('#').split_whitespace().next()?;
+            is_version(word).then(|| word.to_owned())
+        })
+        .clone()
 }
 
 fn is_version(text: &str) -> bool {
@@ -162,7 +178,7 @@ pub fn vulnerable(
         .collect();
     let mut findings = Vec::new();
     for pin in pins(workflow) {
-        let Some(version) = &pin.version else {
+        let Some(version) = &pin.version(workflow) else {
             continue;
         };
         let Ok(resolved) = release_version(github, &pin, version) else {
@@ -277,7 +293,7 @@ pub fn outdated(
 ) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
-        let Some(version) = &pin.version else {
+        let Some(version) = &pin.version(workflow) else {
             continue;
         };
         let Ok(latest) = github.get(&format!(
@@ -315,7 +331,7 @@ pub fn comment_mismatch(
 ) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
-        let (Some(sha), Some(version)) = (pin.sha, &pin.version) else {
+        let (Some(sha), Some(version)) = (pin.sha, pin.version(workflow)) else {
             continue;
         };
         let Ok(tagged) = github.get(&format!(
