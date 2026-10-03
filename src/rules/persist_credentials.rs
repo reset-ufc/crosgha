@@ -35,7 +35,9 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 Some(Value::Mapping(inputs)) => match inputs.get("persist-credentials") {
                     None => false,
                     Some(Value::Bool(true)) => true,
-                    Some(Value::String(value)) if value == "true" => true,
+                    // `getInput(...).toUpperCase() === 'TRUE'` in checkout's src/input-helper.ts
+                    // at f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a; getInput trims the value.
+                    Some(Value::String(value)) if value.trim().eq_ignore_ascii_case("true") => true,
                     _ => continue,
                 },
                 _ => continue,
