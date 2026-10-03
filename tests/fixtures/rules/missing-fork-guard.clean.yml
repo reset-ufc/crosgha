@@ -10,3 +10,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: make nightly
+  publish:
+    needs: nightly
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make publish
+  report:
+    needs: publish
+    if: ${{ always() && github.repository == 'example/project' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make report

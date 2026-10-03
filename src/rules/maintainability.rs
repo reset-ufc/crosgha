@@ -223,17 +223,49 @@ const FORK_GUARDS: &[&str] = &[
     "github.event.repository.owner",
 ];
 
+/// "If a job fails or is skipped, all jobs that need it are skipped unless the jobs use a
+/// conditional expression that causes the job to continue."
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds
+/// So a job is guarded by its own `if`, or by a guarded job it needs, unless a status function
+/// lets it run after that job is skipped.
+fn fork_guarded(
+    jobs: &[common::Job<'_>],
+    job: &common::Job<'_>,
+    visited: &mut Vec<String>,
+) -> bool {
+    if visited.iter().any(|name| name == job.name) {
+        return false;
+    }
+    visited.push(job.name.to_owned());
+    let condition = job.get("if").and_then(Value::as_str).unwrap_or("");
+    if FORK_GUARDS.iter().any(|guard| condition.contains(guard)) {
+        return true;
+    }
+    if ["always()", "failure()", "cancelled()"]
+        .iter()
+        .any(|status| condition.contains(status))
+    {
+        return false;
+    }
+    let needs = match job.get("needs") {
+        Some(Value::String(need)) => vec![need.as_str()],
+        Some(Value::Sequence(needs)) => needs.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    needs.iter().any(|need| {
+        jobs.iter()
+            .find(|other| other.name == *need)
+            .is_some_and(|other| fork_guarded(jobs, other, visited))
+    })
+}
+
 pub fn fork_guard(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     if !common::has_trigger(workflow, &["schedule"]) {
         return Ok(Vec::new());
     }
-    common::jobs(workflow)
-        .iter()
-        .filter(|job| {
-            !job.get("if")
-                .and_then(Value::as_str)
-                .is_some_and(|condition| FORK_GUARDS.iter().any(|guard| condition.contains(guard)))
-        })
+    let jobs = common::jobs(workflow);
+    jobs.iter()
+        .filter(|job| !fork_guarded(&jobs, job, &mut Vec::new()))
         .map(|job| {
             common::finding(
                 workflow,
