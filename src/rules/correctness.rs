@@ -512,9 +512,7 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 .and_then(Value::as_str)
                 .or(job_shell)
                 .unwrap_or("bash");
-            // A custom shell such as `/usr/bin/bash -e {0}` names its program by path.
-            let program = shell.split_whitespace().next().unwrap_or("");
-            let posix = matches!(program.rsplit('/').next(), Some("bash" | "sh"));
+            let posix = matches!(shell_program(shell), Some("bash" | "sh"));
             if posix && script.lines().any(unquoted_env_file) {
                 findings.push(common::finding(
                     workflow,
@@ -527,6 +525,25 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
+}
+
+/// The program a `shell` runs, by file name. A custom shell such as `/usr/bin/bash -e {0}` names
+/// it by path, and `/usr/bin/env [options] [NAME=value] bash {0}` looks it up; env's `-u` and
+/// `-C` take the next word (env(1)).
+fn shell_program(shell: &str) -> Option<&str> {
+    let mut words = shell.split_whitespace();
+    let mut program = words.next()?.rsplit('/').next()?;
+    if program == "env" {
+        while let Some(word) = words.next() {
+            if matches!(word, "-u" | "--unset" | "-C" | "--chdir") {
+                words.next();
+            } else if !word.starts_with('-') && !word.contains('=') {
+                program = word.rsplit('/').next()?;
+                break;
+            }
+        }
+    }
+    Some(program)
 }
 
 fn unquoted_env_file(line: &str) -> bool {
