@@ -14,6 +14,7 @@ pub const RULE: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {

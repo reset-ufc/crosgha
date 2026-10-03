@@ -17,6 +17,7 @@ pub const SELF_HOSTED: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "self-hosted-runner")],
     configurable: true,
+    relational: false,
 };
 
 // StepSecurity secure-repo `harden-runner-integration`: a runtime monitor as each job's first step.
@@ -28,6 +29,7 @@ pub const MONITORING: Rule = Rule {
     persona: Persona::Auditor,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // Khatami et al. (SCAM 2024), KZ-15 "Use fixed version for runs-on argument".
@@ -39,6 +41,7 @@ pub const VERSIONING: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 const UNTRUSTED_RUNNER_TRIGGERS: &[&str] = &[

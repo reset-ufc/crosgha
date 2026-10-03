@@ -97,3 +97,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: make nightly
+  negated-guard: # expect: missing-fork-guard
+    if: ${{ !(github.repository == 'example/project') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly
+  negated-fork-only:
+    if: ${{ !(github['repository'] != 'example/project') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make nightly

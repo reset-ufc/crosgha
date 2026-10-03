@@ -51,6 +51,7 @@ jobs:
           cd src && git --git-dir=.git --work-tree . pull \
             https://github.com/${{ github.event.pull_request.head.repo.full_name }} ${{ github.head_ref }}
       - run: git clone ${{ github.event.pull_request.head.repo.clone_url }} pr # expect: pwn-request
+      - run: sudo -u runner /usr/bin/git fetch origin pull/1/head # expect: pwn-request
       # Fetching the base branch and naming the pull request elsewhere is not a checkout.
       - run: |
           git -C pull/ fetch origin main

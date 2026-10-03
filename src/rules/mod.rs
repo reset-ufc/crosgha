@@ -1,5 +1,8 @@
 pub(crate) mod common;
 mod correctness;
+mod deprecation;
+mod env_injection;
+pub(crate) mod expression;
 mod immutable_references;
 mod inherited_secrets;
 mod injection;
@@ -10,6 +13,7 @@ mod permissions;
 mod persist_credentials;
 mod repository;
 mod runner;
+mod shell;
 mod supply_chain;
 mod token_permissions;
 
@@ -38,6 +42,9 @@ pub struct Rule {
     pub equivalents: &'static [(&'static str, &'static str)],
     /// Reads `rules.<id>.config`.
     pub configurable: bool,
+    /// Compares steps with each other: fixing one of two equal steps clears their finding until
+    /// the other step gets the same fix, which restores it.
+    pub relational: bool,
 }
 
 impl Rule {
@@ -139,7 +146,7 @@ const REGISTRY: &[(&Rule, Detect)] = &[
     (&supply_chain::TYPOSQUATTING, supply_chain::typosquatting),
     // Injection and privileged triggers
     (&injection::SCRIPT_INJECTION, injection::script_injection),
-    (&injection::ENV_INJECTION, injection::env_injection),
+    (&env_injection::RULE, env_injection::detect),
     (&injection::PROMPT_INJECTION, injection::prompt_injection),
     (&injection::PWN_REQUEST, injection::pwn_request),
     (&injection::DANGEROUS_TRIGGER, injection::dangerous_trigger),
@@ -187,8 +194,8 @@ const REGISTRY: &[(&Rule, Detect)] = &[
     ),
     (&maintainability::COMPLEXITY, maintainability::complexity),
     (&maintainability::READABILITY, maintainability::readability),
-    (&maintainability::DEPRECATED, maintainability::deprecated),
-    (&maintainability::REMOVED, maintainability::removed),
+    (&deprecation::DEPRECATED, deprecation::deprecated),
+    (&deprecation::REMOVED, deprecation::removed),
     // Correctness
     (&correctness::SCHEMA, correctness::schema),
     (&correctness::SCRIPT_LINT, correctness::script_lint),
@@ -227,8 +234,8 @@ const REPOSITORY: &[(&Rule, RepositoryDetect)] = &[
 /// host-independent part in `REGISTRY`, and `retired-runtime` is listed through
 /// `HOSTED_REPOSITORY`, so neither is repeated in `all()`.
 const HOSTED: &[(&Rule, Detect)] = &[
-    (&maintainability::REMOVED, maintainability::removed_hosted),
-    (&repository::RUNTIME, maintainability::retired_runtime),
+    (&deprecation::REMOVED, deprecation::removed_hosted),
+    (&repository::RUNTIME, deprecation::retired_runtime),
 ];
 const HOSTED_REPOSITORY: &[(&Rule, RepositoryDetect)] =
     &[(&repository::RUNTIME, repository::runtime)];

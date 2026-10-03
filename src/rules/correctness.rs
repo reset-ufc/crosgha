@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule, common, runner};
+use super::{Finding, Rule, common, expression, runner, shell};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -19,6 +19,7 @@ pub const SCHEMA: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("actionlint", "syntax-check"), ("actionlint", "expression")],
     configurable: false,
+    relational: false,
 };
 
 // ShellCheck SC2086 (unquoted expansion), limited to GitHub's environment file variables:
@@ -31,6 +32,7 @@ pub const SCRIPT_LINT: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("actionlint", "shellcheck")],
     configurable: false,
+    relational: false,
 };
 
 // zizmor `insecure-url-scheme` and GASH "Unsecured Protocol".
@@ -42,6 +44,7 @@ pub const INSECURE_PROTOCOL: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "insecure-url-scheme")],
     configurable: false,
+    relational: false,
 };
 
 const WORKFLOW_KEYS: &[&str] = &[
@@ -374,7 +377,7 @@ fn undefined_references(job: &common::Job<'_>) -> Vec<(Route<'static>, String, S
 
     let mut expressions: Vec<(Route<'static>, &str)> = Vec::new();
     common::strings(job.value, &job.route, &mut |route, text| {
-        for expression in common::expressions(text) {
+        for expression in expression::expressions(text) {
             expressions.push((route.clone(), expression));
         }
     });
@@ -419,38 +422,25 @@ fn undefined_references(job: &common::Job<'_>) -> Vec<(Route<'static>, String, S
 }
 
 /// Property names read as `<context>.<name>` or `<context>['<name>']` in an expression, outside
-/// other string literals. Contexts accept both forms:
-/// https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
-pub(super) fn context_names<'a>(expression: &'a str, context: &str) -> Vec<&'a str> {
+/// other string literals.
+pub(super) fn context_names(expression: &str, context: &str) -> Vec<String> {
     let prefix = format!("{context}.");
-    let indexed = format!("{context}[");
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
-    let starts_context =
-        |code: &str, index: usize| !code[..index].ends_with(|c: char| is_name(c) || c == '.');
     // Even parts are code; odd parts are the contents of string literals.
-    let parts: Vec<&str> = expression.split('\'').collect();
-    let mut names = Vec::new();
-    for (index, code) in parts.iter().enumerate().step_by(2) {
-        names.extend(
+    expression::dotted(expression)
+        .split('\'')
+        .step_by(2)
+        .flat_map(|code| {
             code.match_indices(prefix.as_str())
-                .filter(|(at, _)| starts_context(code, *at))
+                .filter(|(at, _)| !code[..*at].ends_with(|c: char| is_name(c) || c == '.'))
                 .map(|(at, _)| {
                     let rest = &code[at + prefix.len()..];
-                    &rest[..rest.find(|c: char| !is_name(c)).unwrap_or(rest.len())]
+                    rest[..rest.find(|c: char| !is_name(c)).unwrap_or(rest.len())].to_owned()
                 })
-                .filter(|name| !name.is_empty()),
-        );
-        if code.ends_with(indexed.as_str())
-            && starts_context(code, code.len() - indexed.len())
-            && let (Some(name), Some(next)) = (parts.get(index + 1), parts.get(index + 2))
-            && next.starts_with(']')
-            && !name.is_empty()
-            && name.chars().all(is_name)
-        {
-            names.push(*name);
-        }
-    }
-    names
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// Whether an `if` expression reads the `secrets` context outside a string literal.
@@ -528,22 +518,10 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 }
 
 /// The program a `shell` runs, by file name. A custom shell such as `/usr/bin/bash -e {0}` names
-/// it by path, and `/usr/bin/env [options] [NAME=value] bash {0}` looks it up; env's `-u` and
-/// `-C` take the next word (env(1)).
+/// it by path, and `/usr/bin/env [options] [NAME=value] bash {0}` looks it up.
 fn shell_program(shell: &str) -> Option<&str> {
-    let mut words = shell.split_whitespace();
-    let mut program = words.next()?.rsplit('/').next()?;
-    if program == "env" {
-        while let Some(word) = words.next() {
-            if matches!(word, "-u" | "--unset" | "-C" | "--chdir") {
-                words.next();
-            } else if !word.starts_with('-') && !word.contains('=') {
-                program = word.rsplit('/').next()?;
-                break;
-            }
-        }
-    }
-    Some(program)
+    let words: Vec<&str> = shell.split_whitespace().collect();
+    shell::program(&words).map(|program| program.name)
 }
 
 fn unquoted_env_file(line: &str) -> bool {

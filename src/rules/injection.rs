@@ -6,7 +6,8 @@ use yamlpath::Route;
 use super::{
     Finding, Rule,
     common::{self, EXTERNAL_TRIGGERS, PRIVILEGED_TRIGGERS},
-    maintainability,
+    expression::{self, Operator},
+    shell,
 };
 use crate::{
     policy::{Persona, Severity},
@@ -26,19 +27,7 @@ pub const SCRIPT_INJECTION: Rule = Rule {
         ("actionlint", "expression"),
     ],
     configurable: false,
-};
-
-// zizmor `github-env` and CodeQL `actions/envvar-injection`: environment files written in
-// privileged runs, or with untrusted values, change later steps.
-// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-an-environment-variable
-pub const ENV_INJECTION: Rule = Rule {
-    id: "github-env-injection",
-    summary: "GITHUB_ENV and GITHUB_PATH must not be written from untrusted data or in privileged runs.",
-    tag: "github-env-injection",
-    severity: Severity::Error,
-    persona: Persona::Regular,
-    equivalents: &[("zizmor", "github-env")],
-    configurable: false,
+    relational: false,
 };
 
 // TaintAWI (arXiv 2605.07135) Prompt-to-Agent: untrusted event data reaches an agent prompt.
@@ -50,6 +39,7 @@ pub const PROMPT_INJECTION: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // GitHub Security Lab "pwn request": privileged triggers that check out untrusted code.
@@ -62,6 +52,7 @@ pub const PWN_REQUEST: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // zizmor `dangerous-triggers`: triggers that run with base-repository privileges.
@@ -73,6 +64,7 @@ pub const DANGEROUS_TRIGGER: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("zizmor", "dangerous-triggers")],
     configurable: false,
+    relational: false,
 };
 
 // actionlint `if-cond` constant conditions, zizmor `unsound-condition` and `bot-conditions`.
@@ -90,6 +82,7 @@ pub const UNSAFE_IF: Rule = Rule {
         ("actionlint", "if-cond"),
     ],
     configurable: false,
+    relational: false,
 };
 
 // CodeQL `actions/artifact-poisoning`: artifacts from another run extracted into the workspace.
@@ -101,6 +94,7 @@ pub const ARTIFACT_POISONING: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // GitHub dependency caching docs (write-capable `cache-mode` on low-trust triggers) and
@@ -114,6 +108,7 @@ pub const CACHE_POISONING: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "cache-poisoning")],
     configurable: false,
+    relational: false,
 };
 
 // zizmor `obfuscation`: paths and expressions written to hide what they do.
@@ -125,6 +120,7 @@ pub const OBFUSCATION: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("zizmor", "obfuscation")],
     configurable: false,
+    relational: false,
 };
 
 pub fn script_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
@@ -141,7 +137,7 @@ pub fn script_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 sinks.push((step.key("with").with_key("script"), script));
             }
             for (route, script) in sinks {
-                if let Some(context) = common::untrusted_in_text(script).first() {
+                if let Some(context) = expression::untrusted_in_text(script).first() {
                     findings.push(common::finding(
                         workflow,
                         &SCRIPT_INJECTION,
@@ -154,232 +150,6 @@ pub fn script_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
-}
-
-pub fn env_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let privileged = common::has_trigger(workflow, PRIVILEGED_TRIGGERS);
-    let mut findings = Vec::new();
-    for job in common::jobs(workflow) {
-        for step in common::steps(&job) {
-            let Some(script) = step.run() else { continue };
-            // Step `env` overrides the job's, which overrides the workflow's.
-            let mut tainted = std::collections::BTreeMap::new();
-            for scope in [&workflow.value, job.value, step.value] {
-                let Some(env) = scope.get("env").and_then(Value::as_mapping) else {
-                    continue;
-                };
-                for (name, value) in env {
-                    if let Some(name) = name.as_str() {
-                        let untrusted = value
-                            .as_str()
-                            .is_some_and(|text| !common::untrusted_in_text(text).is_empty());
-                        tainted.insert(name.to_ascii_lowercase(), untrusted);
-                    }
-                }
-            }
-            let unsafe_write = env_file_writes(script).iter().any(|written| {
-                privileged
-                    || !common::untrusted_in_text(written).is_empty()
-                    || tainted
-                        .iter()
-                        .any(|(name, untrusted)| *untrusted && reads_variable(written, name))
-            });
-            if unsafe_write {
-                findings.push(common::finding(
-                    workflow,
-                    &ENV_INJECTION,
-                    step.key("run"),
-                    step.location.clone(),
-                    "writes GITHUB_ENV or GITHUB_PATH from an untrusted context",
-                )?);
-            }
-        }
-    }
-    Ok(findings)
-}
-
-/// The text of every command in `script` that writes GITHUB_ENV or GITHUB_PATH: the line with
-/// the write, plus the heredoc it reads, the `{ }`, `( )`, or loop body it closes, or the
-/// indented block of a Python `with open(...):` it opens.
-fn env_file_writes(script: &str) -> Vec<String> {
-    let script = script.replace("\\\n", " ");
-    let lines: Vec<&str> = script.lines().collect();
-    (0..lines.len())
-        .filter(|&index| writes_env_file(lines[index]))
-        .map(|index| {
-            let end = heredoc_end(&lines, index).max(indented_block_end(&lines, index));
-            lines[block_start(&lines, index)..=end].join("\n")
-        })
-        .collect()
-}
-
-const ENV_FILES: &[&str] = &["github_env", "github_path"];
-const FILE_WRITERS: &[&str] = &["tee", "out-file", "add-content", "set-content"];
-
-/// Whether `line` writes an environment file: a `>`, `>|`, or `>>` redirect into it, `tee` or
-/// PowerShell's `Out-File`, `Add-Content`, or `Set-Content` naming it, or Python opening it to
-/// append or write. Reading the path is not a write. Compared in lower case because PowerShell
-/// and cmd ignore it.
-fn writes_env_file(line: &str) -> bool {
-    let line = env_file_expressions(&line.to_ascii_lowercase());
-    ENV_FILES.iter().any(|file| {
-        line.match_indices(file).any(|(at, _)| {
-            let whole_name = !line[at + file.len()..]
-                .bytes()
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-            if whole_name && python_opens_for_writing(&line[..at], &line[at + file.len()..]) {
-                return true;
-            }
-            let Some(before) = ["${", "$env:", "$", "%"]
-                .iter()
-                .find_map(|sigil| line[..at].strip_suffix(sigil))
-            else {
-                return false;
-            };
-            let before = before.trim_end_matches([' ', '\t', '"', '\'']);
-            let command = before.rsplit(['|', ';', '&']).next().unwrap_or(before);
-            let writer = !before.ends_with('<')
-                && command
-                    .split_whitespace()
-                    .any(|word| FILE_WRITERS.contains(&word));
-            whole_name && (before.ends_with('>') || before.ends_with(">|") || writer)
-        })
-    })
-}
-
-/// Rewrites `${{ github.env }}` and `${{ github.path }}`, the contexts that hold the same paths
-/// (https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context),
-/// to `$github_env` and `$github_path`.
-fn env_file_expressions(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(start) = rest.find("${{") {
-        let after = &rest[start + 3..];
-        let Some(end) = after.find("}}") else { break };
-        out.push_str(&rest[..start]);
-        match after[..end].trim() {
-            "github.env" => out.push_str("$github_env"),
-            "github.path" => out.push_str("$github_path"),
-            _ => out.push_str(&rest[start..start + 3 + end + 2]),
-        }
-        rest = &after[end + 2..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// Whether the environment file named between `before` and `after` is Python's
-/// `os.environ["…"]`, `os.environ.get("…")`, or `os.getenv("…")` opened to append or write:
-/// `open(…, "a")`, `open(…, mode="w")`, `Path(…).open("a")`, or `Path(…).write_text(…)`.
-fn python_opens_for_writing(before: &str, after: &str) -> bool {
-    let Some(quote) = before.chars().last().filter(|char| "'\"".contains(*char)) else {
-        return false;
-    };
-    let lookup = before[..before.len() - 1].trim_end();
-    let from_environment = ["environ[", "environ.get(", "getenv("]
-        .iter()
-        .any(|call| lookup.ends_with(call));
-    let Some(after) = after.strip_prefix(quote) else {
-        return false;
-    };
-    let after = after.trim_start_matches([']', ')', ' ']);
-    let writing_mode = |text: &str| {
-        let text = text.trim_start();
-        let text = text.strip_prefix("mode=").unwrap_or(text).trim_start();
-        text.strip_prefix(['\'', '"'])
-            .is_some_and(|mode| mode.starts_with(['a', 'w']))
-    };
-    from_environment
-        && (after.strip_prefix(',').is_some_and(writing_mode)
-            || after.strip_prefix(".open(").is_some_and(writing_mode)
-            || after.starts_with(".write_text("))
-}
-
-/// Whether `text` expands the environment variable `name` (lowercase) in shell (`$name`,
-/// `${name}`), PowerShell (`$env:name`), cmd (`%name%`), or Python (`os.environ["name"]`).
-fn reads_variable(text: &str, name: &str) -> bool {
-    let text = text.to_ascii_lowercase();
-    text.match_indices(name).any(|(at, _)| {
-        let before = &text[..at];
-        let after = &text[at + name.len()..];
-        let ends_name = !after
-            .bytes()
-            .next()
-            .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-        let quoted = ['\'', '"']
-            .into_iter()
-            .any(|quote| before.ends_with(quote) && after.starts_with(quote));
-        let sigil = before.ends_with("$env:")
-            || before.ends_with("${")
-            || (before.ends_with('%') && after.starts_with('%'))
-            || before.ends_with('$');
-        ends_name && (sigil || quoted)
-    })
-}
-
-/// Last line of the indented block that `lines[index]` opens with a trailing `:`, as Python's
-/// `with open(...) as file:` does, or `index` without one.
-fn indented_block_end(lines: &[&str], index: usize) -> usize {
-    let opener = lines[index];
-    if !opener.trim_end().ends_with(':') {
-        return index;
-    }
-    let indent = |line: &str| line.len() - line.trim_start().len();
-    let depth = indent(opener);
-    (index + 1..lines.len())
-        .take_while(|&next| lines[next].trim().is_empty() || indent(lines[next]) > depth)
-        .last()
-        .unwrap_or(index)
-}
-
-/// First line of the block that the write on `lines[index]` redirects: the matching `{`, `(`,
-/// or `do` line when it starts with `}`, `)`, or `done`.
-// ponytail: the nearest opener indented no deeper than the closer; an unindented nested block
-// of the same kind cuts the body short. Parse the shell when that shows up in practice.
-fn block_start(lines: &[&str], index: usize) -> usize {
-    let closer = lines[index].trim_start();
-    let indent = lines[index].len() - closer.len();
-    let opens: fn(&str) -> bool = if closer.starts_with('}') {
-        |line| line.ends_with('{')
-    } else if closer.starts_with(')') {
-        |line| line.starts_with('(')
-    } else if closer.starts_with("done") {
-        |line| line.ends_with("do")
-    } else {
-        return index;
-    };
-    (0..index)
-        .rev()
-        .find(|&opener| {
-            let text = lines[opener].trim_start();
-            lines[opener].len() - text.len() <= indent && opens(text.trim_end())
-        })
-        .unwrap_or(0)
-}
-
-/// Last line of the heredoc that the write on `lines[index]` reads, or `index` without one.
-fn heredoc_end(lines: &[&str], index: usize) -> usize {
-    let line = lines[index];
-    let Some(at) = line
-        .find("<<")
-        .filter(|&at| !line[at + 2..].starts_with('<'))
-    else {
-        return index;
-    };
-    let delimiter: String = line[at + 2..]
-        .trim_start_matches('-')
-        .trim_start()
-        .chars()
-        .take_while(|char| !char.is_whitespace() && !";|&)".contains(*char))
-        .filter(|char| !"'\"".contains(*char))
-        .collect();
-    if delimiter.is_empty() {
-        return index;
-    }
-    (index + 1..lines.len())
-        .find(|&end| lines[end].trim() == delimiter)
-        .unwrap_or(lines.len() - 1)
 }
 
 // ponytail: Known agent actions only; add a marketplace-category lookup when
@@ -403,7 +173,7 @@ pub fn prompt_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             let mut tainted = false;
             if let Some(inputs) = step.value.get("with") {
                 common::strings(inputs, &Route::default(), &mut |_, text| {
-                    tainted |= !common::untrusted_in_text(text).is_empty();
+                    tainted |= !expression::untrusted_in_text(text).is_empty();
                 });
             }
             if external || tainted {
@@ -439,7 +209,7 @@ const HEAD_REFS: &[&str] = &[
 /// compared as `untrusted_contexts` reads them: lowercased, with index syntax made dotted.
 fn checks_out_head(step: &common::Step) -> bool {
     let mentions_head = |text: &str| {
-        let text = common::dotted(&text.to_ascii_lowercase());
+        let text = expression::dotted(&text.to_ascii_lowercase());
         HEAD_REFS.iter().any(|head| text.contains(head))
     };
     let checkout = step
@@ -449,51 +219,22 @@ fn checks_out_head(step: &common::Step) -> bool {
             .iter()
             .any(|input| step.input_str(input).is_some_and(mentions_head));
     let fetch = step.run().is_some_and(|script| {
-        script
-            .replace("\\\n", " ")
-            .split(['\n', ';', '&', '|'])
-            .any(|command| {
-                command.contains("gh pr checkout")
-                    || git_arguments(command, &["fetch", "pull", "clone", "checkout", "switch"])
-                        .is_some_and(|arguments| {
-                            arguments.contains("pull/") || mentions_head(&arguments)
-                        })
+        shell::commands(script)
+            .iter()
+            .filter_map(|command| shell::program(&command.words))
+            .any(|program| {
+                let gh_checkout =
+                    program.name == "gh" && program.args.starts_with(&["pr", "checkout"]);
+                let git_fetch =
+                    shell::git_subcommand(&program).is_some_and(|(subcommand, args)| {
+                        let args = args.join(" ");
+                        ["fetch", "pull", "clone", "checkout", "switch"].contains(&subcommand)
+                            && (args.contains("pull/") || mentions_head(&args))
+                    });
+                gh_checkout || git_fetch
             })
     });
     checkout || fetch
-}
-
-/// Global options of `git` that take their value as the next word:
-/// https://git-scm.com/docs/git#_options
-const GIT_OPTIONS_WITH_VALUE: &[&str] = &[
-    "-C",
-    "-c",
-    "--git-dir",
-    "--work-tree",
-    "--namespace",
-    "--config-env",
-];
-
-/// The arguments after the subcommand when `command` runs `git` with one of `subcommands`,
-/// skipping variable assignments and wrappers before `git` and its global options after it.
-fn git_arguments(command: &str, subcommands: &[&str]) -> Option<String> {
-    let mut words = command
-        .split_whitespace()
-        .skip_while(|word| {
-            ["sudo", "command", "exec", "env", "time"].contains(word)
-                || (word.contains('=') && !word.starts_with('-'))
-        })
-        .peekable();
-    words.next().filter(|word| *word == "git")?;
-    while let Some(option) = words.next_if(|word| word.starts_with('-')) {
-        if GIT_OPTIONS_WITH_VALUE.contains(&option) {
-            words.next();
-        }
-    }
-    words
-        .next()
-        .filter(|subcommand| subcommands.contains(subcommand))?;
-    Some(words.collect::<Vec<_>>().join(" "))
 }
 
 pub fn pwn_request(workflow: &Workflow) -> Result<Vec<Finding>, String> {
@@ -570,109 +311,31 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 
 /// Whether `condition` runs something because the actor is a bot: `==`, `contains`,
 /// `startsWith`, or `endsWith` matching `github.actor` or `github.triggering_actor` with a
-/// `[bot]` name. A spoofed actor fails a `!=` or negated check, which only skips the work; a
-/// check is negated by an odd number of `!` or `== false` around its enclosing groups.
+/// `[bot]` name. A spoofed actor fails a `!=` or negated check, which only skips the work.
 fn trusts_bot_actor(condition: &str) -> bool {
-    let text = condition.to_ascii_lowercase();
-    ["github.actor", "github.triggering_actor"]
-        .iter()
-        .flat_map(|actor| {
-            text.match_indices(actor)
-                .map(|(at, actor)| (at, at + actor.len()))
-        })
-        .filter(|&(_, end)| {
-            !text[end..]
-                .bytes()
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    let text = expression::dotted(&condition.to_ascii_lowercase());
+    expression::context_paths(&text)
+        .into_iter()
+        .filter(|&(start, end)| {
+            matches!(
+                &text[start..end],
+                "github.actor" | "github.triggering_actor"
+            )
         })
         .any(|(start, end)| {
-            let before = text[..start].trim_end();
-            let after = text[end..].trim_start();
-            let positive = negations(&text, start).is_multiple_of(2);
-            if let Some(operand) = after.strip_prefix("==") {
-                return positive && leading_literal(operand.trim_start()).contains("[bot]");
-            }
-            if let Some(operand) = before.strip_suffix("==") {
-                let operand = operand.trim_end();
-                let literal = operand
-                    .strip_suffix('\'')
-                    .and_then(|rest| rest.rfind('\'').map(|open| &rest[open..]));
-                return positive && literal.is_some_and(|literal| literal.contains("[bot]"));
-            }
-            if after.starts_with("!=") || before.ends_with("!=") {
-                return false;
-            }
-            positive
-                && enclosing_call(&text, start).is_some_and(|(name, call)| {
-                    ["contains", "startswith", "endswith"].contains(&name) && call.contains("[bot]")
-                })
+            let test = expression::test(&text, start, end);
+            !test.negated
+                && match test.operator {
+                    Operator::Equals(operand) => operand.contains("[bot]"),
+                    Operator::Differs(_) => false,
+                    Operator::Truthy => {
+                        expression::enclosing_call(&text, start).is_some_and(|(name, call)| {
+                            ["contains", "startswith", "endswith"].contains(&name)
+                                && call.contains("[bot]")
+                        })
+                    }
+                }
         })
-}
-
-/// How many of the parenthesized groups and calls around `text[at]` are negated by a leading
-/// `!`, a trailing `== false` or `!= true`, or a leading `false ==` or `true !=`.
-fn negations(text: &str, mut at: usize) -> usize {
-    let mut count = 0;
-    while let Some((open, close)) = enclosing_group(text, at) {
-        let head = text[..open].trim_end();
-        let name_start = head
-            .rfind(|char: char| !(char.is_ascii_alphanumeric() || char == '_'))
-            .map_or(0, |index| index + 1);
-        let before = head[..name_start].trim_end();
-        let after = text[close + 1..].trim_start();
-        let compared_false = ["== false", "!= true"]
-            .iter()
-            .any(|suffix| after.starts_with(suffix))
-            || ["false ==", "true !="]
-                .iter()
-                .any(|prefix| before.ends_with(prefix));
-        count += usize::from(before.ends_with('!')) + usize::from(compared_false);
-        at = name_start;
-    }
-    count
-}
-
-/// Byte offsets of the `(` and `)` of the innermost group around `text[at]`.
-fn enclosing_group(text: &str, at: usize) -> Option<(usize, usize)> {
-    let mut depth = 0;
-    let open = text[..at].char_indices().rev().find_map(|(index, char)| {
-        match char {
-            ')' => depth += 1,
-            '(' if depth == 0 => return Some(index),
-            '(' => depth -= 1,
-            _ => {}
-        }
-        None
-    })?;
-    let mut depth = 0;
-    let close = text[open..].char_indices().find_map(|(index, char)| {
-        match char {
-            '(' => depth += 1,
-            ')' if depth == 1 => return Some(open + index),
-            ')' => depth -= 1,
-            _ => {}
-        }
-        None
-    })?;
-    Some((open, close))
-}
-
-/// The single-quoted literal that `text` starts with, or "" when it starts with something else.
-fn leading_literal(text: &str) -> &str {
-    text.strip_prefix('\'')
-        .and_then(|rest| rest.find('\'').map(|close| &rest[..close]))
-        .unwrap_or("")
-}
-
-/// Name and full text of the innermost function call around `text[at]`.
-fn enclosing_call(text: &str, at: usize) -> Option<(&str, &str)> {
-    let (open, close) = enclosing_group(text, at)?;
-    let head = text[..open].trim_end();
-    let name_start = head
-        .rfind(|char: char| !(char.is_ascii_alphanumeric() || char == '_'))
-        .map_or(0, |index| index + 1);
-    Some((&head[name_start..], &text[name_start..=close]))
 }
 
 fn single_expression(text: &str) -> bool {
@@ -831,21 +494,18 @@ fn saves_cache(workflow: &Workflow, step: &common::Step, after_checkout: bool) -
         // a0853c24544627f65ddf259abe73b1d18a591444). The checked-out pull request controls that
         // file, so any setup-node from v5 may save.
         Some("actions/setup-node") => {
-            let before_v5 = maintainability::versioned_action(workflow, step)
-                .is_some_and(|(_, version)| version.first().is_some_and(|major| *major < 5));
+            let before_v5 = common::action_major(workflow, step).is_some_and(|major| major < 5);
             let automatic = !before_v5
-                && !matches!(
-                    step.input("package-manager-cache"),
-                    Some(Value::Bool(false))
-                )
-                && step.input_str("package-manager-cache") != Some("false");
+                && step
+                    .input("package-manager-cache")
+                    .and_then(common::input_bool)
+                    != Some(false);
             automatic || uses_cache(workflow, step)
         }
         _ => uses_cache(workflow, step),
     }
 }
 
-/// Whether the step restores a cache.
 fn uses_cache(workflow: &Workflow, step: &common::Step) -> bool {
     let Some(uses) = step.uses() else {
         return false;
@@ -853,17 +513,15 @@ fn uses_cache(workflow: &Workflow, step: &common::Step) -> bool {
     let name = uses.split('@').next().unwrap_or("").to_ascii_lowercase();
     let cache_input = step.input("cache");
     let disabled = |value: Option<&Value>| {
-        matches!(value, Some(Value::Bool(false)))
-            || value
-                .and_then(Value::as_str)
-                .is_some_and(|text| text.is_empty() || text == "false")
+        value.is_some_and(|value| {
+            common::input_bool(value) == Some(false) || value.as_str() == Some("")
+        })
     };
     match name.as_str() {
         "actions/cache" | "actions/cache/restore" => true,
         // setup-go's `cache` defaults to true from v4 and to false before (action.yml of each tag).
         "actions/setup-go" => {
-            let before_v4 = maintainability::versioned_action(workflow, step)
-                .is_some_and(|(_, version)| version.first().is_some_and(|major| *major < 4));
+            let before_v4 = common::action_major(workflow, step).is_some_and(|major| major < 4);
             if before_v4 {
                 cache_input.is_some() && !disabled(cache_input)
             } else {
@@ -872,15 +530,12 @@ fn uses_cache(workflow: &Workflow, step: &common::Step) -> bool {
         }
         // setup-uv's `enable-cache` defaults to false before v5, then to `auto`, which from v10 skips
         // release, tag push, pull_request_target, and workflow_run runs (action.yml of each tag).
-        "astral-sh/setup-uv" => {
-            let major = maintainability::versioned_action(workflow, step)
-                .and_then(|(_, version)| version.first().copied());
-            match step.input("enable-cache") {
-                Some(Value::Bool(enabled)) => *enabled,
-                Some(Value::String(text)) if text != "auto" => text == "true",
-                _ => major.is_some_and(|major| (5..10).contains(&major)),
+        "astral-sh/setup-uv" => match step.input("enable-cache") {
+            Some(value @ (Value::Bool(_) | Value::String(_))) if value.as_str() != Some("auto") => {
+                common::input_bool(value) == Some(true)
             }
-        }
+            _ => common::action_major(workflow, step).is_some_and(|major| (5..10).contains(&major)),
+        },
         "actions/setup-node"
         | "actions/setup-python"
         | "actions/setup-java"
@@ -915,7 +570,7 @@ pub fn obfuscation(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut routes = BTreeSet::new();
     let mut flagged = Vec::new();
     common::strings(&workflow.value, &Route::default(), &mut |route, text| {
-        let obfuscated = common::expressions(text)
+        let obfuscated = expression::expressions(text)
             .into_iter()
             .any(|expression| is_string_literal(expression) || expression.contains("github["));
         if obfuscated && routes.insert(format!("{route:?}")) {

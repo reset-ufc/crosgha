@@ -22,6 +22,7 @@ pub const VULNERABLE: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "known-vulnerable-actions")],
     configurable: true,
+    relational: false,
 };
 
 // GHAST TP-1 and CIAnalyser `reportUpdateLag`: the referenced version is older than the
@@ -34,6 +35,7 @@ pub const OUTDATED: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 // pinact `--verify-comment` and zizmor `ref-version-mismatch`: the `# vX.Y.Z` comment next to
@@ -46,6 +48,7 @@ pub const COMMENT_MISMATCH: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("zizmor", "ref-version-mismatch")],
     configurable: false,
+    relational: false,
 };
 
 // zizmor `impostor-commit`: a SHA that belongs to a fork, not to the named repository.
@@ -57,6 +60,7 @@ pub const IMPOSTOR: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "impostor-commit")],
     configurable: false,
+    relational: false,
 };
 
 // zizmor `archived-uses`: archived actions receive no security fixes.
@@ -68,6 +72,7 @@ pub const ARCHIVED: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "archived-uses")],
     configurable: false,
+    relational: false,
 };
 
 // Repository Actions settings that widen every workflow's token:
@@ -80,6 +85,7 @@ pub const SETTINGS: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 struct Pin<'a> {

@@ -1,7 +1,7 @@
 use yaml_serde::{Mapping, Value};
 use yamlpatch::{Op, Patch};
 
-use super::{ChangeKind, Finding, ProposedFix, Rule, common, maintainability};
+use super::{ChangeKind, Finding, ProposedFix, Rule, common, shell};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -18,6 +18,7 @@ pub const RULE: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("zizmor", "artipacked")],
     configurable: false,
+    relational: false,
 };
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
@@ -32,12 +33,11 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             }
             let explicit = match step.value.get("with") {
                 None => false,
+                // `getInput(...).toUpperCase() === 'TRUE'` in checkout's src/input-helper.ts at
+                // f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a; getInput trims the value.
                 Some(Value::Mapping(inputs)) => match inputs.get("persist-credentials") {
                     None => false,
-                    Some(Value::Bool(true)) => true,
-                    // `getInput(...).toUpperCase() === 'TRUE'` in checkout's src/input-helper.ts
-                    // at f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a; getInput trims the value.
-                    Some(Value::String(value)) if value.trim().eq_ignore_ascii_case("true") => true,
+                    Some(value) if common::input_bool(value) == Some(true) => true,
                     _ => continue,
                 },
                 _ => continue,
@@ -79,8 +79,7 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 /// https://github.com/actions/checkout/blob/v1/action.yml
 /// https://github.com/actions/checkout/blob/v2/action.yml
 fn predates_input(workflow: &Workflow, step: &common::Step<'_>) -> bool {
-    maintainability::versioned_action(workflow, step)
-        .is_some_and(|(_, version)| version.first().is_some_and(|major| *major < 2))
+    common::action_major(workflow, step).is_some_and(|major| major < 2)
 }
 
 /// Actions that push with the credentials checkout persisted. git-auto-commit-action: "`persist-credentials`
@@ -88,47 +87,19 @@ fn predates_input(workflow: &Workflow, step: &common::Step<'_>) -> bool {
 /// https://github.com/stefanzweifel/git-auto-commit-action/blob/92648143fd6aebb695590bfe3fc28f92bcf383e4/README.md
 const PUSHING_ACTIONS: &[&str] = &["stefanzweifel/git-auto-commit-action"];
 
-/// git's global options that take their value as the next word:
-/// https://git-scm.com/docs/git#_options
-const GIT_VALUED_OPTIONS: &[&str] = &["-C", "-c", "--git-dir", "--work-tree", "--namespace"];
-
 /// Whether the step runs `git push` or an action that pushes with the persisted token.
 fn pushes(step: &common::Step<'_>) -> bool {
-    if PUSHING_ACTIONS
+    PUSHING_ACTIONS
         .iter()
         .any(|action| step.uses_action(action))
-    {
-        return true;
-    }
-    let Some(script) = step.run() else {
-        return false;
-    };
-    script
-        .replace("\\\n", " ")
-        .split(['\n', ';', '|', '&', '(', ')', '`', '{', '}'])
-        .any(|command| {
-            let mut words = command.split_whitespace().skip_while(|word| {
-                // `sudo`, `env`, and their options or variable assignments precede the program.
-                matches!(
-                    *word,
-                    "sudo" | "env" | "exec" | "if" | "then" | "else" | "elif" | "do" | "!"
-                ) || word.starts_with('-')
-                    || word.contains('=')
-            });
-            if words
-                .next()
-                .is_none_or(|program| program.rsplit('/').next() != Some("git"))
-            {
-                return false;
-            }
-            while let Some(word) = words.next() {
-                if GIT_VALUED_OPTIONS.contains(&word) {
-                    words.next();
-                } else if !word.starts_with('-') {
-                    return word == "push";
-                }
-            }
-            false
+        || step.run().is_some_and(|script| {
+            shell::commands(script)
+                .iter()
+                .filter_map(|command| shell::program(&command.words))
+                .any(|program| {
+                    shell::git_subcommand(&program)
+                        .is_some_and(|(subcommand, _)| subcommand == "push")
+                })
         })
 }
 

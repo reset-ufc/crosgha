@@ -25,6 +25,7 @@ pub const COOLDOWN: Rule = Rule {
     persona: Persona::Pedantic,
     equivalents: &[("zizmor", "dependabot-cooldown")],
     configurable: true,
+    relational: false,
 };
 
 // Fares et al. (arXiv 2601.14455) FGB-05 "Hardening Gap Weakness" and the StepSecurity
@@ -37,6 +38,7 @@ pub const TOOLING: Rule = Rule {
     persona: Persona::Auditor,
     equivalents: &[],
     configurable: false,
+    relational: false,
 };
 
 pub struct Located {
@@ -243,6 +245,7 @@ pub const RUNTIME: Rule = Rule {
     persona: Persona::Regular,
     equivalents: &[("actionlint", "action")],
     configurable: false,
+    relational: false,
 };
 
 const RETIRED_RUNTIMES: &[&str] = &["node12", "node16", "node20"];
