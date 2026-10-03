@@ -49,8 +49,8 @@ pub struct GitHub {
     token: String,
     agent: ureq::Agent,
     cache: Mutex<HashMap<String, Slot>>,
-    /// The rate-limit failure that stops every later request; retrying before the reset only
-    /// spends more of the limit.
+    /// The rate-limit or rejected-token (401) failure that stops every later request: retrying
+    /// before the reset only spends more of the limit, and a bad token fails every path alike.
     halted: Mutex<Option<ApiError>>,
 }
 
@@ -173,8 +173,10 @@ impl GitHub {
             ));
         }
         let error = failed(Some(status), rate_limited, detail);
-        if rate_limited {
-            *self.halted.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.clone());
+        if rate_limited || status == 401 {
+            // Requests already in flight report the first failure, so it is named once.
+            let mut halted = self.halted.lock().unwrap_or_else(PoisonError::into_inner);
+            return Err(halted.get_or_insert(error).clone());
         }
         Err(error)
     }

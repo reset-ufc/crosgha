@@ -416,6 +416,32 @@ fn a_rate_limit_skips_online_checks_and_keeps_the_rest_of_the_report() {
     assert_eq!(finding_keys(&report), expected);
 }
 
+/// A rejected token fails every request alike, so the first 401 stops the rest and is named once.
+#[test]
+fn a_rejected_token_stops_further_requests() {
+    let batch = mixed_batch("bad-token");
+    let (api, log) = logged_github();
+    let rejected = bin()
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .args(["--persona", "auditor", "--fail-on", "none", "--no-config"])
+        .args(["--gh-token", "revoked-token", "--gh-hostname", &api])
+        .arg(&batch)
+        .output()
+        .unwrap();
+    fs::remove_dir_all(&batch).unwrap();
+
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert_eq!(rejected.status.code(), Some(2), "{stderr}");
+    assert_eq!(stderr.matches("HTTP 401").count(), 1, "{stderr}");
+    // Only requests already in flight when the first 401 arrived, one per parallel workflow.
+    let requests = log.lock().unwrap().len();
+    assert!(
+        (1..=3).contains(&requests),
+        "{requests} requests with a rejected token"
+    );
+}
+
 /// A server error on one path skips only the check that needed it, on every workflow that asks,
 /// and the path is requested once for the whole batch.
 #[test]
