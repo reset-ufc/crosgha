@@ -152,9 +152,9 @@ Rules with scope `online` in the [rule table](#rules) query the GitHub API.
 
 ### Config file
 
-crosgha reads `crosgha.yml` or an existing `zizmor.yml`, found the same way zizmor finds its config, or passed with
-`--config` (also `CROSGHA_CONFIG` or `ZIZMOR_CONFIG`). `--no-config` skips discovery. Keys may use crosgha's or
-zizmor's rule names.
+crosgha reads `crosgha.yml` or an existing `zizmor.yml`, found for each input path the same way zizmor finds its
+config, or passed with `--config` (also `CROSGHA_CONFIG` or `ZIZMOR_CONFIG`) for every input. `--no-config` skips both.
+Keys may use crosgha's or zizmor's rule names.
 
 | Key | Effect |
 |---|---|

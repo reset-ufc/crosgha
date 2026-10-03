@@ -1316,6 +1316,44 @@ fn only_files_directly_in_the_workflows_directory_are_scanned() {
     );
 }
 
+#[test]
+fn each_input_uses_its_own_config_whatever_the_order() {
+    // Only `configured` has a config: it disables unpinned-uses and raises artipacked to high.
+    let scan = |inputs: &[&str]| {
+        let output = bin()
+            .current_dir(fixture("repos"))
+            .args(["--offline", "--persona", "pedantic", "--fail-on", "none"])
+            .args(["-f", "agent"])
+            .args(inputs)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut lines: Vec<String> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        lines.sort();
+        lines
+    };
+    let mut alone = [scan(&["configured"]), scan(&["insecure"])].concat();
+    alone.sort();
+    assert!(
+        alone
+            .iter()
+            .any(|line| line.contains("error persist-credentials"))
+            && !alone.iter().any(|line| line.contains("unpinned-action"))
+            && alone.iter().any(|line| line.starts_with("insecure/")),
+        "{alone:#?}"
+    );
+    assert_eq!(scan(&["configured", "insecure"]), alone);
+    assert_eq!(scan(&["insecure", "configured"]), alone);
+}
+
 /// A throwaway repository whose git ignores the user's global and system config (hooksPath, signing).
 fn git_repo(name: &str) -> PathBuf {
     let unique = SystemTime::now()
