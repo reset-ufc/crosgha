@@ -1235,6 +1235,40 @@ fn ignore_entries_with_a_malformed_position_are_config_errors() {
     assert!(injections[0].1.contains("ci.yml:15:"), "{report}");
 }
 
+#[test]
+fn a_workflow_named_zizmor_yml_is_never_read_as_the_config() {
+    // The root `zizmor.yml` disables artipacked; `.github/workflows/zizmor.yml` runs zizmor.
+    let repo = fixture("repos/zizmor-workflow");
+    let scan = |extra: &[&str], input: &PathBuf| {
+        let output = bin()
+            .args(["--offline", "--fail-on", "none"])
+            .args(extra)
+            .arg(input)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let workflow = repo.join(".github/workflows/ci.yml");
+    for input in [&repo, &repo.join(".github/workflows"), &workflow] {
+        let report = scan(&[], input);
+        assert!(
+            diagnostics(&report, "persist-credentials").is_empty(),
+            "{input:?}: {report}"
+        );
+    }
+    let unconfigured = scan(&["--no-config"], &workflow);
+    assert_eq!(
+        diagnostics(&unconfigured, "persist-credentials").len(),
+        1,
+        "{unconfigured}"
+    );
+}
+
 /// A throwaway repository whose git ignores the user's global and system config (hooksPath, signing).
 fn git_repo(name: &str) -> PathBuf {
     let unique = SystemTime::now()

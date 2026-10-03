@@ -63,16 +63,21 @@ fn ignore_entry(entry: &str) -> Option<(String, Option<usize>)> {
 
 impl Config {
     /// The first config file found walking up from `input`, stopping at the Git root. A
-    /// `.github/workflows` input starts two levels up so a workflow named `zizmor.yml` is never
-    /// read as configuration.
+    /// `.github/workflows` directory, or a file in it, starts two levels up so a workflow named
+    /// `zizmor.yml` is never read as configuration.
     pub fn discover(input: &Path) -> Result<Option<(PathBuf, Self)>, String> {
         let input = fs::canonicalize(input)
             .map_err(|error| format!("cannot resolve `{}`: {error}", input.display()))?;
-        let workflows_dir = input.ends_with(".github/workflows");
-        let mut current = match (input.is_dir(), workflows_dir) {
-            (true, true) => input.parent().and_then(Path::parent),
-            (true, false) => Some(input.as_path()),
-            (false, _) => input.parent(),
+        let directory = if input.is_dir() {
+            Some(input.as_path())
+        } else {
+            input.parent()
+        };
+        let mut current = match directory {
+            Some(workflows) if workflows.ends_with(".github/workflows") => {
+                workflows.parent().and_then(Path::parent)
+            }
+            other => other,
         };
         while let Some(directory) = current {
             if let Some(path) = NAMES
