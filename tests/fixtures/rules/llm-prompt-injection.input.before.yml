@@ -9,6 +9,9 @@ jobs:
       - uses: openai/codex-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: llm-prompt-injection
         with:
           prompt: "Summarize: ${{ github.event.pull_request.body }}"
+      - uses: actions/ai-inference@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: llm-prompt-injection
+        with:
+          prompt: "Label this pull request: ${{ toJSON(github.event.pull_request) }}"
       - uses: google-github-actions/run-gemini-cli@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with:
           prompt: Review the diff
