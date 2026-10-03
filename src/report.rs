@@ -377,28 +377,33 @@ fn reported<'a>(
         .collect()
 }
 
-/// Every proposed fix with its finding in the original source, its status, and why it is not
-/// in the file.
+/// Every proposed fix with its finding, its status, and why it is not in the file. A fix that
+/// is not in the file points at its finding among the reported ones, whose lines an applied fix
+/// above it may have moved; an applied fix points at the original source.
 fn attempts(
     files: &[FileReport],
 ) -> impl Iterator<Item = (&Path, &Finding, &'static str, Option<&str>)> {
     files.iter().flat_map(|file| {
+        let (_, shown) = file.shown();
         file.inspection
             .fix
             .iter()
             .flat_map(|outcome| &outcome.attempts)
-            .map(|attempt| {
+            .map(move |attempt| {
                 let (status, reason) = match (&attempt.rejected, &file.unwritten) {
                     (Some(reason), _) => ("rejected", Some(reason.as_str())),
                     (None, Some(reason)) => ("not-written", Some(reason.as_str())),
                     (None, None) => ("applied", None),
                 };
-                (
-                    file.path.as_path(),
-                    &file.inspection.findings[attempt.finding],
-                    status,
-                    reason,
-                )
+                let original = &file.inspection.findings[attempt.finding];
+                let finding = shown
+                    .iter()
+                    .filter(|_| reason.is_some())
+                    .find(|shown| {
+                        shown.rule.id == original.rule.id && shown.location == original.location
+                    })
+                    .unwrap_or(original);
+                (file.path.as_path(), finding, status, reason)
             })
     })
 }

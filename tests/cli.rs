@@ -369,7 +369,8 @@ fn fixes_checkout_while_reporting_a_detection_only_finding() {
 }
 
 /// A fix that fails validation stays a reported finding; the other fixes in that file and in the
-/// other files are still written.
+/// other files are still written. The fix applied above the rejected one moves it from line 16 to
+/// 18, and every report gives the line in the written file.
 #[test]
 fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
     let unique = SystemTime::now()
@@ -418,7 +419,7 @@ fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
     assert_eq!(remaining.len(), 1, "{report}");
     assert_eq!(remaining[0]["rule"], "persist-credentials");
     assert!(remaining[0]["path"].as_str().unwrap().ends_with("flow.yml"));
-    assert_eq!(remaining[0]["line"], 10);
+    assert_eq!(remaining[0]["line"], 18);
     let fixes = report["fixes"].as_array().unwrap();
     let status = |status: &str| {
         fixes
@@ -429,7 +430,7 @@ fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
     assert_eq!(status("applied").len(), 4, "{report}");
     let rejected = status("rejected");
     assert_eq!(rejected.len(), 1, "{report}");
-    assert_eq!(rejected[0]["line"], 10);
+    assert_eq!(rejected[0]["line"], 18);
     assert_eq!(
         rejected[0]["reason"],
         "fix changed YAML outside the intended node"
@@ -442,7 +443,7 @@ fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("flow.yml:10:11 [persist-credentials]: fix changed YAML outside"),
+        stdout.contains("flow.yml:18:11 [persist-credentials]: fix changed YAML outside"),
         "{stdout}"
     );
     assert_eq!(
