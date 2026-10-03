@@ -679,6 +679,26 @@ fn github(files: &[FileReport], repository: &[Located]) -> String {
                 crate::policy::Severity::Warning => "warning",
                 crate::policy::Severity::Note => "notice",
             };
+            let message = format!(
+                "{}: {}{}",
+                finding.location,
+                finding.message,
+                finding.rule.equivalents_suffix()
+            );
+            // A repository-wide finding points at the workflow its SARIF result uses, since a
+            // directory is not a file; its message names the directory instead.
+            if path.is_dir() {
+                let file = first_workflow(path, files)
+                    .map(|(workflow, _)| {
+                        format!("file={},line=1,endLine=1,", property(&relative(workflow)))
+                    })
+                    .unwrap_or_default();
+                return format!(
+                    "::{command} {file}title={}::{}\n",
+                    property(finding.rule.id),
+                    data(&format!("{}: {message}", relative(path))),
+                );
+            }
             // actions/toolkit: columns "cannot be sent when startLine and endLine are different
             // values".
             let columns = match finding.line == finding.end_line {
@@ -695,12 +715,7 @@ fn github(files: &[FileReport], repository: &[Located]) -> String {
                 finding.line,
                 finding.end_line,
                 property(finding.rule.id),
-                data(&format!(
-                    "{}: {}{}",
-                    finding.location,
-                    finding.message,
-                    finding.rule.equivalents_suffix()
-                )),
+                data(&message),
             )
         })
         .collect()

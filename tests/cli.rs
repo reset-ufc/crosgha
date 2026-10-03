@@ -1614,6 +1614,23 @@ fn sarif_uses_utf16_columns_encoded_uris_and_a_workflow_location_for_repositorie
         );
     }
 
+    // Repository-wide annotations point at the same workflow, since a directory is not a file.
+    let tooling: Vec<&str> = annotations
+        .lines()
+        .filter(|line| line.contains("title=missing-security-tooling::"))
+        .collect();
+    assert!(!tooling.is_empty(), "{annotations}");
+    for line in tooling {
+        assert!(
+            line.contains("file=.github/workflows/ci build#1.yml,line=1,endLine=1,"),
+            "{line}"
+        );
+        assert!(
+            line.contains("::.github: repository: repository has no "),
+            "{line}"
+        );
+    }
+
     // Annotations name the file as a path, not as a URI.
     assert!(
         annotations.contains("file=.github/workflows/ci build#1.yml,line=6,"),
