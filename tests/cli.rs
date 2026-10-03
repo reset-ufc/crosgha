@@ -566,6 +566,22 @@ fn zizmor_config_is_discovered_and_honored() {
 
     let unconfigured = scan(&["--no-config"]);
     assert_eq!(lines_of(&unconfigured, "script-injection"), ["14", "15"]);
+    // `--no-config` also wins over a config named in the environment.
+    for variable in ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"] {
+        let output = bin()
+            .args(["--persona", "pedantic", "--offline", "--fail-on", "none"])
+            .arg("--no-config")
+            .env(variable, fixture("repos/configured/.github/zizmor.yml"))
+            .arg(&workflows)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{variable}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), unconfigured);
+    }
     assert_eq!(lines_of(&unconfigured, "unpinned-action"), ["11"]);
     assert!(unconfigured.contains("warning[persist-credentials]"));
 

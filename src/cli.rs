@@ -49,8 +49,10 @@ struct Args {
     #[arg(long, env = "CROSGHA_CONFIG")]
     config: Option<PathBuf>,
 
-    /// Do not discover or load crosgha.yml or zizmor.yml.
-    #[arg(long, conflicts_with = "config")]
+    /// Do not discover or load crosgha.yml or zizmor.yml, even one named by `--config`.
+    // No clap conflict: it cannot tell a CROSGHA_CONFIG value from the flag, and ZIZMOR_CONFIG
+    // already yields to `--no-config`.
+    #[arg(long)]
     no_config: bool,
 
     /// Report findings that inline comments or the config ignore.
