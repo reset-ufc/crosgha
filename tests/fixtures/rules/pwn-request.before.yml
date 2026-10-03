@@ -34,8 +34,18 @@ jobs:
       - run: | # expect: pwn-request
           git remote add fork "https://github.com/${{ github.event.pull_request.head.repo.full_name }}"
           git fetch fork "${{ github.event.pull_request.head.sha }}" && git switch --detach FETCH_HEAD
+      # Global options before the subcommand, `pull`, and `clone` reach the same code.
+      - run: git -C src fetch origin pull/1/head # expect: pwn-request
+      - run: git -c protocol.version=2 fetch origin refs/pull/1/merge # expect: pwn-request
+      - run: | # expect: pwn-request
+          cd src && git --git-dir=.git --work-tree . pull \
+            https://github.com/${{ github.event.pull_request.head.repo.full_name }} ${{ github.head_ref }}
+      - run: git clone ${{ github.event.pull_request.head.repo.clone_url }} pr # expect: pwn-request
       # Fetching the base branch and naming the pull request elsewhere is not a checkout.
       - run: |
+          git -C pull/ fetch origin main
+          git commit -m "Apply review of ${{ github.head_ref }}"
+          echo "git fetch origin pull/${{ github.event.number }}/head"
           git fetch origin main
           curl -fsS "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.number }}"
           echo "see https://github.com/${{ github.repository }}/pull/${{ github.event.number }}"

@@ -338,12 +338,46 @@ fn checks_out_head(step: &common::Step) -> bool {
             .split(['\n', ';', '&', '|'])
             .any(|command| {
                 command.contains("gh pr checkout")
-                    || (command.contains("git fetch")
-                        && (command.contains("pull/") || mentions_head(command)))
-                    || (command.contains("git checkout") && mentions_head(command))
+                    || git_arguments(command, &["fetch", "pull", "clone", "checkout", "switch"])
+                        .is_some_and(|arguments| {
+                            arguments.contains("pull/") || mentions_head(&arguments)
+                        })
             })
     });
     checkout || fetch
+}
+
+/// Global options of `git` that take their value as the next word:
+/// https://git-scm.com/docs/git#_options
+const GIT_OPTIONS_WITH_VALUE: &[&str] = &[
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--config-env",
+];
+
+/// The arguments after the subcommand when `command` runs `git` with one of `subcommands`,
+/// skipping variable assignments and wrappers before `git` and its global options after it.
+fn git_arguments(command: &str, subcommands: &[&str]) -> Option<String> {
+    let mut words = command
+        .split_whitespace()
+        .skip_while(|word| {
+            ["sudo", "command", "exec", "env", "time"].contains(word)
+                || (word.contains('=') && !word.starts_with('-'))
+        })
+        .peekable();
+    words.next().filter(|word| *word == "git")?;
+    while let Some(option) = words.next_if(|word| word.starts_with('-')) {
+        if GIT_OPTIONS_WITH_VALUE.contains(&option) {
+            words.next();
+        }
+    }
+    words
+        .next()
+        .filter(|subcommand| subcommands.contains(subcommand))?;
+    Some(words.collect::<Vec<_>>().join(" "))
 }
 
 pub fn pwn_request(workflow: &Workflow) -> Result<Vec<Finding>, String> {
