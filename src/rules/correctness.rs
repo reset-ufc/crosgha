@@ -498,9 +498,9 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 .and_then(Value::as_str)
                 .or(job_shell)
                 .unwrap_or("bash");
-            let posix = ["bash", "sh"]
-                .iter()
-                .any(|name| shell.split_whitespace().next() == Some(name));
+            // A custom shell such as `/usr/bin/bash -e {0}` names its program by path.
+            let program = shell.split_whitespace().next().unwrap_or("");
+            let posix = matches!(program.rsplit('/').next(), Some("bash" | "sh"));
             if posix && script.lines().any(unquoted_env_file) {
                 findings.push(common::finding(
                     workflow,
