@@ -412,6 +412,39 @@ fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
     assert!(!stdout.contains("--fix"), "{stdout}");
 }
 
+/// Layouts common in real repositories: a comment (here CJK) after the fixed step, CRLF line
+/// breaks, and no final newline. The fix keeps each file's line breaks and missing final newline.
+#[test]
+fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("crosgha-layout-{}-{unique}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let source = fs::read_to_string(fixture("fix-layout.yml")).unwrap();
+    let unterminated = source.trim_end_matches('\n');
+    let crlf = source.replace('\n', "\r\n");
+    fs::write(dir.join("unterminated.yml"), unterminated).unwrap();
+    fs::write(dir.join("crlf.yml"), &crlf).unwrap();
+
+    let output = bin().arg("--fix").arg(&dir).output().unwrap();
+    let fixed_unterminated = fs::read_to_string(dir.join("unterminated.yml")).unwrap();
+    let fixed_crlf = fs::read_to_string(dir.join("crlf.yml")).unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(
+        stdout.contains("Fixed 4 findings in 2 workflow files."),
+        "{stdout}"
+    );
+    let with = "# v5.1.0\n        with:\n          persist-credentials: false\n";
+    let expected = source.replace("# v5.1.0\n", with);
+    assert_eq!(fixed_unterminated, expected.trim_end_matches('\n'));
+    assert_eq!(fixed_crlf, expected.replace('\n', "\r\n"));
+}
+
 #[cfg(unix)]
 #[test]
 fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {

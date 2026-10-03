@@ -84,8 +84,12 @@ unchanged under `--fix` and remain visible in the report.
 1. Parse the patched YAML and validate its workflow structure.
 2. Run every enabled rule again. The target must disappear; no new
    finding may appear.
-3. Reconstruct the original source by reversing the declared node change.
-   The result must match the original bytes, including comments and spacing.
+3. Check that only the declared node changed, byte for byte, comments and spacing included.
+   A replaced value is swapped back and must restore the original source. An added key must
+   be the only insertion: the original equals the patched source minus the new node and the
+   spaces, line breaks, or comma around it, and the parsed values differ only by that key.
+   CRLF files and files without a final newline are patched as LF with one, then converted
+   back.
 4. Prepare all files before writing any file. Write each changed file through
    a same-directory temporary file, preserving permissions and renaming it
    over the original. An I/O failure during a later rename can leave earlier
