@@ -126,8 +126,17 @@ set +e
 "$crosgha" "${args[@]}" -- "${inputs[@]}" > "$report" 2> "$RUNNER_TEMP/crosgha.err"
 code=$?
 set -e
-cat "$report"
-cat "$RUNNER_TEMP/crosgha.err" >&2
+
+# File names and YAML keys from the scanned repo reach the report and stderr, so a line there could
+# read as a workflow command. Annotation output is crosgha's own escaped commands and stays live.
+# Everything goes to stdout because the runner reads stdout and stderr independently, so text on
+# stderr is not guaranteed to land between the stop and resume markers.
+token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+[[ "${CROSGHA_ANNOTATIONS:-false}" == true ]] && cat "$report"
+echo "::stop-commands::$token"
+[[ "${CROSGHA_ANNOTATIONS:-false}" == true ]] || cat "$report"
+cat "$RUNNER_TEMP/crosgha.err"
+echo "::$token::"
 
 if [[ "$code" == 2 ]] && grep -q "no .yml or .yaml workflow files found" "$RUNNER_TEMP/crosgha.err" \
     && [[ "${CROSGHA_FAIL_ON_NO_INPUTS:-true}" == false ]]; then
@@ -147,10 +156,13 @@ findings="$(grep -c '"ruleId":' "$sarif" || true)"
     echo "exit-code=$code"
     [[ "${CROSGHA_ADVANCED_SECURITY:-true}" == true ]] && echo "output-file=$sarif"
 } >> "$GITHUB_OUTPUT"
+# A fence longer than every backtick run in the report keeps the whole report inside the block.
+fence="$(awk '{ while (match($0, /`+/)) { if (RLENGTH > max) max = RLENGTH; $0 = substr($0, RSTART + RLENGTH) } }
+    END { for (n = (max < 3 ? 3 : max + 1); n > 0; n--) printf "`" }' "$report")"
 {
     echo "### crosgha v$version: $findings finding(s)"
     echo
-    echo '```text'
+    echo "${fence}text"
     cat "$report"
-    echo '```'
+    echo "$fence"
 } >> "$GITHUB_STEP_SUMMARY"
