@@ -21,3 +21,27 @@ jobs:
         run: |
           zizmor --format sarif . > results.sarif
           cat results.sarif
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Lint
+        run: pip install zizmor ruff
+      - run: ruff check .
+      - name: Build
+        run: pip install zizmor && npm ci && npm run build
+      - name: Audit for the dashboard
+        run: zizmor --format=json .
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install zizmor
+        run: sudo pip install --quiet zizmor==1.30.0
+      - run: zizmor --persona=auditor .

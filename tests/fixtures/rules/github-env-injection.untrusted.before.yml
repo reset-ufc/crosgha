@@ -8,3 +8,38 @@ jobs:
     steps:
       - run: echo "TITLE=${{ github.event.issue.title }}" >> "$GITHUB_ENV" # expect: github-env-injection
       - run: echo "NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
+      - run: echo "TITLE=${{ github.event.issue.title }}" | tee -a "$GITHUB_ENV" # expect: github-env-injection
+      - run: | # expect: github-env-injection
+          cat >> "$GITHUB_ENV" <<'EOF'
+          NUMBER=${{ github.event.issue.number }}
+          TITLE=${{ github.event.issue.title }}
+          EOF
+      - run: | # expect: github-env-injection
+          {
+            echo "NUMBER=${{ github.event.issue.number }}"
+            echo "BODY<<END"
+            echo "${{ github.event.issue.body }}"
+            echo "END"
+          } >> "${GITHUB_ENV}"
+      - run: | # expect: github-env-injection
+          for label in ${{ join(github.event.issue.labels.*.name, ' ') }}; do
+            echo "LABEL_$label=1"
+          done >> $GITHUB_ENV
+      - shell: pwsh
+        run: | # expect: github-env-injection
+          "TITLE=${{ github.event.issue.title }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - shell: pwsh
+        run: | # expect: github-env-injection
+          Add-Content -Path $Env:GITHUB_PATH -Value "${{ github.event.issue.title }}"
+      # The untrusted value is outside the write: a different step, line, or heredoc.
+      - shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "NUMBER=${{ github.event.issue.number }}"
+      - run: |
+          echo "${{ github.event.issue.title }}" > title.txt
+          cat >> "$GITHUB_ENV" <<EOF
+          NUMBER=${{ github.event.issue.number }}
+          EOF
+          echo "${{ github.event.issue.body }}" > body.txt
+      - run: |
+          echo "$GITHUB_ENV ${{ github.event.issue.title }}" > debug.txt
+          echo "NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"

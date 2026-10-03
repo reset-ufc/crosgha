@@ -12,3 +12,10 @@ jobs:
           wget -qO setup.sh https://example.com/setup && sha256sum -c setup.sh.sha256
       - run: curl -fsSL https://example.com/tool.tgz -o tool.tgz && sha256sum -c tool.tgz.sha256
       - run: curl -s https://api.example.com/status | jq .
+      - run: curl -s https://api.example.com/status | python3 -c 'import json, sys; print(json.load(sys.stdin)["ok"])'
+      - run: curl -s https://api.example.com/status | python3 -m json.tool
+      - run: curl -s https://api.example.com/status | perl -ne 'print if /ready/'
+      - run: curl -s https://api.example.com/status | bash -c 'cat > status.json'
+      - run: |
+          curl -fsSLo install.sh https://example.com/install.sh \
+            && sha256sum -c install.sh.sha256

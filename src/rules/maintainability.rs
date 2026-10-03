@@ -2,7 +2,9 @@ use yaml_serde::{Mapping, Value};
 use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{ChangeKind, Finding, ProposedFix, Rule, common, online, repository, runner};
+use super::{
+    ChangeKind, Finding, ProposedFix, Rule, common, correctness, online, repository, runner,
+};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -120,7 +122,11 @@ pub const REMOVED: Rule = Rule {
     tag: "deprecated-command/feature",
     severity: Severity::Error,
     persona: Persona::Regular,
-    equivalents: &[],
+    equivalents: &[
+        ("actionlint", "runner-label"),
+        ("actionlint", "action"),
+        ("actionlint", "deprecated-inputs"),
+    ],
     configurable: false,
 };
 
@@ -223,17 +229,49 @@ const FORK_GUARDS: &[&str] = &[
     "github.event.repository.owner",
 ];
 
+/// "If a job fails or is skipped, all jobs that need it are skipped unless the jobs use a
+/// conditional expression that causes the job to continue."
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds
+/// So a job is guarded by its own `if`, or by a guarded job it needs, unless a status function
+/// lets it run after that job is skipped.
+fn fork_guarded(
+    jobs: &[common::Job<'_>],
+    job: &common::Job<'_>,
+    visited: &mut Vec<String>,
+) -> bool {
+    if visited.iter().any(|name| name == job.name) {
+        return false;
+    }
+    visited.push(job.name.to_owned());
+    let condition = job.get("if").and_then(Value::as_str).unwrap_or("");
+    if FORK_GUARDS.iter().any(|guard| condition.contains(guard)) {
+        return true;
+    }
+    if ["always()", "failure()", "cancelled()"]
+        .iter()
+        .any(|status| condition.contains(status))
+    {
+        return false;
+    }
+    let needs = match job.get("needs") {
+        Some(Value::String(need)) => vec![need.as_str()],
+        Some(Value::Sequence(needs)) => needs.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    needs.iter().any(|need| {
+        jobs.iter()
+            .find(|other| other.name == *need)
+            .is_some_and(|other| fork_guarded(jobs, other, visited))
+    })
+}
+
 pub fn fork_guard(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     if !common::has_trigger(workflow, &["schedule"]) {
         return Ok(Vec::new());
     }
-    common::jobs(workflow)
-        .iter()
-        .filter(|job| {
-            !job.get("if")
-                .and_then(Value::as_str)
-                .is_some_and(|condition| FORK_GUARDS.iter().any(|guard| condition.contains(guard)))
-        })
+    let jobs = common::jobs(workflow);
+    jobs.iter()
+        .filter(|job| !fork_guarded(&jobs, job, &mut Vec::new()))
         .map(|job| {
             common::finding(
                 workflow,
@@ -261,8 +299,24 @@ fn runs_tests(job: &common::Job<'_>) -> bool {
         .filter_map(|step| step.run())
         .any(|script| {
             script
-                .split(|c: char| !c.is_ascii_alphanumeric())
-                .any(|word| TEST_COMMANDS.contains(&word))
+                .split(['\n', ';', '&', '|', '(', ')', '`'])
+                .any(|command| {
+                    // `test` in command position is the shell's condition builtin, not a test runner.
+                    let mut words = command
+                        .split_whitespace()
+                        .skip_while(|word| {
+                            matches!(
+                                *word,
+                                "if" | "then" | "elif" | "while" | "until" | "do" | "!" | "{"
+                            )
+                        })
+                        .peekable();
+                    words.next_if_eq(&"test");
+                    words.any(|word| {
+                        word.split(|c: char| !c.is_ascii_alphanumeric())
+                            .any(|word| TEST_COMMANDS.contains(&word))
+                    })
+                })
         })
 }
 
@@ -397,9 +451,29 @@ pub fn cache_misuse(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
+/// Step `id`s a job reads as `steps.<id>`, in `${{ }}` expressions or bare `if` conditions.
+fn read_step_ids(job: &common::Job<'_>) -> Vec<String> {
+    let mut ids = Vec::new();
+    common::strings(job.value, &job.route, &mut |_, text| {
+        let expressions = match common::expressions(text) {
+            found if found.is_empty() => vec![text],
+            found => found,
+        };
+        for expression in expressions {
+            ids.extend(
+                correctness::context_names(expression, "steps")
+                    .into_iter()
+                    .map(str::to_ascii_lowercase),
+            );
+        }
+    });
+    ids
+}
+
 pub fn duplicated_steps(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
+        let read = read_step_ids(&job);
         let mut seen: Vec<Mapping> = Vec::new();
         for step in common::steps(&job) {
             let Some(mapping) = step.value.as_mapping() else {
@@ -408,10 +482,16 @@ pub fn duplicated_steps(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             if mapping.contains_key("parallel") {
                 continue;
             }
+            // A step whose outputs a later step reads is a measurement, not a repeat.
+            let output_read = step
+                .value
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| read.contains(&id.to_ascii_lowercase()));
             let mut body = mapping.clone();
             body.remove("name");
             body.remove("id");
-            if seen.contains(&body) {
+            if !output_read && seen.contains(&body) {
                 findings.push(common::finding(
                     workflow,
                     &DUPLICATED_STEPS,
@@ -550,7 +630,11 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     }
     for (route, location, scope) in scopes {
         for (variable, message) in OPT_OUTS {
-            if scope.get("env").and_then(|env| env.get(variable)).is_some() {
+            // Only `true` opts out; `false` keeps the default.
+            let value = scope.get("env").and_then(|env| env.get(variable));
+            if matches!(value, Some(Value::Bool(true)))
+                || value.and_then(Value::as_str) == Some("true")
+            {
                 findings.push(common::finding(
                     workflow,
                     &DEPRECATED,
@@ -571,6 +655,16 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 /// https://github.blog/changelog/2025-07-11-upcoming-changes-to-macos-hosted-runners-macos-latest-migration-and-xcode-support-policy-updates/
 // ponytail: a fixed list with no runtime lookup; add each image when GitHub retires it.
 const RETIRED_RUNNERS: &[(&str, &str)] = &[
+    // https://github.com/actions/runner-images/issues/3287
+    ("ubuntu-16.04", "2021-09-20"),
+    // https://github.com/actions/runner-images/issues/4312
+    ("windows-2016", "2022-03-15"),
+    // https://github.com/actions/runner-images/issues/5583
+    ("macos-10.15", "2022-12-01"),
+    // https://github.blog/changelog/2024-05-20-actions-upcoming-changes-to-github-hosted-macos-runners/
+    ("macos-11", "2024-06-28"),
+    // https://github.com/actions/runner-images/issues/10721
+    ("macos-12", "2024-12-03"),
     ("ubuntu-18.04", "2023-04-03"),
     ("ubuntu-20.04", "2025-04-15"),
     ("windows-2019", "2025-06-30"),

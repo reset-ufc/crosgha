@@ -1,0 +1,7 @@
+name: Setup tool
+description: Installs the tool on the runner.
+runs:
+  using: composite
+  steps:
+    - run: ./install.sh
+      shell: bash

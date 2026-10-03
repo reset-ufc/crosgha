@@ -162,11 +162,9 @@ pub fn env_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
-            let unsafe_write = script.lines().any(|line| {
-                let writes = line.contains('>')
-                    && (line.contains("GITHUB_ENV") || line.contains("GITHUB_PATH"));
-                writes && (privileged || !common::untrusted_in_text(line).is_empty())
-            });
+            let unsafe_write = env_file_writes(script)
+                .iter()
+                .any(|written| privileged || !common::untrusted_in_text(written).is_empty());
             if unsafe_write {
                 findings.push(common::finding(
                     workflow,
@@ -179,6 +177,97 @@ pub fn env_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
+}
+
+/// The text of every command in `script` that writes GITHUB_ENV or GITHUB_PATH: the line with
+/// the write, plus the heredoc it reads or the `{ }`, `( )`, or loop body it closes.
+fn env_file_writes(script: &str) -> Vec<String> {
+    let script = script.replace("\\\n", " ");
+    let lines: Vec<&str> = script.lines().collect();
+    (0..lines.len())
+        .filter(|&index| writes_env_file(lines[index]))
+        .map(|index| lines[block_start(&lines, index)..=heredoc_end(&lines, index)].join("\n"))
+        .collect()
+}
+
+const ENV_FILES: &[&str] = &["github_env", "github_path"];
+const FILE_WRITERS: &[&str] = &["tee", "out-file", "add-content", "set-content"];
+
+/// Whether `line` writes an environment file: a `>` or `>>` redirect into it, or `tee` or
+/// PowerShell's `Out-File`, `Add-Content`, or `Set-Content` naming it. Reading the path is not
+/// a write. Compared in lower case because PowerShell and cmd ignore it.
+fn writes_env_file(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    ENV_FILES.iter().any(|file| {
+        line.match_indices(file).any(|(at, _)| {
+            let whole_name = !line[at + file.len()..]
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+            let Some(before) = ["${", "$env:", "$", "%"]
+                .iter()
+                .find_map(|sigil| line[..at].strip_suffix(sigil))
+            else {
+                return false;
+            };
+            let before = before.trim_end_matches([' ', '\t', '"', '\'']);
+            let command = before.rsplit(['|', ';', '&']).next().unwrap_or(before);
+            let writer = !before.ends_with('<')
+                && command
+                    .split_whitespace()
+                    .any(|word| FILE_WRITERS.contains(&word));
+            whole_name && (before.ends_with('>') || writer)
+        })
+    })
+}
+
+/// First line of the block that the write on `lines[index]` redirects: the matching `{`, `(`,
+/// or `do` line when it starts with `}`, `)`, or `done`.
+// ponytail: the nearest opener indented no deeper than the closer; an unindented nested block
+// of the same kind cuts the body short. Parse the shell when that shows up in practice.
+fn block_start(lines: &[&str], index: usize) -> usize {
+    let closer = lines[index].trim_start();
+    let indent = lines[index].len() - closer.len();
+    let opens: fn(&str) -> bool = if closer.starts_with('}') {
+        |line| line.ends_with('{')
+    } else if closer.starts_with(')') {
+        |line| line.starts_with('(')
+    } else if closer.starts_with("done") {
+        |line| line.ends_with("do")
+    } else {
+        return index;
+    };
+    (0..index)
+        .rev()
+        .find(|&opener| {
+            let text = lines[opener].trim_start();
+            lines[opener].len() - text.len() <= indent && opens(text.trim_end())
+        })
+        .unwrap_or(0)
+}
+
+/// Last line of the heredoc that the write on `lines[index]` reads, or `index` without one.
+fn heredoc_end(lines: &[&str], index: usize) -> usize {
+    let line = lines[index];
+    let Some(at) = line
+        .find("<<")
+        .filter(|&at| !line[at + 2..].starts_with('<'))
+    else {
+        return index;
+    };
+    let delimiter: String = line[at + 2..]
+        .trim_start_matches('-')
+        .trim_start()
+        .chars()
+        .take_while(|char| !char.is_whitespace() && !";|&)".contains(*char))
+        .filter(|char| !"'\"".contains(*char))
+        .collect();
+    if delimiter.is_empty() {
+        return index;
+    }
+    (index + 1..lines.len())
+        .find(|&end| lines[end].trim() == delimiter)
+        .unwrap_or(lines.len() - 1)
 }
 
 // ponytail: Known agent actions only; add a marketplace-category lookup when
@@ -223,24 +312,36 @@ pub fn prompt_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
+/// References to the pull request's code: its head (in the fork), the merge commit GitHub
+/// builds from it, or the run's head for `workflow_run`.
 const HEAD_REFS: &[&str] = &[
     "github.event.pull_request.head.",
+    "github.event.pull_request.merge_commit_sha",
     "github.head_ref",
     "refs/pull/",
     "github.event.workflow_run.head_",
 ];
 
-/// Whether a step checks out or fetches the pull request's head, whose code the author controls.
+/// Whether a step checks out or fetches the pull request's code, which the author controls.
+/// Any ref of the fork repository counts, so `repository` alone is enough.
 fn checks_out_head(step: &common::Step) -> bool {
     let mentions_head = |text: &str| HEAD_REFS.iter().any(|head| text.contains(head));
     let checkout = step
         .uses()
         .is_some_and(|uses| uses.to_ascii_lowercase().starts_with("actions/checkout@"))
-        && step.input_str("ref").is_some_and(mentions_head);
+        && ["ref", "repository"]
+            .iter()
+            .any(|input| step.input_str(input).is_some_and(mentions_head));
     let fetch = step.run().is_some_and(|script| {
-        script.contains("gh pr checkout")
-            || (script.contains("git fetch") && script.contains("pull/"))
-            || (script.contains("git checkout") && mentions_head(script))
+        script
+            .replace("\\\n", " ")
+            .split(['\n', ';', '&', '|'])
+            .any(|command| {
+                command.contains("gh pr checkout")
+                    || (command.contains("git fetch")
+                        && (command.contains("pull/") || mentions_head(command)))
+                    || (command.contains("git checkout") && mentions_head(command))
+            })
     });
     checkout || fetch
 }
@@ -302,15 +403,10 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 "text around `${{ }}` makes the condition always true".to_owned(),
                 Some("unsound-condition"),
             )),
-            Value::String(text)
-                if (text.contains("github.actor") || text.contains("github.triggering_actor"))
-                    && text.contains("[bot]") =>
-            {
-                Some((
-                    "actor name checks can be spoofed by a bot-triggered event".to_owned(),
-                    Some("bot-conditions"),
-                ))
-            }
+            Value::String(text) if trusts_bot_actor(text) => Some((
+                "actor name checks can be spoofed by a bot-triggered event".to_owned(),
+                Some("bot-conditions"),
+            )),
             _ => None,
         };
         if let Some((message, concept)) = problem {
@@ -320,6 +416,84 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
+}
+
+/// Whether `condition` runs something because the actor is a bot: `==`, `contains`,
+/// `startsWith`, or `endsWith` matching `github.actor` or `github.triggering_actor` with a
+/// `[bot]` name. A spoofed actor fails a `!=` or negated check, which only skips the work.
+fn trusts_bot_actor(condition: &str) -> bool {
+    let text = condition.to_ascii_lowercase();
+    ["github.actor", "github.triggering_actor"]
+        .iter()
+        .flat_map(|actor| {
+            text.match_indices(actor)
+                .map(|(at, actor)| (at, at + actor.len()))
+        })
+        .filter(|&(_, end)| {
+            !text[end..]
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+        .any(|(start, end)| {
+            let before = text[..start].trim_end();
+            let after = text[end..].trim_start();
+            if let Some(operand) = after.strip_prefix("==") {
+                return leading_literal(operand.trim_start()).contains("[bot]");
+            }
+            if let Some(operand) = before.strip_suffix("==") {
+                let operand = operand.trim_end();
+                let literal = operand
+                    .strip_suffix('\'')
+                    .and_then(|rest| rest.rfind('\'').map(|open| &rest[open..]));
+                return literal.is_some_and(|literal| literal.contains("[bot]"));
+            }
+            if after.starts_with("!=") || before.ends_with("!=") {
+                return false;
+            }
+            enclosing_call(&text, start).is_some_and(|(name, call, negated)| {
+                ["contains", "startswith", "endswith"].contains(&name)
+                    && !negated
+                    && call.contains("[bot]")
+            })
+        })
+}
+
+/// The single-quoted literal that `text` starts with, or "" when it starts with something else.
+fn leading_literal(text: &str) -> &str {
+    text.strip_prefix('\'')
+        .and_then(|rest| rest.find('\'').map(|close| &rest[..close]))
+        .unwrap_or("")
+}
+
+/// Name, full text, and `!` negation of the innermost function call around `text[at]`.
+fn enclosing_call(text: &str, at: usize) -> Option<(&str, &str, bool)> {
+    let mut depth = 0;
+    let open = text[..at].char_indices().rev().find_map(|(index, char)| {
+        match char {
+            ')' => depth += 1,
+            '(' if depth == 0 => return Some(index),
+            '(' => depth -= 1,
+            _ => {}
+        }
+        None
+    })?;
+    let mut depth = 0;
+    let close = text[open..].char_indices().find_map(|(index, char)| {
+        match char {
+            '(' => depth += 1,
+            ')' if depth == 1 => return Some(open + index),
+            ')' => depth -= 1,
+            _ => {}
+        }
+        None
+    })?;
+    let head = text[..open].trim_end();
+    let name_start = head
+        .rfind(|char: char| !(char.is_ascii_alphanumeric() || char == '_'))
+        .map_or(0, |index| index + 1);
+    let negated = head[..name_start].trim_end().ends_with('!');
+    Some((&head[name_start..], &text[name_start..=close], negated))
 }
 
 fn single_expression(text: &str) -> bool {
@@ -419,10 +593,14 @@ pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     if common::has_trigger(workflow, PRIVILEGED_TRIGGERS) {
         for job in common::jobs(workflow) {
             let steps = common::steps(&job);
-            if !steps.iter().any(checks_out_head) {
+            let Some(checkout) = steps.iter().position(checks_out_head) else {
                 continue;
-            }
-            for step in steps.iter().filter(|step| uses_cache(workflow, step)) {
+            };
+            let saves = steps
+                .iter()
+                .enumerate()
+                .filter(|(index, step)| saves_cache(workflow, step, *index > checkout));
+            for (_, step) in saves {
                 findings.push(common::finding(
                     workflow,
                     &CACHE_POISONING,
@@ -459,6 +637,21 @@ pub fn cache_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
+/// Whether the step writes a cache once the job has run. `actions/cache` and the setup actions
+/// save in their `post` step at the end of the job (action.yml of each); `actions/cache/save`
+/// saves where it stands, and `actions/cache/restore` never saves.
+fn saves_cache(workflow: &Workflow, step: &common::Step, after_checkout: bool) -> bool {
+    let name = step
+        .uses()
+        .map(|uses| uses.split('@').next().unwrap_or("").to_ascii_lowercase());
+    match name.as_deref() {
+        Some("actions/cache/save") => after_checkout,
+        Some("actions/cache/restore") => false,
+        _ => uses_cache(workflow, step),
+    }
+}
+
+/// Whether the step restores a cache.
 fn uses_cache(workflow: &Workflow, step: &common::Step) -> bool {
     let Some(uses) = step.uses() else {
         return false;

@@ -50,18 +50,34 @@ pub fn severity(name: &str) -> Option<Severity> {
     }
 }
 
+/// A malformed position is `None`, never "any line": that would silence the whole file.
+fn ignore_entry(entry: &str) -> Option<(String, Option<usize>)> {
+    let mut parts = entry.split(':');
+    let file = parts.next()?.to_owned();
+    let line = parts.next().map(str::parse).transpose().ok()?;
+    if let Some(column) = parts.next() {
+        column.parse::<usize>().ok()?;
+    }
+    parts.next().is_none().then_some((file, line))
+}
+
 impl Config {
     /// The first config file found walking up from `input`, stopping at the Git root. A
-    /// `.github/workflows` input starts two levels up so a workflow named `zizmor.yml` is never
-    /// read as configuration.
+    /// `.github/workflows` directory, or a file in it, starts two levels up so a workflow named
+    /// `zizmor.yml` is never read as configuration.
     pub fn discover(input: &Path) -> Result<Option<(PathBuf, Self)>, String> {
         let input = fs::canonicalize(input)
             .map_err(|error| format!("cannot resolve `{}`: {error}", input.display()))?;
-        let workflows_dir = input.ends_with(".github/workflows");
-        let mut current = match (input.is_dir(), workflows_dir) {
-            (true, true) => input.parent().and_then(Path::parent),
-            (true, false) => Some(input.as_path()),
-            (false, _) => input.parent(),
+        let directory = if input.is_dir() {
+            Some(input.as_path())
+        } else {
+            input.parent()
+        };
+        let mut current = match directory {
+            Some(workflows) if workflows.ends_with(".github/workflows") => {
+                workflows.parent().and_then(Path::parent)
+            }
+            other => other,
         };
         while let Some(directory) = current {
             if let Some(path) = NAMES
@@ -98,11 +114,14 @@ impl Config {
                 .flatten()
                 .filter_map(Value::as_str)
                 .map(|entry| {
-                    let mut parts = entry.split(':');
-                    let file = parts.next().unwrap_or_default().to_owned();
-                    (file, parts.next().and_then(|line| line.parse().ok()))
+                    ignore_entry(entry).ok_or_else(|| {
+                        describe(format!(
+                            "`rules.{id}.ignore` entry `{entry}` is not `file`, `file:line`, or \
+                             `file:line:column`"
+                        ))
+                    })
                 })
-                .collect();
+                .collect::<Result<_, _>>()?;
             let remapped = settings
                 .get("remap")
                 .and_then(|remap| remap.get("severity"))

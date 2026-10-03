@@ -17,7 +17,7 @@ pub const SCHEMA: Rule = Rule {
     tag: "syntax/schema-validity",
     severity: Severity::Error,
     persona: Persona::Regular,
-    equivalents: &[("actionlint", "syntax-check")],
+    equivalents: &[("actionlint", "syntax-check"), ("actionlint", "expression")],
     configurable: false,
 };
 
@@ -123,6 +123,17 @@ const PERMISSION_SCOPES: &[&str] = &[
     "statuses",
     "vulnerability-alerts",
 ];
+
+/// Access levels a scope accepts. The workflow syntax reference lists `id-token: write|none`,
+/// `vulnerability-alerts: read|none`, and `read|write|none` for the rest; `read-all`,
+/// `write-all`, and `{}` are the only shorthands.
+fn permission_levels(scope: &str) -> &'static [&'static str] {
+    match scope {
+        "id-token" => &["write", "none"],
+        "vulnerability-alerts" => &["read", "none"],
+        _ => &["read", "write", "none"],
+    }
+}
 
 /// https://docs.github.com/en/actions/reference/workflows-and-actions/reusable-workflows
 const CALLER_KEYS: &[&str] = &[
@@ -279,12 +290,39 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             continue;
         };
         let route = route.with_key("permissions");
+        if let Some(shorthand) = permissions.as_str()
+            && !matches!(shorthand, "read-all" | "write-all")
+        {
+            problems.push((
+                route.clone(),
+                location.clone(),
+                format!(
+                    "`permissions: {shorthand}` must be `read-all`, `write-all`, or a map of scopes"
+                ),
+            ));
+        }
         for (route, key) in unknown_keys(permissions, PERMISSION_SCOPES, &route) {
             problems.push((
                 route,
                 location.clone(),
                 format!("unknown permission `{key}`"),
             ));
+        }
+        for (scope, level) in permissions.as_mapping().into_iter().flatten() {
+            let Some(scope) = scope
+                .as_str()
+                .filter(|scope| PERMISSION_SCOPES.contains(scope))
+            else {
+                continue;
+            };
+            let levels = permission_levels(scope);
+            if !level.as_str().is_some_and(|level| levels.contains(&level)) {
+                problems.push((
+                    route.with_key(scope.to_owned()),
+                    location.clone(),
+                    format!("`{scope}` accepts only {}", levels.join(", ")),
+                ));
+            }
         }
     }
     problems
@@ -382,7 +420,7 @@ fn undefined_references(job: &common::Job<'_>) -> Vec<(Route<'static>, String, S
 }
 
 /// Property names read as `<context>.<name>` in an expression, outside string literals.
-fn context_names<'a>(expression: &'a str, context: &str) -> Vec<&'a str> {
+pub(super) fn context_names<'a>(expression: &'a str, context: &str) -> Vec<&'a str> {
     let prefix = format!("{context}.");
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
     expression
@@ -460,9 +498,9 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 .and_then(Value::as_str)
                 .or(job_shell)
                 .unwrap_or("bash");
-            let posix = ["bash", "sh"]
-                .iter()
-                .any(|name| shell.split_whitespace().next() == Some(name));
+            // A custom shell such as `/usr/bin/bash -e {0}` names its program by path.
+            let program = shell.split_whitespace().next().unwrap_or("");
+            let posix = matches!(program.rsplit('/').next(), Some("bash" | "sh"));
             if posix && script.lines().any(unquoted_env_file) {
                 findings.push(common::finding(
                     workflow,

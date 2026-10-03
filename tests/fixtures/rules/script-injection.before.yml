@@ -20,6 +20,14 @@ jobs:
       - run: echo "${{ github.event.commits[0].message }}" # expect: script-injection
       - run: echo "${{ github.event.pull_request.head.repo.default_branch }}" # expect: script-injection
       - run: echo "${{ github.sha }} ${{ github.ref }}"
+      # Index syntax, upper case, and whole objects read the same untrusted text.
+      - run: echo "${{ github.event.issue['title'] }}" # expect: script-injection
+      - run: echo "${{ github.event.issue.TITLE }}" # expect: script-injection
+      - run: echo '${{ toJSON(github.event.issue) }}' | jq .labels # expect: script-injection
+      - run: echo '${{ toJSON(github) }}' # expect: script-injection
+      - run: echo "${{ github.event.workflow_run.head_branch }}" # expect: script-injection
+      - run: echo "${{ github.event.issue }} ${{ inputs.github_token }}"
+      - run: echo '${{ toJSON(github.event.sender) }}'
       - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with:
           title: ${{ github.event.issue.title }}

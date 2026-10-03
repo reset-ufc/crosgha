@@ -3,7 +3,7 @@
 Rust CLI and composite GitHub Action that detect smells in GitHub Actions workflows and fix them deterministically,
 preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
 
-- **Scan:** recursively finds workflows, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
+- **Scan:** finds workflows directly inside `.github/workflows`, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
 - **Rules:** 48 cover every tag of the curated taxonomy: 39 per workflow, 4 per repository, and 5 that query the
   GitHub API.
 - **Fixes:** only `persist-credentials` and `removed-feature` (setup-java distributions) have verified fixes so far.

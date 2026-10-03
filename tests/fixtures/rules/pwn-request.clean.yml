@@ -12,3 +12,6 @@ jobs:
         with:
           persist-credentials: false
       - run: gh pr view ${{ github.event.pull_request.number }} --json title
+      - run: |
+          git fetch origin main
+          echo "see https://github.com/${{ github.repository }}/pull/${{ github.event.number }}"

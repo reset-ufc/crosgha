@@ -14,3 +14,5 @@ jobs:
         with:
           persist-credentials: false
       - uses: example/unversioned@main
+      - uses: example/moving@v4
+      - uses: example/moving@v4.0.0 # expect: known-vulnerable-action

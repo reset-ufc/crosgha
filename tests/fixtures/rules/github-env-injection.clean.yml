@@ -11,3 +11,4 @@ jobs:
     steps:
       - run: echo "$HOME/bin/tool"
       - run: echo "out=1" >> "$GITHUB_OUTPUT"
+      - run: echo "$GITHUB_ENV" > debug.txt

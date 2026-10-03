@@ -119,14 +119,14 @@ pub enum ChangeKind {
     Replace,
 }
 
-pub use repository::Located;
+pub use repository::{Located, Parsed, Scanned, local_actions};
 
 /// The rule's `rules.<id>.config` block, if the config has one.
 pub type Options<'a> = Option<&'a yaml_serde::Value>;
 
 type Detect = fn(&Workflow) -> Result<Vec<Finding>, String>;
 type ConfigurableDetect = fn(&Workflow, Options) -> Result<Vec<Finding>, String>;
-type RepositoryDetect = fn(&Path, bool, Options) -> Result<Vec<Located>, String>;
+type RepositoryDetect = fn(&Path, &Scanned, bool, Options) -> Result<Vec<Located>, String>;
 type OnlineDetect = fn(&Workflow, &GitHub, Options) -> Result<Vec<Finding>, String>;
 
 const REGISTRY: &[(&Rule, Detect)] = &[
@@ -271,7 +271,7 @@ pub fn detect_settings(
     repository: &str,
     scanned: &Path,
     settings: &Settings,
-) -> Result<Vec<Located>, String> {
+) -> Result<Vec<Located>, crate::github::ApiError> {
     match &settings.github {
         Some(github) if enabled(&online::SETTINGS, settings) => Ok(finish_located(
             online::settings(github, repository, scanned)?,
@@ -282,7 +282,11 @@ pub fn detect_settings(
 }
 
 /// Repository-level rules for the `.github` directory next to the scanned workflows.
-pub fn detect_repository(github: &Path, settings: &Settings) -> Result<Vec<Located>, String> {
+pub fn detect_repository(
+    github: &Path,
+    scanned: &Scanned,
+    settings: &Settings,
+) -> Result<Vec<Located>, String> {
     let mut found = Vec::new();
     let hosted = if settings.hosted {
         HOSTED_REPOSITORY
@@ -293,6 +297,7 @@ pub fn detect_repository(github: &Path, settings: &Settings) -> Result<Vec<Locat
         if enabled(rule, settings) {
             found.extend(detect(
                 github,
+                scanned,
                 settings.ignores,
                 settings.config.options(rule),
             )?);
@@ -365,7 +370,9 @@ pub fn detect_all(
             }
         }
     }
-    if settings.ignores {
+    // Few workflows carry an ignore comment, and a comment is a slice of the source.
+    let source = workflow.document.source();
+    if settings.ignores && IGNORE_MARKERS.iter().any(|marker| source.contains(marker)) {
         findings.retain(|finding| !ignored(workflow, finding));
     }
     finish(&mut findings, settings, file);
@@ -406,8 +413,10 @@ pub(super) fn ignored(workflow: &Workflow, finding: &Finding) -> bool {
         .any(|id| finding.answers_to(id))
 }
 
+const IGNORE_MARKERS: [&str; 2] = ["crosgha: ignore[", "zizmor: ignore["];
+
 fn ignore_list(comment: &str) -> Vec<&str> {
-    ["crosgha: ignore[", "zizmor: ignore["]
+    IGNORE_MARKERS
         .iter()
         .filter_map(|marker| comment.split_once(marker))
         .filter_map(|(_, rest)| rest.split_once(']'))

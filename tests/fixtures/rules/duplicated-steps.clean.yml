@@ -14,3 +14,14 @@ jobs:
         with:
           persist-credentials: false
           path: other
+  regenerate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: before
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - run: make generate
+      - id: after
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - if: steps.before.outputs.sha != steps.after.outputs.sha
+        run: echo "generate moved HEAD"

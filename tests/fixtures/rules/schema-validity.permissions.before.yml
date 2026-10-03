@@ -3,11 +3,14 @@ on: [push]
 permissions:
   contents: read
   pull-request: write # expect: schema-validity
+  issues: wirte # expect: schema-validity
 jobs:
   label:
     permissions:
       issues: write
       models: read
+      contents: admin # expect: schema-validity
+      id-token: read # expect: schema-validity
       id_token: write # expect: schema-validity
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -30,6 +33,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo read
+  shorthand:
+    permissions: write # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo write
+  alerts:
+    permissions:
+      vulnerability-alerts: write # expect: schema-validity
+      statuses: none
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo alerts
   release:
     permissions:
       content: write # expect: schema-validity

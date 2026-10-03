@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -49,8 +50,10 @@ struct Args {
     #[arg(long, env = "CROSGHA_CONFIG")]
     config: Option<PathBuf>,
 
-    /// Do not discover or load crosgha.yml or zizmor.yml.
-    #[arg(long, conflicts_with = "config")]
+    /// Do not discover or load crosgha.yml or zizmor.yml, even one named by `--config`.
+    // No clap conflict: it cannot tell a CROSGHA_CONFIG value from the flag, and ZIZMOR_CONFIG
+    // already yields to `--no-config`.
+    #[arg(long)]
     no_config: bool,
 
     /// Report findings that inline comments or the config ignore.
@@ -162,26 +165,26 @@ pub fn run() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
-    let (dependabot, inputs): (Vec<&PathBuf>, Vec<&PathBuf>) = args
+    // Each workflow, `.github`, and Dependabot file is paired with the index of its input path.
+    let (dependabot, inputs): (Vec<_>, Vec<_>) = args
         .paths
         .iter()
-        .partition(|path| filesystem::is_dependabot(path));
-    let workflows = match inputs
-        .iter()
-        .map(|path| filesystem::discover(path))
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(found) => {
-            let mut workflows: Vec<PathBuf> = found.into_iter().flatten().collect();
-            workflows.sort();
-            workflows.dedup();
-            workflows
+        .cloned()
+        .zip(0..)
+        .partition(|(path, _)| filesystem::is_dependabot(path));
+    let mut workflows = Vec::new();
+    for (path, input) in &inputs {
+        match filesystem::discover(path) {
+            Ok(found) => workflows.extend(found.into_iter().map(|workflow| (workflow, *input))),
+            Err(error) => {
+                report::error(error);
+                return ExitCode::from(2);
+            }
         }
-        Err(error) => {
-            report::error(error);
-            return ExitCode::from(2);
-        }
-    };
+    }
+    workflows.sort();
+    let mut seen = HashSet::new();
+    workflows.retain(|(path, _)| seen.insert(filesystem::identity(path)));
 
     let mut files = Vec::new();
     let mut failures: Vec<report::FileError> = Vec::new();
@@ -190,32 +193,48 @@ pub fn run() -> ExitCode {
         .clone()
         .or_else(|| std::env::var("GITHUB_TOKEN").ok())
         .filter(|token| !token.is_empty());
-    let config = match load_config(&args) {
-        Ok(config) => config,
+    let (mut configs, owners) = match load_configs(&args) {
+        Ok(loaded) => loaded,
         Err(error) => {
             report::error(error);
             return ExitCode::from(2);
         }
     };
-    for id in rules::unused_options(&config) {
+    for id in configs.iter().flat_map(rules::unused_options) {
         report::warning(format_args!(
             "`rules.{id}.config` has no crosgha equivalent and is ignored"
         ));
     }
-    let settings = policy::Settings {
+    let owned = |items: Vec<(PathBuf, usize)>| -> Vec<(PathBuf, usize)> {
+        items
+            .into_iter()
+            .map(|(path, input)| (path, owners[input]))
+            .collect()
+    };
+    let workflows = owned(workflows);
+    let mut settings = policy::Settings {
         persona: args.persona,
         github: token
             .filter(|_| !args.offline && !args.no_online_audits)
             .map(|token| GitHub::new(&api_url(&args.gh_hostname), token)),
-        config,
+        config: config::Config::default(),
         ignores: !args.no_ignores,
         min_severity: args.min_severity.as_deref().and_then(config::severity),
         hosted: api_url(&args.gh_hostname) == "https://api.github.com",
     };
-    let inspections = engine::inspect_files(&workflows, args.fix, &settings);
-    for (path, inspected) in workflows.into_iter().zip(inspections) {
+    let inspections = per_config(
+        &workflows,
+        &mut configs,
+        &mut settings,
+        |paths, settings| engine::inspect_files(paths, args.fix, settings),
+    );
+    for ((path, _), inspected) in workflows.into_iter().zip(inspections) {
         match inspected {
-            Ok(inspection) => files.push(report::FileReport { path, inspection }),
+            Ok(inspection) => files.push(report::FileReport {
+                path,
+                inspection,
+                unwritten: None,
+            }),
             Err(error) => {
                 report::error(format_args!("{}: {error}", path.display()));
                 failures.push(report::FileError {
@@ -225,65 +244,137 @@ pub fn run() -> ExitCode {
             }
         }
     }
-    // One unreadable workflow must not hide the others' findings, but exit 2 promises no writes.
-    let fix = args.fix && failures.is_empty();
-    let mut github_dirs: Vec<PathBuf> = args
+    let mut github_dirs: Vec<(PathBuf, usize)> = args
         .paths
         .iter()
-        .filter_map(|path| filesystem::github_dir(path))
+        .zip(0..)
+        .filter_map(|(path, input)| filesystem::github_dir(path).map(|github| (github, input)))
         .collect();
     github_dirs.sort();
-    github_dirs.dedup();
+    let mut seen = HashSet::new();
+    github_dirs.retain(|(github, _)| seen.insert(filesystem::identity(github)));
+    let github_dirs = owned(github_dirs);
     // A Dependabot file inside a scanned `.github` is already checked by the repository rules.
     let scanned: Vec<PathBuf> = github_dirs
         .iter()
-        .filter_map(|github| github.canonicalize().ok())
+        .filter_map(|(github, _)| github.canonicalize().ok())
         .collect();
-    let dependabot = dependabot.into_iter().filter(|path| {
-        path.canonicalize()
-            .ok()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
-            .is_none_or(|parent| !scanned.contains(&parent))
-    });
-    let repository = engine::parallel_map(&github_dirs, |github| {
-        rules::detect_repository(github, &settings)
-    })
-    .into_iter()
-    .chain(dependabot.map(|path| rules::detect_dependabot(path, &settings)))
-    .collect::<Result<Vec<_>, _>>()
-    .map(|found| found.into_iter().flatten().collect::<Vec<_>>())
-    .and_then(|mut found| {
-        if let Some(repository) = &args.repository {
-            found.extend(rules::detect_settings(
-                repository,
-                &args.paths[0],
-                &settings,
-            )?);
-        }
-        Ok(found)
-    });
-    let repository = match repository {
-        Ok(found) => found,
+    let dependabot = owned(dependabot)
+        .into_iter()
+        .filter(|(path, _)| {
+            path.canonicalize()
+                .ok()
+                .and_then(|path| path.parent().map(Path::to_path_buf))
+                .is_none_or(|parent| !scanned.contains(&parent))
+        })
+        .collect::<Vec<_>>();
+    // Repository rules read the workflows parsed above instead of reading them again.
+    let parsed: rules::Scanned = files
+        .iter()
+        .map(|file| {
+            let parsed = rules::Parsed {
+                source: &file.inspection.source,
+                local_actions: &file.inspection.local_actions,
+            };
+            (filesystem::identity(&file.path), parsed)
+        })
+        .collect();
+    let mut repository = per_config(
+        &github_dirs,
+        &mut configs,
+        &mut settings,
+        |dirs, settings| {
+            engine::parallel_map(dirs, |github| {
+                rules::detect_repository(github, &parsed, settings)
+            })
+        },
+    );
+    repository.extend(per_config(
+        &dependabot,
+        &mut configs,
+        &mut settings,
+        |paths, settings| {
+            paths
+                .iter()
+                .map(|path| rules::detect_dependabot(path, settings))
+                .collect()
+        },
+    ));
+    let mut repository = match repository.into_iter().collect::<Result<Vec<_>, _>>() {
+        Ok(found) => found.into_iter().flatten().collect::<Vec<_>>(),
         Err(error) => {
             report::error(error);
             return ExitCode::from(2);
         }
     };
+    // A GitHub API failure (rate limit, 5xx, network, bad token) skips only the online checks that
+    // needed the answer; the rest is still reported. The scan is then incomplete and exits 2
+    // without writing fixes, so CI does not pass on checks that never ran. A settings read the token
+    // is not permitted to make is expected in Actions and only skips `repo-org-settings`.
+    let mut incomplete = false;
+    if let Some(github) = &settings.github {
+        for failure in github.failures() {
+            report::warning(format_args!(
+                "{failure}; online checks that needed it were skipped"
+            ));
+            incomplete = true;
+        }
+    }
+    if let Some(name) = &args.repository {
+        let first = [(args.paths[0].clone(), owners[0])];
+        let checked = per_config(&first, &mut configs, &mut settings, |scanned, settings| {
+            vec![rules::detect_settings(name, &scanned[0], settings)]
+        });
+        for result in checked {
+            match result {
+                Ok(found) => repository.extend(found),
+                Err(error) => {
+                    report::warning(format_args!("repo-org-settings was skipped: {error}"));
+                    incomplete |= !error.denied();
+                }
+            }
+        }
+    }
+    if incomplete {
+        report::warning(
+            "the scan is incomplete: some online checks did not run; exiting with status 2",
+        );
+    }
 
-    if fix {
-        for file in &files {
-            if let Some(outcome) = &file.inspection.fix
-                && outcome.fixed_count > 0
-                && let Err(error) = filesystem::write_verified(&file.path, &outcome.source)
+    let mut write_failed = false;
+    if args.fix {
+        // Exit 2 promises that no file changed, so a workflow that failed to parse or an incomplete
+        // scan blocks every write; the report then shows the original findings.
+        let blocked = if !failures.is_empty() {
+            Some("not written because a workflow failed to parse".to_owned())
+        } else if incomplete {
+            Some("not written because the scan is incomplete".to_owned())
+        } else {
+            None
+        };
+        for file in &mut files {
+            let Some(outcome) = file
+                .inspection
+                .fix
+                .as_ref()
+                .filter(|outcome| outcome.applied() > 0)
+            else {
+                continue;
+            };
+            file.unwritten = match &blocked {
+                Some(reason) => Some(reason.clone()),
+                None => filesystem::write_verified(&file.path, &outcome.source).err(),
+            };
+            if blocked.is_none()
+                && let Some(error) = &file.unwritten
             {
                 report::error(format_args!("{}: {error}", file.path.display()));
-                return ExitCode::from(2);
+                write_failed = true;
             }
         }
     }
     if let Some(target) = &args.sarif_file
-        && let Err(error) =
-            std::fs::write(target, report::sarif(&files, &repository, &failures, fix))
+        && let Err(error) = std::fs::write(target, report::sarif(&files, &repository, &failures))
     {
         report::error(format_args!("{}: {error}", target.display()));
         return ExitCode::from(2);
@@ -297,22 +388,15 @@ pub fn run() -> ExitCode {
     );
     anstream::print!(
         "{}",
-        report::render(format, &files, &repository, &failures, fix)
+        report::render(format, &files, &repository, &failures, args.fix)
     );
-    if !failures.is_empty() {
+    if !failures.is_empty() || incomplete || write_failed {
         return ExitCode::from(2);
     }
 
     let should_fail = files.iter().any(|file| {
-        let findings = if fix {
-            file.inspection
-                .fix
-                .as_ref()
-                .map_or(&[][..], |outcome| outcome.remaining.as_slice())
-        } else {
-            &file.inspection.findings
-        };
-        findings
+        file.shown()
+            .1
             .iter()
             .any(|finding| args.fail_on.matches(finding.severity))
     });
@@ -327,20 +411,65 @@ pub fn run() -> ExitCode {
     }
 }
 
-fn load_config(args: &Args) -> Result<config::Config, String> {
-    if args.no_config {
-        return Ok(config::Config::default());
-    }
+/// Configs and, for each input path, the index of its config. `--config` (or its environment
+/// variables) applies to every input; otherwise each input discovers its own, so the result never
+/// depends on the order of the inputs. Inputs that find the same file share one entry.
+fn load_configs(args: &Args) -> Result<(Vec<config::Config>, Vec<usize>), String> {
     let explicit = args
         .config
         .clone()
         .or_else(|| std::env::var_os("ZIZMOR_CONFIG").map(PathBuf::from));
-    match explicit {
-        Some(path) => config::Config::load(&path),
-        None => Ok(config::Config::discover(&args.paths[0])?
-            .map(|(_, config)| config)
-            .unwrap_or_default()),
+    if args.no_config || explicit.is_some() {
+        let config = match explicit.filter(|_| !args.no_config) {
+            Some(path) => config::Config::load(&path)?,
+            None => config::Config::default(),
+        };
+        return Ok((vec![config], vec![0; args.paths.len()]));
     }
+    let mut found: Vec<Option<PathBuf>> = Vec::new();
+    let mut configs = Vec::new();
+    let mut owners = Vec::new();
+    for input in &args.paths {
+        let discovered = config::Config::discover(input)?;
+        let path = discovered.as_ref().map(|(path, _)| path.clone());
+        let owner = match found.iter().position(|known| *known == path) {
+            Some(owner) => owner,
+            None => {
+                found.push(path);
+                configs.push(discovered.map(|(_, config)| config).unwrap_or_default());
+                configs.len() - 1
+            }
+        };
+        owners.push(owner);
+    }
+    Ok((configs, owners))
+}
+
+/// Runs `run` once per config on the items it owns, with that config in `settings`. Results keep
+/// the order of `items`.
+fn per_config<T: Clone, R>(
+    items: &[(T, usize)],
+    configs: &mut [config::Config],
+    settings: &mut policy::Settings,
+    run: impl Fn(&[T], &policy::Settings) -> Vec<R>,
+) -> Vec<R> {
+    let mut results = Vec::with_capacity(items.len());
+    for (owner, config) in configs.iter_mut().enumerate() {
+        let (positions, group): (Vec<usize>, Vec<T>) = items
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, of))| *of == owner)
+            .map(|(position, (item, _))| (position, item.clone()))
+            .unzip();
+        if group.is_empty() {
+            continue;
+        }
+        std::mem::swap(&mut settings.config, config);
+        results.extend(positions.into_iter().zip(run(&group, settings)));
+        std::mem::swap(&mut settings.config, config);
+    }
+    results.sort_by_key(|(position, _)| *position);
+    results.into_iter().map(|(_, result)| result).collect()
 }
 
 /// `github.com` uses api.github.com; Enterprise Server hosts serve the API under `/api/v3`.

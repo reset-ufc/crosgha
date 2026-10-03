@@ -1,3 +1,5 @@
+use std::{collections::HashMap, sync::Mutex};
+
 use yaml_serde::Value;
 use yamlpath::{Document, FeatureKind, Route};
 
@@ -6,6 +8,9 @@ pub const BOM: char = '\u{feff}';
 pub struct Workflow {
     pub document: Document,
     pub value: Value,
+    /// Version comments of `uses` lines by route, filled by `rules::online::comment_version`:
+    /// several rules ask for the same line.
+    pub comment_versions: Mutex<HashMap<String, Option<String>>>,
 }
 
 impl Workflow {
@@ -18,7 +23,11 @@ impl Workflow {
         }
         let document = Document::new(source).map_err(|error| error.to_string())?;
         let value = yaml_serde::from_str(document.source()).map_err(|error| error.to_string())?;
-        Ok(Self { document, value })
+        Ok(Self {
+            document,
+            value,
+            comment_versions: Mutex::default(),
+        })
     }
 
     pub fn parse(source: String) -> Result<Self, String> {

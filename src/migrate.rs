@@ -82,6 +82,9 @@ pub fn run(
         let mut edits = Vec::new();
         let mut steps = 0;
         for job in common::jobs(&workflow) {
+            // An install step goes only when no step of its job still runs the tool.
+            let mut installs = Vec::new();
+            let mut kept = false;
             for step in common::steps(&job) {
                 let place = || -> Result<String, String> {
                     let line = common::line(&workflow, &step.anchor())?;
@@ -104,22 +107,40 @@ pub fn run(
                 match classify(script, tool) {
                     Shell::Unrelated => {}
                     Shell::Install => {
-                        edits.push((removal(&workflow, &step.route)?, String::new()));
+                        installs.push((removal(&workflow, &step.route)?, String::new()))
                     }
                     Shell::Invoke(Ok(inputs)) if step.value.get("working-directory").is_none() => {
                         edits.extend(shell_to_action(&workflow, &step, &replacement, &inputs)?);
                         steps += 1;
                     }
-                    Shell::Invoke(Err(reason)) => summary.notes.push(format!(
-                        "{}: {reason}; replace this step with the crosgha Action by hand",
-                        place()?
-                    )),
-                    Shell::Invoke(Ok(_)) | Shell::Mixed => summary.notes.push(format!(
-                        "{}: runs {} from a shell; replace it with the crosgha Action by hand",
-                        place()?,
-                        tool.name()
-                    )),
+                    Shell::Invoke(Err(reason)) => {
+                        kept = true;
+                        summary.notes.push(format!(
+                            "{}: {reason}; replace this step with the crosgha Action by hand",
+                            place()?
+                        ));
+                    }
+                    Shell::Invoke(Ok(_)) => {
+                        kept = true;
+                        summary.notes.push(format!(
+                            "{}: runs {} from a shell; replace it with the crosgha Action by hand",
+                            place()?,
+                            tool.name()
+                        ));
+                    }
+                    Shell::Mixed => {
+                        kept = true;
+                        summary.notes.push(format!(
+                            "{}: runs or installs {} next to other commands; the step was kept, \
+                             migrate it by hand",
+                            place()?,
+                            tool.name()
+                        ));
+                    }
                 }
+            }
+            if !kept {
+                edits.extend(installs);
             }
         }
         if edits.is_empty() {
@@ -190,7 +211,7 @@ enum Shell {
     Install,
     /// One line runs the tool, the others install it; the translated Action inputs.
     Invoke(Result<Vec<(&'static str, String)>, String>),
-    /// The tool runs next to other commands.
+    /// The tool runs or is installed next to other commands.
     Mixed,
 }
 
@@ -228,26 +249,51 @@ fn mentions(text: &str, tool: &str) -> bool {
     .any(|word| word == tool)
 }
 
+/// Whether the line is one command that installs only the tool. A step made of such lines is
+/// removed, so anything else it could run (`pip install zizmor ruff`, `... && npm ci`) must fail.
 fn installs(line: &str, tool: Tool) -> bool {
-    match tool {
-        Tool::Actionlint => {
-            line.contains("download-actionlint.bash")
-                || line.contains("go install github.com/rhysd/actionlint")
-                || line.contains("brew install actionlint")
-        }
-        Tool::Zizmor => {
-            let words = words(line);
-            let program = words
-                .iter()
-                .find(|word| *word != "sudo")
-                .map(String::as_str);
-            matches!(
-                program,
-                Some("pip" | "pip3" | "pipx" | "uv" | "cargo" | "brew" | "python" | "python3")
-            ) && words.iter().any(|word| word == "install")
-                && words.iter().any(|word| word.starts_with("zizmor"))
-        }
+    if ["&&", "||", ";"].iter().any(|chain| line.contains(chain)) {
+        return false;
     }
+    // actionlint's documented installer: `bash <(curl .../download-actionlint.bash)`.
+    if tool == Tool::Actionlint && line.contains("download-actionlint.bash") {
+        return true;
+    }
+    if line.contains(['|', '`']) || line.contains("$(") {
+        return false;
+    }
+    let words = words(line);
+    let words: Vec<&str> = words
+        .iter()
+        .map(String::as_str)
+        .skip_while(|word| *word == "sudo")
+        .collect();
+    let Some(install) = words.iter().position(|word| *word == "install") else {
+        return false;
+    };
+    let manager = match tool {
+        Tool::Zizmor => matches!(
+            words[..install],
+            ["pip" | "pip3" | "pipx" | "cargo" | "brew"]
+                | ["uv", "tool" | "pip"]
+                | ["python" | "python3", "-m", "pip"]
+        ),
+        Tool::Actionlint => matches!(words[..install], ["go" | "brew"]),
+    };
+    let mut packages = words[install + 1..]
+        .iter()
+        .filter(|word| !word.starts_with('-'))
+        .peekable();
+    manager
+        && packages.peek().is_some()
+        && packages.all(|package| match tool {
+            Tool::Zizmor => package.strip_prefix("zizmor").is_some_and(|version| {
+                version.is_empty() || version.starts_with(['=', '<', '>', '!', '~', '@'])
+            }),
+            Tool::Actionlint => {
+                *package == "actionlint" || package.starts_with("github.com/rhysd/actionlint/")
+            }
+        })
 }
 
 /// Shell words, keeping quoted text and `${{ ... }}` expressions whole.
@@ -342,9 +388,20 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             }
             (Tool::Zizmor, "--config") => Some(("config", value())),
             (Tool::Zizmor, "--gh-token") => Some(("token", value())),
-            (Tool::Zizmor, "--format") => match value().as_deref() {
-                Some("github") => Some(("annotations", Some("true".to_owned()))),
-                _ => None,
+            // The Action prints text (zizmor's `plain`) or annotations, and keeps SARIF in a file;
+            // a step whose log carries JSON or SARIF would lose it.
+            (Tool::Zizmor, "--format") => match value() {
+                Some(format) if format == "plain" => None,
+                Some(format) if format == "github" => {
+                    Some(("annotations", Some("true".to_owned())))
+                }
+                Some(format) => {
+                    return Err(format!(
+                        "`--format {format}` has no crosgha Action input; the Action prints text \
+                         and writes SARIF to its `output-file` output"
+                    ));
+                }
+                None => None,
             },
             (Tool::Zizmor, "--color" | "--cache-dir") => {
                 if inline.is_none() && flag == "--cache-dir" {
@@ -354,7 +411,14 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             }
             (Tool::Zizmor, "-q" | "--quiet" | "-v" | "--verbose" | "--no-progress") => None,
             (Tool::Actionlint, "-color" | "-no-color" | "-verbose" | "-debug" | "-oneline") => None,
-            (Tool::Actionlint, "-format" | "-shellcheck" | "-pyflakes") => {
+            (Tool::Actionlint, "-format") => {
+                return Err(
+                    "`-format` has no crosgha Action input; the Action prints text and writes \
+                     SARIF to its `output-file` output"
+                        .to_owned(),
+                );
+            }
+            (Tool::Actionlint, "-shellcheck" | "-pyflakes") => {
                 value();
                 None
             }

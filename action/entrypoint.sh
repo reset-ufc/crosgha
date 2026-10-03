@@ -16,7 +16,9 @@ boolean() {
     esac
 }
 
-[[ "${RUNNER_OS:-}" == Linux ]] || fail "crosgha Action supports Linux runners only"
+# The release ships one asset, crosgha-x86_64-unknown-linux-gnu.
+[[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == X64 ]] \
+    || fail "crosgha Action supports Linux X64 runners only, not ${RUNNER_OS:-?} ${RUNNER_ARCH:-?}"
 
 case "${CROSGHA_PERSONA:-regular}" in
     regular|pedantic|auditor) ;;
@@ -78,7 +80,7 @@ repository="$(sed -n 's|^repository = "https://github.com/\(.*\)"$|\1|p' "$manif
 base="${CROSGHA_RELEASE_BASE:-https://github.com/$repository/releases/download}"
 protocol='=https'
 # Tests serve a local release over plain HTTP; nothing else may.
-[[ "$base" == http://127.0.0.1:* ]] && protocol='=http'
+[[ "$base" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] && protocol='=http'
 
 asset=crosgha-x86_64-unknown-linux-gnu.tar.xz
 install_dir="$RUNNER_TEMP/crosgha-$version"
@@ -117,23 +119,35 @@ fi
 sarif="$RUNNER_TEMP/crosgha.sarif"
 args+=(--sarif-file "$sarif")
 
-read -r -a inputs <<< "${CROSGHA_INPUTS:-.}"
+# Block scalars put one path per line, so split on newlines too.
+read -r -d '' -a inputs <<< "${CROSGHA_INPUTS:-.}" || true
 report="$RUNNER_TEMP/crosgha.txt"
 set +e
-"$crosgha" "${args[@]}" "${inputs[@]}" > "$report" 2> "$RUNNER_TEMP/crosgha.err"
+"$crosgha" "${args[@]}" -- "${inputs[@]}" > "$report" 2> "$RUNNER_TEMP/crosgha.err"
 code=$?
 set -e
-cat "$report"
-cat "$RUNNER_TEMP/crosgha.err" >&2
+
+# File names and YAML keys from the scanned repo reach the report and stderr, so a line there could
+# read as a workflow command. Annotation output is crosgha's own escaped commands and stays live.
+# Everything goes to stdout because the runner reads stdout and stderr independently, so text on
+# stderr is not guaranteed to land between the stop and resume markers.
+token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+[[ "${CROSGHA_ANNOTATIONS:-false}" == true ]] && cat "$report"
+echo "::stop-commands::$token"
+[[ "${CROSGHA_ANNOTATIONS:-false}" == true ]] || cat "$report"
+cat "$RUNNER_TEMP/crosgha.err"
+echo "::$token::"
 
 if [[ "$code" == 2 ]] && grep -q "no .yml or .yaml workflow files found" "$RUNNER_TEMP/crosgha.err" \
     && [[ "${CROSGHA_FAIL_ON_NO_INPUTS:-true}" == false ]]; then
-    printf '::warning::crosgha found no workflow files in %s\n' "${CROSGHA_INPUTS:-.}"
+    printf '::warning::crosgha found no workflow files in %s\n' "${inputs[*]}"
     echo "findings=0" >> "$GITHUB_OUTPUT"
     echo "exit-code=0" >> "$GITHUB_OUTPUT"
     exit 0
 fi
-[[ "$code" == 2 ]] && fail "crosgha could not complete the scan"
+# 0 is clean and 1 is findings. Anything else (2, a panic's 101, a binary that cannot execute's
+# 126) leaves no complete report or SARIF to publish.
+[[ "$code" == 0 || "$code" == 1 ]] || fail "crosgha could not complete the scan (exit status $code)"
 
 # The SARIF renderer writes one `ruleId` key per result.
 findings="$(grep -c '"ruleId":' "$sarif" || true)"
@@ -142,10 +156,13 @@ findings="$(grep -c '"ruleId":' "$sarif" || true)"
     echo "exit-code=$code"
     [[ "${CROSGHA_ADVANCED_SECURITY:-true}" == true ]] && echo "output-file=$sarif"
 } >> "$GITHUB_OUTPUT"
+# A fence longer than every backtick run in the report keeps the whole report inside the block.
+fence="$(awk '{ while (match($0, /`+/)) { if (RLENGTH > max) max = RLENGTH; $0 = substr($0, RSTART + RLENGTH) } }
+    END { for (n = (max < 3 ? 3 : max + 1); n > 0; n--) printf "`" }' "$report")"
 {
     echo "### crosgha v$version: $findings finding(s)"
     echo
-    echo '```text'
+    echo "${fence}text"
     cat "$report"
-    echo '```'
+    echo "$fence"
 } >> "$GITHUB_STEP_SUMMARY"

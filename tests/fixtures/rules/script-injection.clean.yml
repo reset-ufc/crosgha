@@ -21,3 +21,6 @@ jobs:
           script: |
             console.log(process.env.BODY)
       - run: echo "${{ github.sha }} ${{ github.ref }}"
+      - env:
+          ISSUE: ${{ toJSON(github.event.issue) }}
+        run: echo "$ISSUE" | jq .labels

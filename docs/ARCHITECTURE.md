@@ -36,9 +36,9 @@ The stages have these interfaces:
 | `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order. |
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
 | `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, expressions, untrusted contexts, and `uses` refs. |
-| `github` | API path | Cached read-only GitHub REST responses for online rules. Each path has its own lock, so parallel workflows request it once. |
+| `github` | API path | Cached read-only GitHub REST responses for online rules, failures included. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal no further request is sent. |
 | `engine` | Source and scan/fix mode | Findings and a prepared fix result. This is the main in-memory analysis interface. Workflows and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
-| `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. |
+| `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. A rejected proposal keeps its finding, records the reason, and the next proposal still runs. |
 | `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. |
 | `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
 | `migrate` | Workflows and the tool to replace | Rewrites zizmor or actionlint Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
@@ -68,7 +68,7 @@ four shapes, dispatched from explicit tables in `rules/mod.rs`:
 | Workflow | `fn(&Workflow) -> Vec<Finding>` | `REGISTRY` |
 | Configurable | `fn(&Workflow, Options) -> Vec<Finding>` with its `rules.<id>.config` | `CONFIGURABLE` |
 | Online | `fn(&Workflow, &GitHub, Options) -> Vec<Finding>` | `ONLINE`; runs only with a token |
-| Repository | `fn(&Path, bool, Options) -> Vec<Located>` for the `.github` directory | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
+| Repository | `fn(&Path, &Scanned, bool, Options) -> Vec<Located>` for the `.github` directory; `Scanned` holds the workflows the scan already parsed, so they are not read twice | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
 
 Checks that state github.com facts (retired hosted-runner images and service shutdowns in
 `removed-feature`, and `retired-runtime`) sit in the `HOSTED` and `HOSTED_REPOSITORY` tables and are
@@ -84,12 +84,17 @@ unchanged under `--fix` and remain visible in the report.
 1. Parse the patched YAML and validate its workflow structure.
 2. Run every enabled rule again. The target must disappear; no new
    finding may appear.
-3. Reconstruct the original source by reversing the declared node change.
-   The result must match the original bytes, including comments and spacing.
+3. Check that only the declared node changed, byte for byte, comments and spacing included.
+   A replaced value is swapped back and must restore the original source. An added key must
+   be the only insertion: the original equals the patched source minus the new node and the
+   spaces, line breaks, or comma around it, and the parsed values differ only by that key.
+   CRLF files and files without a final newline are patched as LF with one, then converted
+   back.
 4. Prepare all files before writing any file. Write each changed file through
    a same-directory temporary file, preserving permissions and renaming it
-   over the original. An I/O failure during a later rename can leave earlier
-   files fixed; there is no cross-file transaction.
+   over the original. A symbolic link is never replaced. A failed write is
+   reported, exits with status 2, and leaves the other files fixed; there is no
+   cross-file transaction.
 
 This validation applies to every new rule's fix. A rule that cannot describe
 and verify its intended node changes remains detection-only.
@@ -98,12 +103,17 @@ and verify its intended node changes remains detection-only.
 
 Text (`plain` in zizmor's terms), JSON, SARIF, GitHub annotations, and agent lines render the same findings; no format runs its
 own detection. JSON is versioned (`version: 1`) with a `summary` and one object per finding,
-including its span and equivalents. SARIF follows GitHub's
+including its span and equivalents. Under `--fix`, `fixes` lists every proposed fix with its
+status: `applied`, `rejected` with the validation reason, or `not-written` with the reason the
+file kept its original content. Every format reports what is on disk: the findings that remain
+in a written file, and the original findings of a file whose fixes were not written. SARIF follows GitHub's
 [SARIF support](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support):
 - every rule has descriptions, help, a default level, and a precision derived from its persona;
 - security rules carry `security-severity`, and maintainability and correctness rules carry
   `problem.severity`;
-- every result has a relative URI and a full region;
+- every result in a file has a percent-encoded relative URI and a full region whose columns
+  count UTF-16 code units (`columnKind`); a repository-wide finding names its directory in the
+  message and has no location, as SARIF allows for results without a file;
 - `partialFingerprints` is left to `upload-sarif`.
 
 zizmor's severities map onto the SARIF levels: `informational`/`low` → `note`, `medium` →
@@ -115,6 +125,13 @@ Input, parse, config, API, and write errors exit with status 2. A workflow that 
 reported on stderr while the others are still checked and reported; `--fix` then writes nothing. JSON lists
 such files under `errors` and SARIF as `toolExecutionNotifications` of the invocation. Exit codes
 deliberately stay 0/1/2 instead of zizmor's 11–14. CI steps usually check only for non-zero.
+
+A GitHub API failure (rate limit, server error, network, rejected token) skips only the online checks
+that needed that answer; every other finding is reported in every format, and each failed request is
+named once on stderr. The scan is incomplete, so it exits 2 and `--fix` writes nothing: a CI gate must
+not pass on checks that never ran. `repo-org-settings` is the exception: reading Actions settings needs
+the Administration (read) permission, which `GITHUB_TOKEN` cannot be granted, so a 403 or 404 there
+skips that rule with a warning and leaves the exit status to the findings.
 
 ## GitHub Action path
 

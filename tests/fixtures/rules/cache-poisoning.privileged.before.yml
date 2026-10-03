@@ -15,6 +15,27 @@ jobs:
         with:
           cache: npm
       - run: npm ci && npm test
+  split:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/cache/save@v5
+        with:
+          path: base-build
+          key: base-${{ github.sha }}
+      - uses: actions/cache/restore@v5
+        with:
+          path: ~/.npm
+          key: npm
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - run: npm ci && npm test
+      - uses: actions/cache/save@v5 # expect: cache-poisoning
+        with:
+          path: ~/.npm
+          key: npm
   label:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

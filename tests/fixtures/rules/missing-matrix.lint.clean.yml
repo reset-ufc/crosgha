@@ -14,3 +14,11 @@ jobs:
     steps:
       - run: lychee --no-progress "**/*.md"
       - run: npm i -g markdownlint-cli@0.42.0 && markdownlint "**/*.md" --ignore latest
+  generated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: test -f CHANGELOG.md
+      - run: |
+          if test -n "$(git status --porcelain)"; then exit 1; fi
+          [ -s dist/index.js ] && ! test -L dist/index.js

@@ -17,3 +17,5 @@ jobs:
       - uses: actions/checkout@3333333333333333333333333333333333333333
         with:
           persist-credentials: false
+      - uses: example/many-tags@abababababababababababababababababababab
+      - uses: example/many-tags@cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd # expect: impostor-commit

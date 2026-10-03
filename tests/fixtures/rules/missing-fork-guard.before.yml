@@ -33,3 +33,30 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: make nightly
+  publish:
+    needs: guarded
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make publish
+  announce:
+    needs: [nightly, publish]
+    if: success()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make announce
+  report: # expect: missing-fork-guard
+    needs: guarded
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make report
+  cleanup: # expect: missing-fork-guard
+    needs: publish
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make cleanup

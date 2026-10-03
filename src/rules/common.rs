@@ -205,38 +205,90 @@ const UNTRUSTED_SUFFIXES: &[&str] = &[
     "page_name",
     "ref",
     "title",
+    // `workflow_run.head_branch` is the head_ref of the run's pull request under another name.
+    "head_branch",
 ];
 
+/// Event payload objects that carry the free text above; `toJSON` of one, or of `github` or
+/// `github.event` as a whole, serializes that text into the script.
+const FREE_TEXT_OBJECTS: &[&str] = &[
+    "comment",
+    "commits",
+    "discussion",
+    "head_commit",
+    "issue",
+    "pages",
+    "pull_request",
+    "review",
+    "workflow_run",
+];
+
+/// Untrusted context paths read by `expression`, lowercased and in dotted form. Contexts accept
+/// `github['event']` as well as `github.event`:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+/// and the runner looks keys up case-insensitively (`StringComparer.OrdinalIgnoreCase` in
+/// actions/runner `DictionaryContextData.cs` at d7bc179baf11a02110b46cfbbc4040f74ac3f60a).
 pub fn untrusted_contexts(expression: &str) -> Vec<String> {
-    let mut found = Vec::new();
+    let expression = dotted(&expression.to_ascii_lowercase());
     let bytes = expression.as_bytes();
+    let mut found = Vec::new();
     let mut start = 0;
-    while let Some(offset) = expression[start..].find("github.") {
+    while let Some(offset) = expression[start..].find("github") {
         let begin = start + offset;
-        let preceded = begin > 0 && is_context_char(bytes[begin - 1]);
+        let preceded = begin > 0 && (is_context_char(bytes[begin - 1]) || bytes[begin - 1] == b'.');
         let mut end = begin;
         while end < bytes.len() && (is_context_char(bytes[end]) || b".[]*".contains(&bytes[end])) {
             end += 1;
         }
         start = end.max(begin + 1);
-        if preceded {
-            continue;
-        }
         let path = &expression[begin..end];
-        let normalized: Vec<&str> = path
+        let segments: Vec<&str> = path
             .split('.')
             .map(|segment| segment.split('[').next().unwrap_or(segment))
             .filter(|segment| !segment.is_empty() && *segment != "*")
             .collect();
-        let untrusted = normalized.as_slice() == ["github", "head_ref"]
-            || (normalized.len() > 2
-                && normalized[1] == "event"
-                && UNTRUSTED_SUFFIXES.contains(normalized.last().unwrap()));
+        if preceded || segments.first() != Some(&"github") {
+            continue;
+        }
+        let whole_object = expression[..begin].trim_end().ends_with("tojson(")
+            && match segments.as_slice() {
+                ["github"] | ["github", "event"] => true,
+                ["github", "event", object, ..] => FREE_TEXT_OBJECTS.contains(object),
+                _ => false,
+            };
+        let untrusted = segments.as_slice() == ["github", "head_ref"]
+            || (segments.len() > 2
+                && segments[1] == "event"
+                && UNTRUSTED_SUFFIXES.contains(segments.last().unwrap()))
+            || whole_object;
         if untrusted {
             found.push(path.to_owned());
         }
     }
     found
+}
+
+/// Rewrites index syntax with a literal name (`['body']`) to property syntax (`.body`).
+fn dotted(expression: &str) -> String {
+    let mut out = String::with_capacity(expression.len());
+    let mut rest = expression;
+    while let Some(open) = rest.find("['") {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 2..];
+        match after.find("']") {
+            Some(close) if after[..close].bytes().all(is_context_char) => {
+                out.push('.');
+                out.push_str(&after[..close]);
+                rest = &after[close + 2..];
+            }
+            _ => {
+                out.push_str("['");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn is_context_char(byte: u8) -> bool {

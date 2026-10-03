@@ -1,0 +1,16 @@
+name: zizmor
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  zizmor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

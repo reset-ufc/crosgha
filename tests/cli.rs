@@ -9,6 +9,22 @@ fn bin() -> Command {
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .env_remove("GITHUB_ACTIONS");
+    isolate_git(&mut command);
+    command
+}
+
+/// Run from a git hook or `rebase --exec`, git exports these, and a test's `git init` would then
+/// rewrite the developer's repository instead of a scratch one.
+fn isolate_git(command: &mut Command) -> &mut Command {
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_PREFIX",
+    ] {
+        command.env_remove(name);
+    }
     command
 }
 
@@ -214,6 +230,11 @@ fn invalid_workflow_does_not_hide_findings_in_the_others() {
     let json = bin().args(["-f", "json"]).arg(&dir).output().unwrap();
     let sarif = bin().args(["-f", "sarif"]).arg(&dir).output().unwrap();
     let fix = bin().arg("--fix").arg(&dir).output().unwrap();
+    let fix_json = bin()
+        .args(["--fix", "-f", "json"])
+        .arg(&dir)
+        .output()
+        .unwrap();
     let after = fs::read(&valid).unwrap();
     fs::remove_dir_all(&dir).unwrap();
 
@@ -259,11 +280,30 @@ fn invalid_workflow_does_not_hide_findings_in_the_others() {
     assert_eq!(before, after);
     let stdout = String::from_utf8(fix.stdout).unwrap();
     assert_eq!(
-        stdout.matches("[persist-credentials]").count(),
+        stdout.matches("warning[persist-credentials]").count(),
+        3,
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches("[persist-credentials]: not written because a workflow failed to parse")
+            .count(),
         3,
         "{stdout}"
     );
     assert!(!stdout.contains("Fixed"), "{stdout}");
+    assert!(!stdout.contains("rerun with --fix"), "{stdout}");
+    // The report never claims a fix that was not written.
+    assert_eq!(fix_json.status.code(), Some(2));
+    let fix_json: serde_json::Value = serde_json::from_slice(&fix_json.stdout).unwrap();
+    assert_eq!(fix_json["summary"]["fixed"], 0, "{fix_json}");
+    assert_eq!(fix_json["summary"]["findings"], 3, "{fix_json}");
+    let fixes = fix_json["fixes"].as_array().unwrap();
+    assert_eq!(fixes.len(), 3, "{fix_json}");
+    assert!(
+        fixes.iter().all(|fix| fix["status"] == "not-written"),
+        "{fix_json}"
+    );
 }
 
 #[test]
@@ -327,9 +367,129 @@ fn fixes_checkout_while_reporting_a_detection_only_finding() {
     assert!(!stdout.contains("[persist-credentials]"));
 }
 
+/// A fix that fails validation stays a reported finding; the other fixes in that file and in the
+/// other files are still written.
+#[test]
+fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("crosgha-reject-{}-{unique}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let (flow, ci) = (dir.join("flow.yml"), dir.join("ci.yml"));
+    fs::copy(fixture("rejected-fix.yml"), &flow).unwrap();
+    fs::copy(fixture("checkout-credentials.before.yml"), &ci).unwrap();
+
+    let json = bin()
+        .args(["--fix", "-f", "json"])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    let flow_after = fs::read_to_string(&flow).unwrap();
+    let ci_after = fs::read_to_string(&ci).unwrap();
+    fs::copy(fixture("rejected-fix.yml"), &flow).unwrap();
+    let text = bin().arg("--fix").arg(&flow).output().unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    assert_eq!(
+        ci_after,
+        fs::read_to_string(fixture("checkout-credentials.after.yml")).unwrap()
+    );
+    let original = fs::read_to_string(fixture("rejected-fix.yml")).unwrap();
+    assert!(
+        flow_after
+            .contains("- { uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 }\n"),
+        "{flow_after}"
+    );
+    assert_eq!(
+        flow_after,
+        original.replace(
+            "# v5.1.0\n",
+            "# v5.1.0\n        with:\n          persist-credentials: false\n"
+        )
+    );
+
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(report["summary"]["fixed"], 4, "{report}");
+    let remaining = report["findings"].as_array().unwrap();
+    assert_eq!(remaining.len(), 1, "{report}");
+    assert_eq!(remaining[0]["rule"], "persist-credentials");
+    assert!(remaining[0]["path"].as_str().unwrap().ends_with("flow.yml"));
+    assert_eq!(remaining[0]["line"], 10);
+    let fixes = report["fixes"].as_array().unwrap();
+    let status = |status: &str| {
+        fixes
+            .iter()
+            .filter(|fix| fix["status"] == status)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(status("applied").len(), 4, "{report}");
+    let rejected = status("rejected");
+    assert_eq!(rejected.len(), 1, "{report}");
+    assert_eq!(rejected[0]["line"], 10);
+    assert_eq!(
+        rejected[0]["reason"],
+        "fix changed YAML outside the intended node"
+    );
+
+    assert_eq!(text.status.code(), Some(1));
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(
+        stdout.contains("Fixed 1 finding in 1 workflow file."),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("flow.yml:10:11 [persist-credentials]: fix changed YAML outside"),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("[persist-credentials]:").count(),
+        2,
+        "{stdout}"
+    );
+    assert!(!stdout.contains("--fix"), "{stdout}");
+}
+
+/// Layouts common in real repositories: a comment (here CJK) after the fixed step, CRLF line
+/// breaks, and no final newline. The fix keeps each file's line breaks and missing final newline.
+#[test]
+fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("crosgha-layout-{}-{unique}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let source = fs::read_to_string(fixture("fix-layout.yml")).unwrap();
+    let unterminated = source.trim_end_matches('\n');
+    let crlf = source.replace('\n', "\r\n");
+    fs::write(dir.join("unterminated.yml"), unterminated).unwrap();
+    fs::write(dir.join("crlf.yml"), &crlf).unwrap();
+
+    let output = bin().arg("--fix").arg(&dir).output().unwrap();
+    let fixed_unterminated = fs::read_to_string(dir.join("unterminated.yml")).unwrap();
+    let fixed_crlf = fs::read_to_string(dir.join("crlf.yml")).unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(
+        stdout.contains("Fixed 4 findings in 2 workflow files."),
+        "{stdout}"
+    );
+    let with = "# v5.1.0\n        with:\n          persist-credentials: false\n";
+    let expected = source.replace("# v5.1.0\n", with);
+    assert_eq!(fixed_unterminated, expected.trim_end_matches('\n'));
+    assert_eq!(fixed_crlf, expected.replace('\n', "\r\n"));
+}
+
+/// A fix is never written through a symbolic link, but a link with nothing to fix is fine and
+/// the regular files next to it are still fixed.
 #[cfg(unix)]
 #[test]
-fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {
+fn fixes_regular_workflows_but_refuses_to_write_through_symlinks() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -337,28 +497,74 @@ fn scans_symlinked_workflows_in_directories_but_refuses_to_fix_them() {
     let root = std::env::temp_dir().join(format!("crosgha-links-{}-{unique}", std::process::id()));
     let scanned = root.join("workflows");
     fs::create_dir_all(&scanned).unwrap();
-    let target = root.join("shared.yml");
-    fs::copy(fixture("checkout-credentials.before.yml"), &target).unwrap();
+    let (shared, clean) = (root.join("shared.yml"), root.join("clean.yml"));
+    fs::copy(fixture("checkout-credentials.before.yml"), &shared).unwrap();
+    fs::copy(fixture("workflows/ci.yml"), &clean).unwrap();
     fs::copy(fixture("workflows/ci.yml"), scanned.join("ci.yml")).unwrap();
-    std::os::unix::fs::symlink(&target, scanned.join("linked.yml")).unwrap();
-    let before = fs::read(&target).unwrap();
+    let real = scanned.join("real.yml");
+    fs::copy(fixture("checkout-credentials.before.yml"), &real).unwrap();
+    std::os::unix::fs::symlink(&shared, scanned.join("linked.yml")).unwrap();
+    std::os::unix::fs::symlink(&clean, scanned.join("clean-link.yml")).unwrap();
+    let before = fs::read(&shared).unwrap();
 
     let scan = bin().arg(&scanned).output().unwrap();
     let fix = bin().arg("--fix").arg(&scanned).output().unwrap();
-    let after = fs::read(&target).unwrap();
+    let after = fs::read(&shared).unwrap();
+    let fixed = fs::read_to_string(&real).unwrap();
+    let still_linked = fs::symlink_metadata(scanned.join("linked.yml"))
+        .unwrap()
+        .is_symlink();
+    let clean_fix = bin()
+        .arg("--fix")
+        .arg(scanned.join("clean-link.yml"))
+        .output()
+        .unwrap();
     fs::remove_dir_all(&root).unwrap();
 
     assert_eq!(scan.status.code(), Some(1));
     let stdout = String::from_utf8(scan.stdout).unwrap();
-    assert!(stdout.contains("Checked 2 workflow files: 3 findings"));
-    assert!(stdout.contains("linked.yml"));
-    assert_eq!(fix.status.code(), Some(2));
     assert!(
-        String::from_utf8(fix.stderr)
-            .unwrap()
-            .contains("refusing to replace a symbolic link")
+        stdout.contains("Checked 4 workflow files: 6 findings"),
+        "{stdout}"
     );
+    assert!(stdout.contains("linked.yml"));
+
+    assert_eq!(fix.status.code(), Some(2));
+    let stderr = String::from_utf8(fix.stderr).unwrap();
+    assert_eq!(
+        stderr
+            .matches("refusing to replace a symbolic link")
+            .count(),
+        1,
+        "{stderr}"
+    );
+    assert!(stderr.contains("linked.yml"), "{stderr}");
     assert_eq!(before, after);
+    assert!(still_linked);
+    assert_eq!(
+        fixed,
+        fs::read_to_string(fixture("checkout-credentials.after.yml")).unwrap()
+    );
+    let stdout = String::from_utf8(fix.stdout).unwrap();
+    assert!(
+        stdout.contains("Fixed 3 findings in 1 workflow file."),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches("[persist-credentials]: refusing to replace a symbolic link")
+            .count(),
+        3,
+        "{stdout}"
+    );
+    assert!(stdout.contains("Remaining: 3 findings"), "{stdout}");
+
+    assert_eq!(
+        clean_fix.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&clean_fix.stderr)
+    );
 }
 
 #[test]
@@ -566,6 +772,22 @@ fn zizmor_config_is_discovered_and_honored() {
 
     let unconfigured = scan(&["--no-config"]);
     assert_eq!(lines_of(&unconfigured, "script-injection"), ["14", "15"]);
+    // `--no-config` also wins over a config named in the environment.
+    for variable in ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"] {
+        let output = bin()
+            .args(["--persona", "pedantic", "--offline", "--fail-on", "none"])
+            .arg("--no-config")
+            .env(variable, fixture("repos/configured/.github/zizmor.yml"))
+            .arg(&workflows)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{variable}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), unconfigured);
+    }
     assert_eq!(lines_of(&unconfigured, "unpinned-action"), ["11"]);
     assert!(unconfigured.contains("warning[persist-credentials]"));
 
@@ -747,9 +969,22 @@ fn no_path_the_repository_root_and_github_dir_scan_the_same_workflows() {
     let default = scan(&[]);
     assert!(default.contains("Checked 1 workflow file:"), "{default}");
     assert!(default.contains(".github/dependabot.yml:3:"), "{default}");
+    let absolute = fixture("repos/cooldown/.github/workflows/ci.yml");
+    let absolute = absolute.to_str().unwrap();
     for paths in [&["."][..], &[".github"], &[".github/workflows"]] {
         assert_eq!(scan(paths), default, "{paths:?}");
     }
+    // Overlapping inputs, relative or absolute, report each workflow and `.github` once.
+    let overlapping = scan(&[".", ".github", ".github/workflows", absolute]);
+    assert!(
+        overlapping.contains("Checked 1 workflow file:"),
+        "{overlapping}"
+    );
+    assert_eq!(
+        overlapping.matches("[missing-release-cooldown]").count(),
+        default.matches("[missing-release-cooldown]").count(),
+        "{overlapping}"
+    );
 }
 
 #[test]
@@ -843,6 +1078,21 @@ fn migrate_converts_configs_and_shell_steps() {
                     "{stderr}"
                 );
                 assert!(stderr.contains("ci.yml:21"), "{stderr}");
+                // Steps that install zizmor next to other tools or commands stay, with a note.
+                for line in ["ci.yml:32", "ci.yml:35"] {
+                    assert!(
+                        stderr
+                            .lines()
+                            .any(|note| note.contains(line)
+                                && note.contains("next to other commands")),
+                        "{line}: {stderr}"
+                    );
+                }
+                assert!(
+                    stderr.lines().any(|note| note.contains("ci.yml:37")
+                        && note.contains("`--format json` has no crosgha Action input")),
+                    "{stderr}"
+                );
             }
             _ => {
                 assert!(stderr.contains("`config-variables`"), "{stderr}");
@@ -972,6 +1222,89 @@ fn every_format_reports_the_findings_of_the_text_report() {
     assert!(rule("script-injection")["properties"]["security-severity"].is_string());
     assert_eq!(rule("script-injection")["properties"]["precision"], "high");
     assert_eq!(rule("unpinned-action")["properties"]["precision"], "medium");
+}
+
+/// SARIF regions count UTF-16 code units (`columnKind`), file names become percent-encoded URI
+/// references, and a repository-wide finding has no file location.
+#[test]
+fn sarif_uses_utf16_columns_encoded_uris_and_no_location_for_repositories() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let repo = std::env::temp_dir().join(format!("crosgha-sarif-{}-{unique}", std::process::id()));
+    let workflows = repo.join(".github/workflows");
+    fs::create_dir_all(&workflows).unwrap();
+    fs::write(
+        workflows.join("ci build#1.yml"),
+        "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      \
+         - { name: \"été 🚀\", uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 }\n",
+    )
+    .unwrap();
+    let scan = |format: &str| {
+        let output = bin()
+            .current_dir(&repo)
+            .args([
+                "--persona",
+                "auditor",
+                "--offline",
+                "--no-config",
+                "-f",
+                format,
+            ])
+            .arg(".")
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let sarif = scan("sarif");
+    let annotations = scan("github");
+    fs::remove_dir_all(&repo).unwrap();
+
+    let sarif: serde_json::Value = serde_json::from_str(&sarif).unwrap();
+    let run = &sarif["runs"][0];
+    assert_eq!(run["columnKind"], "utf16CodeUnits");
+    let results = run["results"].as_array().unwrap();
+    let checkout = results
+        .iter()
+        .find(|result| result["ruleId"] == "persist-credentials")
+        .unwrap();
+    let location = &checkout["locations"][0]["physicalLocation"];
+    assert_eq!(
+        location["artifactLocation"]["uri"],
+        ".github/workflows/ci%20build%231.yml"
+    );
+    // `uses` follows 26 UTF-16 code units (the emoji is a surrogate pair) but 30 UTF-8 bytes.
+    assert_eq!(location["region"]["startColumn"], 27, "{location}");
+    assert_eq!(location["region"]["endColumn"], 31, "{location}");
+
+    let tooling: Vec<_> = results
+        .iter()
+        .filter(|result| result["ruleId"] == "missing-security-tooling")
+        .collect();
+    assert!(!tooling.is_empty(), "{run}");
+    for result in tooling {
+        assert_eq!(result["locations"], serde_json::json!([]), "{result}");
+        assert!(
+            result["message"]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with(".github: repository: repository has no "),
+            "{result}"
+        );
+    }
+
+    // Annotations name the file as a path, not as a URI.
+    assert!(
+        annotations.contains("file=.github/workflows/ci build#1.yml,line=6,"),
+        "{annotations}"
+    );
 }
 
 #[test]
@@ -1175,6 +1508,156 @@ fn repository_roots_and_several_inputs_are_collected_like_zizmor() {
     );
 }
 
+#[test]
+fn ignore_entries_with_a_malformed_position_are_config_errors() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("crosgha-ignore-{}-{unique}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let scan = |entry: &str| {
+        let config = root.join("zizmor.yml");
+        fs::write(
+            &config,
+            format!("rules:\n  template-injection:\n    ignore:\n      - \"{entry}\"\n"),
+        )
+        .unwrap();
+        bin()
+            .args(["--offline", "--fail-on", "none", "--config"])
+            .arg(&config)
+            .arg(fixture("repos/configured/.github/workflows"))
+            .output()
+            .unwrap()
+    };
+    // Line 14 is one of two script injections in ci.yml; a bad position must not hide both.
+    for entry in [
+        "ci.yml:L14",
+        "ci.yml:",
+        "ci.yml:14x",
+        "ci.yml:14:x",
+        "ci.yml:14:9:1",
+    ] {
+        let output = scan(entry);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(2), "{entry}: {stderr}");
+        assert!(stderr.contains(&format!("`{entry}`")), "{entry}: {stderr}");
+    }
+    let valid = scan("ci.yml:14:9");
+    assert!(valid.status.success());
+    let report = String::from_utf8(valid.stdout).unwrap();
+    let injections = diagnostics(&report, "script-injection");
+    fs::remove_dir_all(&root).unwrap();
+    assert_eq!(injections.len(), 1, "{report}");
+    assert!(injections[0].1.contains("ci.yml:15:"), "{report}");
+}
+
+#[test]
+fn a_workflow_named_zizmor_yml_is_never_read_as_the_config() {
+    // The root `zizmor.yml` disables artipacked; `.github/workflows/zizmor.yml` runs zizmor.
+    let repo = fixture("repos/zizmor-workflow");
+    let scan = |extra: &[&str], input: &PathBuf| {
+        let output = bin()
+            .args(["--offline", "--fail-on", "none"])
+            .args(extra)
+            .arg(input)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let workflow = repo.join(".github/workflows/ci.yml");
+    for input in [&repo, &repo.join(".github/workflows"), &workflow] {
+        let report = scan(&[], input);
+        assert!(
+            diagnostics(&report, "persist-credentials").is_empty(),
+            "{input:?}: {report}"
+        );
+    }
+    let unconfigured = scan(&["--no-config"], &workflow);
+    assert_eq!(
+        diagnostics(&unconfigured, "persist-credentials").len(),
+        1,
+        "{unconfigured}"
+    );
+}
+
+#[test]
+fn only_files_directly_in_the_workflows_directory_are_scanned() {
+    // `config/labels.yml` is data read by a job; GitHub never loads it as a workflow.
+    let nested = fixture("repos/nested");
+    for input in [nested.clone(), nested.join(".github/workflows")] {
+        let output = bin().arg("--offline").arg(&input).output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            output.status.success(),
+            "{input:?}: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(stdout, "✓ Checked 1 workflow file: no findings.\n");
+    }
+
+    // A repository root without workflows is not searched for other YAML (action.yml, compose).
+    let output = bin()
+        .arg("--offline")
+        .arg(fixture("repos/action-only"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("no .yml or .yaml workflow files found in")
+            && stderr.contains(".github/workflows"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("missing required top-level key"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn each_input_uses_its_own_config_whatever_the_order() {
+    // Only `configured` has a config: it disables unpinned-uses and raises artipacked to high.
+    let scan = |inputs: &[&str]| {
+        let output = bin()
+            .current_dir(fixture("repos"))
+            .args(["--offline", "--persona", "pedantic", "--fail-on", "none"])
+            .args(["-f", "agent"])
+            .args(inputs)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut lines: Vec<String> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        lines.sort();
+        lines
+    };
+    let mut alone = [scan(&["configured"]), scan(&["insecure"])].concat();
+    alone.sort();
+    assert!(
+        alone
+            .iter()
+            .any(|line| line.contains("error persist-credentials"))
+            && !alone.iter().any(|line| line.contains("unpinned-action"))
+            && alone.iter().any(|line| line.starts_with("insecure/")),
+        "{alone:#?}"
+    );
+    assert_eq!(scan(&["configured", "insecure"]), alone);
+    assert_eq!(scan(&["insecure", "configured"]), alone);
+}
+
 /// A throwaway repository whose git ignores the user's global and system config (hooksPath, signing).
 fn git_repo(name: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -1197,7 +1680,7 @@ fn git(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
         std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    Command::new("git")
+    isolate_git(&mut Command::new("git"))
         .current_dir(dir)
         .args(args)
         .env("PATH", path)
@@ -1272,7 +1755,7 @@ fn pre_push_hook_blocks_smelly_workflows_until_they_are_fixed() {
     );
 
     // Without crosgha on PATH the hook fails closed instead of letting the push through.
-    let missing = Command::new("git")
+    let missing = isolate_git(&mut Command::new("git"))
         .current_dir(&work)
         .args(["push", remote_url, "HEAD:refs/heads/main"])
         .env("PATH", "/usr/bin:/bin")

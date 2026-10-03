@@ -107,6 +107,28 @@ jobs:
           name: artifacts-plan-dist-manifest
           path: plan-dist-manifest.json
 
+  # release-please dispatches this workflow without waiting for CI, so the tagged commit is tested
+  # here before anything is published.
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (mise.toml)
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.14
+          sha256: 2b289d1b3074e0b1d3f95bad0bd78bbc517c1a5bcb020cbc1643d260f5d1a351
+          # Same rule as the build: no cache a PR run could have written.
+          cache: false
+      - name: Test
+        run: cargo test --locked
+
   # Build and packages all the platform-specific things
   build-local-artifacts:
     name: build-local-artifacts (${{ join(matrix.targets, ', ') }})
@@ -164,12 +186,17 @@ jobs:
           path: target/distrib/
           merge-multiple: true
       - name: Install dependencies
+        env:
+          MATRIX_PACKAGES_INSTALL: ${{ matrix.packages_install }}
         run: |
-          ${{ matrix.packages_install }}
+          eval "$MATRIX_PACKAGES_INSTALL"
       - name: Build artifacts
+        env:
+          NEEDS_PLAN_OUTPUTS_TAG_FLAG: ${{ needs.plan.outputs.tag-flag }}
+          MATRIX_DIST_ARGS: ${{ matrix.dist_args }}
         run: |
           # Actually do builds and make zips and whatnot
-          dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+          dist build ${NEEDS_PLAN_OUTPUTS_TAG_FLAG} --print=linkage --output-format=json ${MATRIX_DIST_ARGS} > dist-manifest.json
           echo "dist ran successfully"
       - id: cargo-dist
         name: Post-build
@@ -249,10 +276,11 @@ jobs:
     name: host
     needs:
       - plan
+      - test
       - build-local-artifacts
       - build-global-artifacts
-    # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+    # Only run if we're "publishing", the tests passed, and local and global didn't fail (skipped is fine)
+    if: ${{ always() && needs.plan.result == 'success' && needs.test.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"
@@ -314,7 +342,8 @@ jobs:
           NEEDS_PLAN_OUTPUTS_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           # If we're editing a release in place, we need to upload things ahead of time
-          gh release upload "${NEEDS_PLAN_OUTPUTS_TAG}" artifacts/*
+          # --clobber lets a re-run of this job replace assets a failed attempt already uploaded.
+          gh release upload --clobber "${NEEDS_PLAN_OUTPUTS_TAG}" artifacts/*
 
           gh release edit "${NEEDS_PLAN_OUTPUTS_TAG}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --draft=false
 

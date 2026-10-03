@@ -7,21 +7,29 @@ use std::{
 
 use crate::workflow::BOM;
 
+/// Workflow files of a file input, or the `.yml`/`.yaml` files directly inside a directory.
+/// GitHub reads workflows only from `.github/workflows` itself: "You must store workflow files in
+/// the `.github/workflows` directory of your repository"
+/// (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax), and
+/// "Subdirectories of the `workflows` directory are not supported"
+/// (https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows). So no
+/// directory is walked, and a repository root or its `.github` is scanned only through its
+/// workflows, as zizmor collects `.` inputs; the rest of a repository holds YAML that is not a
+/// workflow.
 pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mut workflows = Vec::new();
-    // A repository root or its `.github` is scanned through its workflows, as zizmor collects
-    // `.` inputs; `.github` also holds YAML that is not a workflow.
-    let workflows_dir = if is_github_dir(path) {
-        path.join("workflows")
+    let redirected = if is_github_dir(path) {
+        Some(path.join("workflows"))
+    } else if path.join(".github").is_dir() || path.join(".git").exists() {
+        Some(path.join(".github/workflows"))
     } else {
-        path.join(".github/workflows")
+        None
     };
-    let path = if workflows_dir.is_dir() {
-        workflows_dir.as_path()
-    } else {
-        path
-    };
-    collect(path, &mut workflows)?;
+    let path = redirected.as_deref().unwrap_or(path);
+    // A repository without `.github/workflows` has no workflow, which the error below says.
+    if redirected.is_none() || path.is_dir() {
+        collect(path, &mut workflows)?;
+    }
     workflows.sort();
     if workflows.is_empty() {
         return Err(format!(
@@ -57,12 +65,7 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
             .file_type()
             .map_err(|error| format!("cannot inspect `{}`: {error}", entry.path().display()))?;
 
-        if entry_type.is_dir() {
-            collect(&entry.path(), workflows)?;
-            continue;
-        }
-        // ponytail: Symlinked files are scanned like direct paths; symlinked
-        // directories are not followed, which avoids cycle detection for now.
+        // Symlinked files are scanned like direct paths.
         let is_file = entry_type.is_file()
             || (entry_type.is_symlink()
                 && entry.path().metadata().is_ok_and(|meta| meta.is_file()));
@@ -71,6 +74,19 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// One key for every spelling of a path (relative, absolute, through `.`), so overlapping inputs
+/// are scanned once. Only the directory is resolved: a symlinked workflow stays its own entry.
+pub fn identity(path: &Path) -> PathBuf {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    match (fs::canonicalize(parent), path.file_name()) {
+        (Ok(parent), Some(name)) => parent.join(name),
+        _ => path.to_path_buf(),
+    }
 }
 
 /// A Dependabot config shares the `.yml` extension but is not a workflow.
@@ -103,6 +119,10 @@ pub fn read(path: &Path, fix: bool) -> Result<String, String> {
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_verified(path: &Path, source: &str) -> Result<(), String> {
+    // Renaming over a link would replace it with a regular file and leave its target unfixed.
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err("refusing to replace a symbolic link".to_owned());
+    }
     let bom = fs::read(path)
         .is_ok_and(|old| old.starts_with(BOM.encode_utf8(&mut [0; 3]).as_bytes()))
         && !source.starts_with(BOM);

@@ -24,7 +24,10 @@ main() {
     base="${CROSGHA_RELEASE_BASE:-https://github.com/meiazero/crosgha/releases}"
     protocol='=https'
     # Tests serve a local release over plain HTTP; nothing else may.
-    case "$base" in http://127.0.0.1:*) protocol='=http' ;; esac
+    case "$base" in
+        http://127.0.0.1:|http://127.0.0.1:*[!0-9]*) ;;
+        http://127.0.0.1:*) protocol='=http' ;;
+    esac
     version="${CROSGHA_VERSION:-}"
     if [ -n "$version" ]; then
         version="v${version#v}"
@@ -53,8 +56,13 @@ main() {
     # Copy next to the target, then rename, so a running crosgha is never overwritten mid-write.
     cp "$tmp/crosgha-$target/crosgha" "$dir/.crosgha.new"
     chmod 755 "$dir/.crosgha.new"
+    # A binary for another libc or CPU passes the checksum; keep the working one unless this runs.
+    if ! installed="$("$dir/.crosgha.new" --version)"; then
+        rm -f "$dir/.crosgha.new"
+        fail "the downloaded crosgha does not run on $platform; nothing was replaced"
+    fi
     mv -f "$dir/.crosgha.new" "$dir/crosgha"
-    printf 'Installed %s to %s/crosgha\n' "$("$dir/crosgha" --version)" "$dir"
+    printf 'Installed %s to %s/crosgha\n' "$installed" "$dir"
 
     case ":$PATH:" in
         *":$dir:"*) ;;

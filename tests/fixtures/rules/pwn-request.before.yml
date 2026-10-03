@@ -19,3 +19,23 @@ jobs:
       - run: | # expect: pwn-request
           git fetch origin pull/${{ github.event.number }}/head:pr
           git checkout pr
+      # The fork's default branch is the author's code even without a `ref`.
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: pwn-request
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          persist-credentials: false
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: pwn-request
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+      - run: | # expect: pwn-request
+          git fetch --depth 1 \
+            origin "+refs/pull/${{ github.event.number }}/merge"
+      - run: | # expect: pwn-request
+          git remote add fork "https://github.com/${{ github.event.pull_request.head.repo.full_name }}"
+          git fetch fork "${{ github.event.pull_request.head.sha }}" && git switch --detach FETCH_HEAD
+      # Fetching the base branch and naming the pull request elsewhere is not a checkout.
+      - run: |
+          git fetch origin main
+          curl -fsS "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.number }}"
+          echo "see https://github.com/${{ github.repository }}/pull/${{ github.event.number }}"

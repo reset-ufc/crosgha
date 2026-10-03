@@ -11,3 +11,5 @@ jobs:
       - uses: actions/checkout@1111111111111111111111111111111111111111 # v4.2.2
       - uses: actions/checkout@2222222222222222222222222222222222222222 # expect: impostor-commit
       - uses: actions/checkout@3333333333333333333333333333333333333333
+      - uses: example/many-tags@abababababababababababababababababababab
+      - uses: example/many-tags@cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd # expect: impostor-commit

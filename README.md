@@ -63,10 +63,10 @@ crosgha --sarif-file results.sarif .      # text on stdout, SARIF on disk
 crosgha --list-rules                      # add -f json for summaries and equivalents
 ```
 
-Each `PATH` may be a workflow file, a directory (scanned recursively), a repository root, or its `.github`; the last
-two are scanned through `.github/workflows` as zizmor does with `.`. Without a `PATH`, crosgha scans
-`.github/workflows`. A `dependabot.yml` path gets only the Dependabot cooldown check. Symlinked files are scanned but
-never rewritten.
+Each `PATH` may be a workflow file, a directory of workflows, a repository root, or its `.github`; the last two are
+scanned through `.github/workflows` as zizmor does with `.`. Subdirectories are never scanned: GitHub does not load
+workflows from them. Without a `PATH`, crosgha scans `.github/workflows`. A `dependabot.yml` path gets only the
+Dependabot cooldown check. Symlinked files are scanned but never rewritten.
 
 ## GitHub Action
 
@@ -94,7 +94,7 @@ A run goes like this:
 3. It uploads SARIF with `github/codeql-action/upload-sarif`, pinned by SHA.
 4. Only then does it fail according to `fail-on`.
 
-Linux runners only. `fix: pull-request` is validated but not implemented yet; see [ROADMAP.md](ROADMAP.md).
+Linux X64 runners only. `fix: pull-request` is validated but not implemented yet; see [ROADMAP.md](ROADMAP.md).
 
 ## Pre-push hook
 
@@ -117,8 +117,10 @@ crosgha hook uninstall
 - **Action steps:** `zizmorcore/zizmor-action`, `raven-actions/actionlint`, `reviewdog/action-actionlint`, and
   `rhysd/actionlint` steps become crosgha Action steps. zizmor steps keep their `with:` block (the crosgha Action
   accepts zizmor-action's inputs); actionlint steps lose theirs.
-- **Shell steps:** steps that only install the tool are removed. Steps that only run it become crosgha Action steps,
-  with CLI flags translated to inputs. Steps that mix the tool with other commands are listed for a manual change.
+- **Shell steps:** steps that only install the tool are removed, unless a step of the same job still runs it. Steps
+  that only run it become crosgha Action steps, with CLI flags translated to inputs. Steps that install or run the
+  tool next to other commands, or with a flag the Action has no input for (such as `--format json`), stay in place
+  and are listed for a manual change.
 - **Config:** `zizmor.yml` becomes `crosgha.yml` next to it, with rule keys renamed where the match is one to one and
   keys without a crosgha rule dropped. `actionlint.yaml` self-hosted runner labels become
   `rules.self-hosted-runner.config.labels`. The original config stays in place.
@@ -146,15 +148,17 @@ Rules with scope `online` in the [rule table](#rules) query the GitHub API.
   `--offline` or `--no-online-audits` is set.
 - **GitHub Enterprise Server:** `--gh-hostname` (or `GH_HOST`). It also turns off the checks that describe github.com:
   retired runner images and shut-down action versions in `removed-feature`, and `retired-runtime`.
-- **`repo-org-settings`** also needs `--repository owner/name` (or `GITHUB_REPOSITORY`).
+- **`repo-org-settings`** also needs `--repository owner/name` (or `GITHUB_REPOSITORY`) and a token with the
+  Administration (read) repository permission. `GITHUB_TOKEN` cannot have it, so in Actions the rule is usually
+  skipped with a warning.
 - **Without the API,** `archived-action` still reports the archived actions of the `actions` and `actions-rs`
   organizations from a built-in list.
 
 ### Config file
 
-crosgha reads `crosgha.yml` or an existing `zizmor.yml`, found the same way zizmor finds its config, or passed with
-`--config` (also `CROSGHA_CONFIG` or `ZIZMOR_CONFIG`). `--no-config` skips discovery. Keys may use crosgha's or
-zizmor's rule names.
+crosgha reads `crosgha.yml` or an existing `zizmor.yml`, found for each input path the same way zizmor finds its
+config, or passed with `--config` (also `CROSGHA_CONFIG` or `ZIZMOR_CONFIG`) for every input. `--no-config` skips both.
+Keys may use crosgha's or zizmor's rule names.
 
 | Key | Effect |
 |---|---|
@@ -191,20 +195,21 @@ the run fail.
 | `--format` | Output |
 |---|---|
 | `text` (default; `plain` in zizmor) | One rustc-style diagnostic per finding: the source line with the node underlined, the rule's help, and the equivalent rule in other tools, such as `same as zizmor: template-injection; actionlint: expression`. A summary counts findings by severity. |
-| `json` | Versioned report: `version`, `summary`, `findings`, and `errors` for workflows that failed to parse. |
-| `sarif` | SARIF 2.1.0 with the rule metadata GitHub code scanning requires; it validates against the official schema. Parse failures are `toolExecutionNotifications` of the invocation. |
+| `json` | Versioned report: `version`, `summary`, `findings`, `errors` for workflows that failed to parse, and under `--fix` a `fixes` entry per proposed fix with its status (`applied`, `rejected`, or `not-written`) and reason. |
+| `sarif` | SARIF 2.1.0 with the rule metadata GitHub code scanning requires; it validates against the official schema. Columns count UTF-16 code units (`columnKind`), and repository-wide findings have no file location. Parse failures are `toolExecutionNotifications` of the invocation. |
 | `github` | Workflow-command annotations. The default when `GITHUB_ACTIONS=true`. |
 | `agent` | One brief line per finding for AI agents: `path:line:col: severity rule: message help: <rule summary>`, after oxlint's format of the same name. |
 
 `--sarif-file FILE` also writes SARIF during any format, so one run serves the log and the Security tab. After `--fix`,
-every format lists what remains. Text is colored on a terminal; `--color always|never` overrides that, and `NO_COLOR`
+every format lists what remains on disk: the findings left in each written file, and the original findings of a file
+whose fixes were not written. Text is colored on a terminal; `--color always|never` overrides that, and `NO_COLOR`
 turns it off.
 
 | Exit status | Meaning |
 |---|---|
 | 0 | No finding reaches `--fail-on`. |
 | 1 | A finding does. |
-| 2 | A path, workflow, config, write, or API call failed. No file is changed; findings in the workflows that did parse are still reported, and JSON and SARIF list the failed files. |
+| 2 | A path, workflow, config, write, or API call failed. Findings in the workflows that did parse are still reported, and JSON and SARIF list the failed files. A workflow that fails to parse, or a failed API call, means no file is changed; a failed write leaves the other files fixed. A failed API call skips only the online checks that needed it; stderr names it. |
 
 ## Fixes
 
@@ -213,6 +218,10 @@ turns it off.
 1. the patched YAML parses;
 2. the targeted finding disappears and no new finding appears;
 3. only the intended YAML node changed.
+
+A fix that fails a check is skipped: its finding stays in the report with the reason ("Not fixed" in text, `fixes` in
+JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
+workflow is never rewritten; its fixes are reported as not written.
 
 Two rules have fixes:
 
@@ -262,8 +271,8 @@ code. **Config** marks rules that read `rules.<id>.config`.
 | `complex-job` | `long-job/complexity` | note | auditor | workflow |  |  |
 | `readability` | `readability` | note | auditor | workflow | zizmor: `anonymous-definition` |  |
 | `deprecated-command` | `deprecated-command/feature` | warning | regular | workflow | zizmor: `insecure-commands`; actionlint: `deprecated-commands` |  |
-| `removed-feature` | `deprecated-command/feature` | error | regular | workflow |  |  |
-| `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check` |  |
+| `removed-feature` | `deprecated-command/feature` | error | regular | workflow | actionlint: `runner-label`, `action`, `deprecated-inputs` |  |
+| `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check`, `expression` |  |
 | `embedded-script-lint` | `embedded-script-lint` | note | pedantic | workflow | actionlint: `shellcheck` |  |
 | `insecure-protocol` | `insecure-protocol` | warning | regular | workflow | zizmor: `insecure-url-scheme` |  |
 | `unpinned-action` | `unpinned-action` | warning | pedantic | workflow | zizmor: `unpinned-uses`, `unpinned-images` | yes |
@@ -276,7 +285,7 @@ code. **Config** marks rules that read `rules.<id>.config`.
 | `archived-action` | `untrusted-3rd-party-action` | warning | regular | online | zizmor: `archived-uses` |  |
 | `missing-release-cooldown` | `missing-release-cooldown` | note | pedantic | repository | zizmor: `dependabot-cooldown` | yes |
 | `missing-security-tooling` | `missing-security-tooling` | note | auditor | repository |  |  |
-| `retired-runtime` | `deprecated-command/feature` | warning | regular | repository |  |  |
+| `retired-runtime` | `deprecated-command/feature` | warning | regular | repository | actionlint: `action` |  |
 | `repo-org-settings` | `repo-org-settings` | warning | pedantic | repository |  |  |
 
 ## Development

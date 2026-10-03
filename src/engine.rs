@@ -18,6 +18,8 @@ pub struct Inspection {
     pub source: String,
     pub findings: Vec<Finding>,
     pub fix: Option<FixOutcome>,
+    /// Local actions the workflow calls, for the repository rules.
+    pub local_actions: Vec<String>,
 }
 
 pub fn inspect(
@@ -28,6 +30,7 @@ pub fn inspect(
 ) -> Result<Inspection, String> {
     let workflow = Workflow::parse(source.clone())?;
     let findings = rules::detect_all(&workflow, settings, file)?;
+    let local_actions = rules::local_actions(&workflow);
     let fix = if apply_fixes && !findings.is_empty() {
         Some(fix::apply(workflow, &findings, settings, file)?)
     } else {
@@ -37,6 +40,7 @@ pub fn inspect(
         source,
         findings,
         fix,
+        local_actions,
     })
 }
 
@@ -51,7 +55,8 @@ pub fn inspect_files(
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        filesystem::read(path, apply_fixes)
+        // A symbolic link is refused only if a fix has to be written through it.
+        filesystem::read(path, false)
             .and_then(|source| inspect(source, apply_fixes, settings, &file))
     })
 }

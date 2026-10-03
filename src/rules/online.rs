@@ -1,13 +1,13 @@
 //! Rules that need the GitHub API. They run only when a token is available and `--offline`
 //! is not set, like zizmor's online audits: https://docs.zizmor.sh/usage/#operating-modes
 
-use std::path::Path;
+use std::{ops::ControlFlow, path::Path, sync::PoisonError};
 
 use yamlpath::Route;
 
 use super::{Finding, Located, Options, Rule, common};
 use crate::{
-    github::GitHub,
+    github::{ApiError, GitHub},
     policy::{Persona, Severity},
     workflow::Workflow,
 };
@@ -88,7 +88,13 @@ struct Pin<'a> {
     owner: &'a str,
     repo: &'a str,
     sha: Option<&'a str>,
-    version: Option<String>,
+    git_ref: &'a str,
+}
+
+impl Pin<'_> {
+    fn version(&self, workflow: &Workflow) -> Option<String> {
+        ref_version(workflow, &self.route, self.git_ref)
+    }
 }
 
 fn pins(workflow: &Workflow) -> Vec<Pin<'_>> {
@@ -99,14 +105,13 @@ fn pins(workflow: &Workflow) -> Vec<Pin<'_>> {
             let sha = Some(reference.git_ref).filter(|git_ref| {
                 git_ref.len() == 40 && git_ref.bytes().all(|byte| byte.is_ascii_hexdigit())
             });
-            let version = ref_version(workflow, &route, reference.git_ref);
             Some(Pin {
                 route,
                 location,
                 owner: reference.owner,
                 repo: reference.repo,
                 sha,
-                version,
+                git_ref: reference.git_ref,
             })
         })
         .collect()
@@ -123,11 +128,22 @@ pub(super) fn ref_version(workflow: &Workflow, route: &Route, git_ref: &str) -> 
 
 /// The first word of the YAML comment on a `uses` line, such as `v4.2.2` in `# v4.2.2`.
 fn comment_version(workflow: &Workflow, route: &Route) -> Option<String> {
-    let feature = workflow.document.query_pretty(route).ok()?;
-    let comments = workflow.document.feature_comments(&feature);
-    let text = workflow.document.extract(comments.first()?);
-    let word = text.trim_start_matches('#').split_whitespace().next()?;
-    is_version(word).then(|| word.to_owned())
+    // `Route` has no `Eq`; its debug form names one route.
+    let key = format!("{route:?}");
+    let mut known = workflow
+        .comment_versions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    known
+        .entry(key)
+        .or_insert_with(|| {
+            let feature = workflow.document.query_pretty(route).ok()?;
+            let comments = workflow.document.feature_comments(&feature);
+            let text = workflow.document.extract(comments.first()?);
+            let word = text.trim_start_matches('#').split_whitespace().next()?;
+            is_version(word).then(|| word.to_owned())
+        })
+        .clone()
 }
 
 fn is_version(text: &str) -> bool {
@@ -162,16 +178,22 @@ pub fn vulnerable(
         .collect();
     let mut findings = Vec::new();
     for pin in pins(workflow) {
-        let Some(version) = &pin.version else {
+        let Some(version) = &pin.version(workflow) else {
+            continue;
+        };
+        let Ok(resolved) = release_version(github, &pin, version) else {
             continue;
         };
         let path = format!(
             "/advisories?ecosystem=actions&affects={}/{}@{}",
             pin.owner,
             pin.repo,
-            version.trim_start_matches('v')
+            resolved.trim_start_matches('v')
         );
-        let advisories = github.get(&path)?.unwrap_or_default();
+        let Ok(advisories) = github.get(&path) else {
+            continue;
+        };
+        let advisories = advisories.unwrap_or_default();
         let ids: Vec<&str> = advisories
             .as_array()
             .into_iter()
@@ -180,16 +202,88 @@ pub fn vulnerable(
             .filter(|id| !allowed.contains(id))
             .collect();
         if !ids.is_empty() {
+            let named = if resolved == *version {
+                version.clone()
+            } else {
+                format!("{version} ({resolved})")
+            };
             findings.push(common::finding(
                 workflow,
                 &VULNERABLE,
                 pin.route,
                 pin.location,
-                format!("{version} is affected by {}", ids.join(", ")),
+                format!("{named} is affected by {}", ids.join(", ")),
             )?);
         }
     }
     Ok(findings)
+}
+
+/// The full release a partial version such as `v4` stands for: the `vX.Y.Z` tag on the same
+/// commit. The advisories API reads `@4` as 4.0.0, so `actions/download-artifact@4` matched
+/// GHSA-cxww-7g56-2vh6 (`>= 4.0.0, < 4.1.3`) although `v4` points at a fixed 4.x release
+/// (`gh api '/advisories?ecosystem=actions&affects=actions/download-artifact@4'`, 2026-10-03).
+/// The version stays as written when no full tag shares its commit.
+fn release_version(github: &GitHub, pin: &Pin, version: &str) -> Result<String, ApiError> {
+    let wanted = numbers(version);
+    if wanted.len() >= 3 {
+        return Ok(version.to_owned());
+    }
+    let mut tags: Vec<(String, String)> = Vec::new();
+    each_tag(github, pin.owner, pin.repo, |name, sha| {
+        tags.push((name.to_owned(), sha.to_ascii_lowercase()));
+        ControlFlow::Continue(())
+    })?;
+    let commit = match pin.sha {
+        Some(sha) => Some(sha.to_ascii_lowercase()),
+        None => tags
+            .iter()
+            .find(|(name, _)| name == version)
+            .map(|(_, sha)| sha.clone()),
+    };
+    Ok(tags
+        .iter()
+        .filter(|(name, sha)| {
+            let found = numbers(name);
+            Some(sha) == commit.as_ref() && found.len() >= 3 && found.starts_with(&wanted)
+        })
+        .max_by_key(|(name, _)| numbers(name))
+        .map_or_else(|| version.to_owned(), |(name, _)| name.clone()))
+}
+
+const TAGS_PER_PAGE: usize = 100;
+
+/// Visits the repository's tags as `(name, commit SHA)` until `visit` breaks, one request per
+/// 100 tags: https://docs.github.com/en/rest/repos/repos#list-repository-tags
+fn each_tag(
+    github: &GitHub,
+    owner: &str,
+    repo: &str,
+    mut visit: impl FnMut(&str, &str) -> ControlFlow<()>,
+) -> Result<(), ApiError> {
+    for page in 1.. {
+        let tags = github
+            .get(&format!(
+                "/repos/{owner}/{repo}/tags?per_page={TAGS_PER_PAGE}&page={page}"
+            ))?
+            .unwrap_or_default();
+        let tags = tags.as_array().map_or(&[][..], Vec::as_slice);
+        for tag in tags {
+            let name = tag.get("name").and_then(|name| name.as_str());
+            let sha = tag
+                .get("commit")
+                .and_then(|commit| commit.get("sha")?.as_str());
+            if let (Some(name), Some(sha)) = (name, sha)
+                && visit(name, sha).is_break()
+            {
+                return Ok(());
+            }
+        }
+        if tags.len() < TAGS_PER_PAGE {
+            break;
+        }
+    }
+    Ok(())
 }
 
 pub fn outdated(
@@ -199,13 +293,15 @@ pub fn outdated(
 ) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
-        let Some(version) = &pin.version else {
+        let Some(version) = &pin.version(workflow) else {
             continue;
         };
-        let latest = github.get(&format!(
+        let Ok(latest) = github.get(&format!(
             "/repos/{}/{}/releases/latest",
             pin.owner, pin.repo
-        ))?;
+        )) else {
+            continue;
+        };
         let Some(latest) = latest
             .as_ref()
             .and_then(|release| release.get("tag_name")?.as_str())
@@ -235,13 +331,15 @@ pub fn comment_mismatch(
 ) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
-        let (Some(sha), Some(version)) = (pin.sha, &pin.version) else {
+        let (Some(sha), Some(version)) = (pin.sha, pin.version(workflow)) else {
             continue;
         };
-        let tagged = github.get(&format!(
+        let Ok(tagged) = github.get(&format!(
             "/repos/{}/{}/commits/{version}",
             pin.owner, pin.repo
-        ))?;
+        )) else {
+            continue;
+        };
         let message = match tagged
             .as_ref()
             .and_then(|commit| commit.get("sha")?.as_str())
@@ -271,7 +369,7 @@ pub fn impostor(
     let mut findings = Vec::new();
     for pin in pins(workflow) {
         let Some(sha) = pin.sha else { continue };
-        let Some(repository) = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo))? else {
+        let Ok(Some(repository)) = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo)) else {
             continue;
         };
         let Some(branch) = repository
@@ -280,28 +378,31 @@ pub fn impostor(
         else {
             continue;
         };
-        // ponytail: Checks the default branch and the first page of tags; walk every
-        // branch when release branches produce false positives.
-        let comparison = github.get(&format!(
+        // ponytail: Checks the default branch and every tag; walk every branch when release
+        // branches produce false positives.
+        let Ok(comparison) = github.get(&format!(
             "/repos/{}/{}/compare/{branch}...{sha}",
             pin.owner, pin.repo
-        ))?;
+        )) else {
+            continue;
+        };
         let on_branch = comparison
             .as_ref()
             .and_then(|comparison| comparison.get("status")?.as_str())
             .is_some_and(|status| matches!(status, "behind" | "identical"));
-        let tags = github
-            .get(&format!(
-                "/repos/{}/{}/tags?per_page=100",
-                pin.owner, pin.repo
-            ))?
-            .unwrap_or_default();
-        let tagged = tags.as_array().into_iter().flatten().any(|tag| {
-            tag.get("commit")
-                .and_then(|commit| commit.get("sha")?.as_str())
-                .is_some_and(|tagged| tagged.eq_ignore_ascii_case(sha))
+        if on_branch {
+            continue;
+        }
+        let mut tagged = false;
+        let walked = each_tag(github, pin.owner, pin.repo, |_, tagged_sha| {
+            tagged = tagged_sha.eq_ignore_ascii_case(sha);
+            if tagged {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
         });
-        if !on_branch && !tagged {
+        if walked.is_ok() && !tagged {
             findings.push(common::finding(
                 workflow,
                 &IMPOSTOR,
@@ -324,7 +425,9 @@ pub fn archived(
 ) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for pin in pins(workflow) {
-        let repository = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo))?;
+        let Ok(repository) = github.get(&format!("/repos/{}/{}", pin.owner, pin.repo)) else {
+            continue;
+        };
         if repository
             .as_ref()
             .and_then(|repository| repository.get("archived")?.as_bool())
@@ -382,12 +485,32 @@ pub fn archived_offline(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         .collect()
 }
 
-pub fn settings(github: &GitHub, repository: &str, path: &Path) -> Result<Vec<Located>, String> {
-    let Some(workflow) =
-        github.get(&format!("/repos/{repository}/actions/permissions/workflow"))?
-    else {
-        return Ok(Vec::new());
-    };
+/// A denied read (403, or 404 for a repository the token cannot see) comes back with
+/// `ApiError::denied`, so the caller can skip this rule instead of failing the scan.
+pub fn settings(github: &GitHub, repository: &str, path: &Path) -> Result<Vec<Located>, ApiError> {
+    // The endpoint needs the Administration (read) repository permission
+    // (https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens#repository-permissions-for-administration)
+    // or a classic token's `repo` scope (https://docs.github.com/en/rest/actions/permissions#get-default-workflow-permissions-for-a-repository).
+    // GITHUB_TOKEN cannot be granted Administration, so in Actions this read is usually denied.
+    let endpoint = format!("/repos/{repository}/actions/permissions/workflow");
+    let workflow = github
+        .request(&endpoint)
+        .and_then(|found| {
+            found.ok_or_else(|| ApiError {
+                status: Some(404),
+                rate_limited: false,
+                message: format!("GitHub API {endpoint}: HTTP 404"),
+            })
+        })
+        .map_err(|mut error| {
+            if error.denied() {
+                error.message.push_str(
+                    "; reading Actions settings needs a token with the Administration (read) \
+                     repository permission, which GITHUB_TOKEN cannot be granted",
+                );
+            }
+            error
+        })?;
     let mut problems = Vec::new();
     if workflow
         .get("default_workflow_permissions")

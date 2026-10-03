@@ -100,7 +100,7 @@ pub fn unpinned_package(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     step.key("run"),
                     step.location.clone(),
                     format!(
-                        "`{}` installs a package without a version",
+                        "`{}` installs a package without an exact version",
                         command.join(" ")
                     ),
                 )?);
@@ -251,17 +251,19 @@ fn is_local_or_url(argument: &str) -> bool {
             .any(|suffix| argument.ends_with(suffix))
 }
 
-/// A version or range after the name; a dist-tag such as `latest` or `next` moves.
+/// An exact `major.minor.patch` version after the name, with optional prerelease or build
+/// metadata. Dist-tags (`latest`), wildcards (`*`, `1.x`), partial versions, and ranges move.
 fn has_npm_version(package: &str) -> bool {
-    package
-        .rfind('@')
-        .filter(|index| *index > 0)
-        .is_some_and(|index| {
-            let version = &package[index + 1..];
-            !version.starts_with(|c: char| c.is_ascii_alphabetic())
-                || version.starts_with('v')
-                    && version[1..].starts_with(|c: char| c.is_ascii_digit())
-        })
+    let Some(index) = package.rfind('@').filter(|index| *index > 0) else {
+        return false;
+    };
+    let version = package[index + 1..].trim_start_matches(['v', '=']);
+    let core = version.split(['-', '+']).next().unwrap_or("");
+    let numbers: Vec<&str> = core.split('.').collect();
+    numbers.len() == 3
+        && numbers
+            .iter()
+            .all(|number| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {
@@ -269,7 +271,9 @@ pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
-            if script.lines().any(pipes_download_to_interpreter) {
+            // A trailing `\` or `|` continues the command on the next line.
+            let joined = script.replace("\\\n", " ").replace("|\n", "| ");
+            if joined.lines().any(pipes_download_to_interpreter) {
                 findings.push(common::finding(
                     workflow,
                     &REMOTE_SCRIPT,
@@ -283,9 +287,41 @@ pub fn remote_script(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-const INTERPRETERS: &[&str] = &[
-    "sh", "bash", "zsh", "dash", "ksh", "python", "python3", "perl", "ruby", "node",
+/// Interpreters and the short options that make them run code from an argument, leaving stdin as
+/// data (`bash -c`, `python3 -c`/`-m`, `perl -ne`, `node -e`/`-p`). `bash -s` still runs stdin.
+const INTERPRETERS: &[(&str, &[char])] = &[
+    ("sh", &['c']),
+    ("bash", &['c']),
+    ("zsh", &['c']),
+    ("dash", &['c']),
+    ("ksh", &['c']),
+    ("python", &['c', 'm']),
+    ("python3", &['c', 'm']),
+    ("perl", &['e', 'E']),
+    ("ruby", &['e']),
+    ("node", &['e', 'p']),
 ];
+
+/// Whether the command in `segment` is an interpreter that executes its stdin.
+fn runs_stdin(segment: &str) -> bool {
+    let mut words = segment
+        .split_whitespace()
+        .skip_while(|word| *word == "sudo" || word.starts_with('-'));
+    let program = words.next().unwrap_or("");
+    let Some((_, code_options)) = INTERPRETERS
+        .iter()
+        .find(|(name, _)| *name == program.rsplit('/').next().unwrap_or(program))
+    else {
+        return false;
+    };
+    !words.take_while(|word| *word != "--").any(|word| {
+        matches!(word, "--eval" | "--print")
+            || word.len() > 1
+                && word.starts_with('-')
+                && !word.starts_with("--")
+                && word.contains(*code_options)
+    })
+}
 
 fn pipes_download_to_interpreter(line: &str) -> bool {
     let downloads = |text: &str| text.contains("curl") || text.contains("wget");
@@ -305,11 +341,7 @@ fn pipes_download_to_interpreter(line: &str) -> bool {
     };
     let mut downloaded = downloads(first);
     for segment in segments {
-        let program = segment
-            .split_whitespace()
-            .find(|word| *word != "sudo" && !word.starts_with('-'))
-            .unwrap_or("");
-        if downloaded && INTERPRETERS.contains(&program.rsplit('/').next().unwrap_or(program)) {
+        if downloaded && runs_stdin(segment) {
             return true;
         }
         downloaded = downloaded || downloads(segment);
