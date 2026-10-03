@@ -1191,6 +1191,50 @@ fn repository_roots_and_several_inputs_are_collected_like_zizmor() {
     );
 }
 
+#[test]
+fn ignore_entries_with_a_malformed_position_are_config_errors() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("crosgha-ignore-{}-{unique}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let scan = |entry: &str| {
+        let config = root.join("zizmor.yml");
+        fs::write(
+            &config,
+            format!("rules:\n  template-injection:\n    ignore:\n      - \"{entry}\"\n"),
+        )
+        .unwrap();
+        bin()
+            .args(["--offline", "--fail-on", "none", "--config"])
+            .arg(&config)
+            .arg(fixture("repos/configured/.github/workflows"))
+            .output()
+            .unwrap()
+    };
+    // Line 14 is one of two script injections in ci.yml; a bad position must not hide both.
+    for entry in [
+        "ci.yml:L14",
+        "ci.yml:",
+        "ci.yml:14x",
+        "ci.yml:14:x",
+        "ci.yml:14:9:1",
+    ] {
+        let output = scan(entry);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(2), "{entry}: {stderr}");
+        assert!(stderr.contains(&format!("`{entry}`")), "{entry}: {stderr}");
+    }
+    let valid = scan("ci.yml:14:9");
+    assert!(valid.status.success());
+    let report = String::from_utf8(valid.stdout).unwrap();
+    let injections = diagnostics(&report, "script-injection");
+    fs::remove_dir_all(&root).unwrap();
+    assert_eq!(injections.len(), 1, "{report}");
+    assert!(injections[0].1.contains("ci.yml:15:"), "{report}");
+}
+
 /// A throwaway repository whose git ignores the user's global and system config (hooksPath, signing).
 fn git_repo(name: &str) -> PathBuf {
     let unique = SystemTime::now()

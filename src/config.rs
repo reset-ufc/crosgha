@@ -50,6 +50,17 @@ pub fn severity(name: &str) -> Option<Severity> {
     }
 }
 
+/// A malformed position is `None`, never "any line": that would silence the whole file.
+fn ignore_entry(entry: &str) -> Option<(String, Option<usize>)> {
+    let mut parts = entry.split(':');
+    let file = parts.next()?.to_owned();
+    let line = parts.next().map(str::parse).transpose().ok()?;
+    if let Some(column) = parts.next() {
+        column.parse::<usize>().ok()?;
+    }
+    parts.next().is_none().then_some((file, line))
+}
+
 impl Config {
     /// The first config file found walking up from `input`, stopping at the Git root. A
     /// `.github/workflows` input starts two levels up so a workflow named `zizmor.yml` is never
@@ -98,11 +109,14 @@ impl Config {
                 .flatten()
                 .filter_map(Value::as_str)
                 .map(|entry| {
-                    let mut parts = entry.split(':');
-                    let file = parts.next().unwrap_or_default().to_owned();
-                    (file, parts.next().and_then(|line| line.parse().ok()))
+                    ignore_entry(entry).ok_or_else(|| {
+                        describe(format!(
+                            "`rules.{id}.ignore` entry `{entry}` is not `file`, `file:line`, or \
+                             `file:line:column`"
+                        ))
+                    })
                 })
-                .collect();
+                .collect::<Result<_, _>>()?;
             let remapped = settings
                 .get("remap")
                 .and_then(|remap| remap.get("severity"))
