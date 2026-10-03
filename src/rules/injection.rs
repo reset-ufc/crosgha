@@ -458,7 +458,8 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 
 /// Whether `condition` runs something because the actor is a bot: `==`, `contains`,
 /// `startsWith`, or `endsWith` matching `github.actor` or `github.triggering_actor` with a
-/// `[bot]` name. A spoofed actor fails a `!=` or negated check, which only skips the work.
+/// `[bot]` name. A spoofed actor fails a `!=` or negated check, which only skips the work; a
+/// check is negated by an odd number of `!` or `== false` around its enclosing groups.
 fn trusts_bot_actor(condition: &str) -> bool {
     let text = condition.to_ascii_lowercase();
     ["github.actor", "github.triggering_actor"]
@@ -476,36 +477,52 @@ fn trusts_bot_actor(condition: &str) -> bool {
         .any(|(start, end)| {
             let before = text[..start].trim_end();
             let after = text[end..].trim_start();
+            let positive = negations(&text, start).is_multiple_of(2);
             if let Some(operand) = after.strip_prefix("==") {
-                return leading_literal(operand.trim_start()).contains("[bot]");
+                return positive && leading_literal(operand.trim_start()).contains("[bot]");
             }
             if let Some(operand) = before.strip_suffix("==") {
                 let operand = operand.trim_end();
                 let literal = operand
                     .strip_suffix('\'')
                     .and_then(|rest| rest.rfind('\'').map(|open| &rest[open..]));
-                return literal.is_some_and(|literal| literal.contains("[bot]"));
+                return positive && literal.is_some_and(|literal| literal.contains("[bot]"));
             }
             if after.starts_with("!=") || before.ends_with("!=") {
                 return false;
             }
-            enclosing_call(&text, start).is_some_and(|(name, call, negated)| {
-                ["contains", "startswith", "endswith"].contains(&name)
-                    && !negated
-                    && call.contains("[bot]")
-            })
+            positive
+                && enclosing_call(&text, start).is_some_and(|(name, call)| {
+                    ["contains", "startswith", "endswith"].contains(&name) && call.contains("[bot]")
+                })
         })
 }
 
-/// The single-quoted literal that `text` starts with, or "" when it starts with something else.
-fn leading_literal(text: &str) -> &str {
-    text.strip_prefix('\'')
-        .and_then(|rest| rest.find('\'').map(|close| &rest[..close]))
-        .unwrap_or("")
+/// How many of the parenthesized groups and calls around `text[at]` are negated by a leading
+/// `!`, a trailing `== false` or `!= true`, or a leading `false ==` or `true !=`.
+fn negations(text: &str, mut at: usize) -> usize {
+    let mut count = 0;
+    while let Some((open, close)) = enclosing_group(text, at) {
+        let head = text[..open].trim_end();
+        let name_start = head
+            .rfind(|char: char| !(char.is_ascii_alphanumeric() || char == '_'))
+            .map_or(0, |index| index + 1);
+        let before = head[..name_start].trim_end();
+        let after = text[close + 1..].trim_start();
+        let compared_false = ["== false", "!= true"]
+            .iter()
+            .any(|suffix| after.starts_with(suffix))
+            || ["false ==", "true !="]
+                .iter()
+                .any(|prefix| before.ends_with(prefix));
+        count += usize::from(before.ends_with('!')) + usize::from(compared_false);
+        at = name_start;
+    }
+    count
 }
 
-/// Name, full text, and `!` negation of the innermost function call around `text[at]`.
-fn enclosing_call(text: &str, at: usize) -> Option<(&str, &str, bool)> {
+/// Byte offsets of the `(` and `)` of the innermost group around `text[at]`.
+fn enclosing_group(text: &str, at: usize) -> Option<(usize, usize)> {
     let mut depth = 0;
     let open = text[..at].char_indices().rev().find_map(|(index, char)| {
         match char {
@@ -526,12 +543,24 @@ fn enclosing_call(text: &str, at: usize) -> Option<(&str, &str, bool)> {
         }
         None
     })?;
+    Some((open, close))
+}
+
+/// The single-quoted literal that `text` starts with, or "" when it starts with something else.
+fn leading_literal(text: &str) -> &str {
+    text.strip_prefix('\'')
+        .and_then(|rest| rest.find('\'').map(|close| &rest[..close]))
+        .unwrap_or("")
+}
+
+/// Name and full text of the innermost function call around `text[at]`.
+fn enclosing_call(text: &str, at: usize) -> Option<(&str, &str)> {
+    let (open, close) = enclosing_group(text, at)?;
     let head = text[..open].trim_end();
     let name_start = head
         .rfind(|char: char| !(char.is_ascii_alphanumeric() || char == '_'))
         .map_or(0, |index| index + 1);
-    let negated = head[..name_start].trim_end().ends_with('!');
-    Some((&head[name_start..], &text[name_start..=close], negated))
+    Some((&head[name_start..], &text[name_start..=close]))
 }
 
 fn single_expression(text: &str) -> bool {
