@@ -3,10 +3,14 @@
 //! https://docs.zizmor.sh/configuration/
 
 use std::{
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
+use serde::{
+    Deserialize, Deserializer,
+    de::{MapAccess, Visitor},
+};
 use yaml_serde::Value;
 
 use crate::{
@@ -64,6 +68,105 @@ fn ignore_entry(entry: &str) -> Option<(String, Option<usize>)> {
     parts.next().is_none().then_some((file, line))
 }
 
+// zizmor rejects unknown keys at every level of its schema
+// (https://docs.zizmor.sh/configuration/#json-schema), so a typo cannot leave a rule silently
+// enabled. `null` is read as an absent key.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a mapping with a `rules` key")]
+struct File {
+    rules: Option<Rules>,
+}
+
+/// Rule entries in file order, so the first key that names a rule wins.
+struct Rules(Vec<(String, Option<Settings>)>);
+
+impl<'de> Deserialize<'de> for Rules {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Entries;
+        impl<'de> Visitor<'de> for Entries {
+            type Value = Rules;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a mapping of rule IDs")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Rules, A::Error> {
+                let mut rules = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    rules.push(entry);
+                }
+                Ok(Rules(rules))
+            }
+        }
+        deserializer.deserialize_map(Entries)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a mapping of rule settings")]
+struct Settings {
+    disable: Option<bool>,
+    ignore: Option<Vec<Ignore>>,
+    remap: Option<Remap>,
+    config: Option<yaml_serde::Mapping>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Remap {
+    severity: Option<Remapped>,
+}
+
+#[derive(Deserialize)]
+#[serde(try_from = "Value")]
+struct Remapped(Severity);
+
+impl TryFrom<Value> for Remapped {
+    type Error = String;
+
+    fn try_from(value: Value) -> Result<Self, String> {
+        value
+            .as_str()
+            .and_then(severity)
+            .map(Remapped)
+            .ok_or_else(|| "`severity` must be informational, low, medium, or high".to_owned())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(try_from = "Value")]
+struct Ignore((String, Option<usize>));
+
+impl TryFrom<Value> for Ignore {
+    type Error = String;
+
+    fn try_from(value: Value) -> Result<Self, String> {
+        let entry = value.as_str().ok_or("entries must be strings")?;
+        ignore_entry(entry).map(Ignore).ok_or_else(|| {
+            format!("entry `{entry}` is not `file`, `file:line`, or `file:line:column`")
+        })
+    }
+}
+
+impl From<Settings> for RuleConfig {
+    fn from(settings: Settings) -> Self {
+        RuleConfig {
+            disable: settings.disable.unwrap_or(false),
+            ignore: settings
+                .ignore
+                .into_iter()
+                .flatten()
+                .map(|Ignore(entry)| entry)
+                .collect(),
+            severity: settings
+                .remap
+                .and_then(|remap| remap.severity)
+                .map(|Remapped(severity)| severity),
+            options: settings.config.map(Value::Mapping),
+        }
+    }
+}
+
 impl Config {
     /// The first config file found walking up from `input`, stopping at the Git root. A
     /// repository root, its `.github`, its `.github/workflows`, and a workflow in it all start at
@@ -108,113 +211,17 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self, String> {
         let describe = |error: String| format!("config `{}`: {error}", path.display());
         let source = fs::read_to_string(path).map_err(|error| describe(error.to_string()))?;
-        let value: Value =
+        let file: Option<File> =
             yaml_serde::from_str(&source).map_err(|error| describe(error.to_string()))?;
-        let mut config = Self::default();
-        // zizmor rejects unknown keys at every level of its schema
-        // (https://docs.zizmor.sh/configuration/#json-schema), so a typo cannot leave a rule
-        // silently enabled. `null` is read as an absent key.
-        let known = |value: &Value, at: &str, keys: &[&str]| -> Result<(), String> {
-            let unknown = value
-                .as_mapping()
+        let rules = file
+            .and_then(|file| file.rules)
+            .map_or_else(Vec::new, |Rules(rules)| rules);
+        Ok(Self {
+            rules: rules
                 .into_iter()
-                .flatten()
-                .map(|(key, _)| key.as_str().unwrap_or("?"))
-                .find(|key| !keys.contains(key));
-            match unknown {
-                Some(key) => Err(describe(format!(
-                    "unknown key `{at}{key}`; expected {}",
-                    keys.join(", ")
-                ))),
-                None => Ok(()),
-            }
-        };
-        let present = |value: &Value, key: &str| value.get(key).cloned().filter(|v| !v.is_null());
-        match &value {
-            Value::Null => return Ok(config),
-            Value::Mapping(_) => known(&value, "", &["rules"])?,
-            _ => {
-                return Err(describe(
-                    "the config must be a mapping with a `rules` key".to_owned(),
-                ));
-            }
-        }
-        let rules = match present(&value, "rules") {
-            None => return Ok(config),
-            Some(Value::Mapping(rules)) => rules,
-            Some(_) => return Err(describe("`rules` must be a mapping of rule IDs".to_owned())),
-        };
-        for (id, settings) in &rules {
-            let Some(id) = id.as_str() else {
-                return Err(describe("`rules` keys must be rule IDs".to_owned()));
-            };
-            if !(settings.is_null() || settings.is_mapping()) {
-                return Err(describe(format!("`rules.{id}` must be a mapping")));
-            }
-            known(
-                settings,
-                &format!("rules.{id}."),
-                &["disable", "ignore", "remap", "config"],
-            )?;
-            let disable = match present(settings, "disable") {
-                None => false,
-                Some(Value::Bool(disable)) => disable,
-                Some(_) => {
-                    return Err(describe(format!(
-                        "`rules.{id}.disable` must be true or false"
-                    )));
-                }
-            };
-            let ignore = match present(settings, "ignore") {
-                None => Vec::new(),
-                Some(Value::Sequence(entries)) => entries
-                    .iter()
-                    .map(|entry| {
-                        let entry = entry.as_str().ok_or_else(|| {
-                            describe(format!("`rules.{id}.ignore` entries must be strings"))
-                        })?;
-                        ignore_entry(entry).ok_or_else(|| {
-                            describe(format!(
-                                "`rules.{id}.ignore` entry `{entry}` is not `file`, \
-                                 `file:line`, or `file:line:column`"
-                            ))
-                        })
-                    })
-                    .collect::<Result<_, _>>()?,
-                Some(_) => return Err(describe(format!("`rules.{id}.ignore` must be a list"))),
-            };
-            let remapped = match present(settings, "remap") {
-                None => None,
-                Some(remap @ Value::Mapping(_)) => {
-                    known(&remap, &format!("rules.{id}.remap."), &["severity"])?;
-                    present(&remap, "severity")
-                }
-                Some(_) => return Err(describe(format!("`rules.{id}.remap` must be a mapping"))),
-            };
-            let severity = match remapped {
-                None => None,
-                Some(name) => Some(name.as_str().and_then(severity).ok_or_else(|| {
-                    describe(format!(
-                        "`rules.{id}.remap.severity` must be informational, low, medium, or high"
-                    ))
-                })?),
-            };
-            let options = match present(settings, "config") {
-                None => None,
-                Some(options @ Value::Mapping(_)) => Some(options),
-                Some(_) => return Err(describe(format!("`rules.{id}.config` must be a mapping"))),
-            };
-            config.rules.push((
-                id.to_owned(),
-                RuleConfig {
-                    disable,
-                    ignore,
-                    severity,
-                    options,
-                },
-            ));
-        }
-        Ok(config)
+                .map(|(id, settings)| (id, settings.map(RuleConfig::from).unwrap_or_default()))
+                .collect(),
+        })
     }
 
     fn entries(&self, rule: &'static Rule) -> impl Iterator<Item = &RuleConfig> {

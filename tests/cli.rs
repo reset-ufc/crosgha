@@ -2062,22 +2062,22 @@ fn config_keys_with_a_wrong_type_or_an_unknown_name_are_config_errors() {
         ),
         (
             "rules:\n  artipacked:\n    disabled: true\n",
-            "rules.artipacked.disabled",
+            "rules.artipacked: unknown field `disabled`",
         ),
         (
             "rules:\n  artipacked:\n    remap:\n      severity: hihg\n",
-            "rules.artipacked.remap.severity",
+            "rules.artipacked.remap: `severity` must be",
         ),
         (
             "rules:\n  artipacked:\n    remap:\n      level: high\n",
-            "rules.artipacked.remap.level",
+            "rules.artipacked.remap: unknown field `level`",
         ),
         (
             "rules:\n  artipacked:\n    config: 3\n",
             "rules.artipacked.config",
         ),
         ("rules:\n  artipacked: true\n", "rules.artipacked"),
-        ("rules:\n  - artipacked\n", "`rules`"),
+        ("rules:\n  - artipacked\n", "rules: invalid type: sequence"),
         ("rule:\n  artipacked:\n    disable: true\n", "`rule`"),
         ("- rules\n", "mapping"),
     ];
