@@ -22,3 +22,8 @@ jobs:
       - run: |
           if test -n "$(git status --porcelain)"; then exit 1; fi
           [ -s dist/index.js ] && ! test -L dist/index.js
+      # Conditions that name a tests directory and installs of test tools run no tests.
+      - run: test -d tests || mkdir build
+      - run: if [ -d tests/fixtures ]; then make fixtures; fi
+      - run: pip install pytest==8.0.0 tox==4.18.0
+      - run: npm i -D jest@29.7.0

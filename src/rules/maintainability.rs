@@ -301,8 +301,7 @@ fn runs_tests(job: &common::Job<'_>) -> bool {
             script
                 .split(['\n', ';', '&', '|', '(', ')', '`'])
                 .any(|command| {
-                    // `test` in command position is the shell's condition builtin, not a test runner.
-                    let mut words = command
+                    let words: Vec<&str> = command
                         .split_whitespace()
                         .skip_while(|word| {
                             matches!(
@@ -310,9 +309,18 @@ fn runs_tests(job: &common::Job<'_>) -> bool {
                                 "if" | "then" | "elif" | "while" | "until" | "do" | "!" | "{"
                             )
                         })
-                        .peekable();
-                    words.next_if_eq(&"test");
-                    words.any(|word| {
+                        .collect();
+                    // `test` and `[` in command position are the shell's condition builtins, and
+                    // installing a test tool does not run it.
+                    let installs = words.contains(&"install")
+                        || matches!(
+                            words.as_slice(),
+                            ["npm" | "pnpm" | "yarn" | "bun", "add" | "i", ..]
+                        );
+                    if installs || matches!(words.first(), Some(&"test" | &"[")) {
+                        return false;
+                    }
+                    words.iter().any(|word| {
                         word.split(|c: char| !c.is_ascii_alphanumeric())
                             .any(|word| TEST_COMMANDS.contains(&word))
                     })
