@@ -78,7 +78,7 @@ repository="$(sed -n 's|^repository = "https://github.com/\(.*\)"$|\1|p' "$manif
 base="${CROSGHA_RELEASE_BASE:-https://github.com/$repository/releases/download}"
 protocol='=https'
 # Tests serve a local release over plain HTTP; nothing else may.
-[[ "$base" == http://127.0.0.1:* ]] && protocol='=http'
+[[ "$base" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] && protocol='=http'
 
 asset=crosgha-x86_64-unknown-linux-gnu.tar.xz
 install_dir="$RUNNER_TEMP/crosgha-$version"

@@ -24,7 +24,10 @@ main() {
     base="${CROSGHA_RELEASE_BASE:-https://github.com/meiazero/crosgha/releases}"
     protocol='=https'
     # Tests serve a local release over plain HTTP; nothing else may.
-    case "$base" in http://127.0.0.1:*) protocol='=http' ;; esac
+    case "$base" in
+        http://127.0.0.1:|http://127.0.0.1:*[!0-9]*) ;;
+        http://127.0.0.1:*) protocol='=http' ;;
+    esac
     version="${CROSGHA_VERSION:-}"
     if [ -n "$version" ]; then
         version="v${version#v}"

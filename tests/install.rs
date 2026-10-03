@@ -145,6 +145,25 @@ fn install_keeps_the_working_binary_when_the_new_one_cannot_run() {
 }
 
 #[test]
+fn install_uses_plain_http_only_for_a_bare_loopback_origin() {
+    let (root, base) = github_release(release(VERSION, false));
+    let home = temp_dir("home");
+    // Userinfo makes the URL start like the test origin while naming another host.
+    let disguised = base.replacen("http://", "http://127.0.0.1:1@", 1);
+    let output = install(&disguised, &home, &std::env::var("PATH").unwrap(), &[]);
+    assert!(!output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("cannot download"),
+        "{}",
+        text(&output)
+    );
+    assert!(!home.join(".local/bin/crosgha").exists());
+
+    fs::remove_dir_all(home).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn install_refuses_platforms_without_a_release_binary() {
     let home = temp_dir("home");
     // A fake `uname` first on PATH reports an Apple silicon Mac.

@@ -140,3 +140,21 @@ fn action_can_tolerate_missing_inputs() {
     fs::remove_dir_all(empty).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn action_uses_plain_http_only_for_a_bare_loopback_origin() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+    // Userinfo makes the URL start like the test origin while naming another host.
+    let disguised = base.replacen("http://", "http://127.0.0.1:1@", 1);
+    let run = run_action(&disguised, ".", &[]);
+    assert!(!run.output.status.success());
+    assert!(
+        String::from_utf8_lossy(&run.output.stderr).contains("cannot download"),
+        "{}",
+        String::from_utf8_lossy(&run.output.stderr)
+    );
+    assert_eq!(run.outputs, "");
+    fs::remove_dir_all(&run.temp).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
