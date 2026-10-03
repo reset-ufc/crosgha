@@ -1,0 +1,5 @@
+# Read by the `labels` job; GitHub does not load subdirectories of .github/workflows.
+- name: bug
+  color: d73a4a
+- name: dependencies
+  color: 0366d6

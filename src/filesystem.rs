@@ -7,21 +7,29 @@ use std::{
 
 use crate::workflow::BOM;
 
+/// Workflow files of a file input, or the `.yml`/`.yaml` files directly inside a directory.
+/// GitHub reads workflows only from `.github/workflows` itself: "You must store workflow files in
+/// the `.github/workflows` directory of your repository"
+/// (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax), and
+/// "Subdirectories of the `workflows` directory are not supported"
+/// (https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows). So no
+/// directory is walked, and a repository root or its `.github` is scanned only through its
+/// workflows, as zizmor collects `.` inputs; the rest of a repository holds YAML that is not a
+/// workflow.
 pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mut workflows = Vec::new();
-    // A repository root or its `.github` is scanned through its workflows, as zizmor collects
-    // `.` inputs; `.github` also holds YAML that is not a workflow.
-    let workflows_dir = if is_github_dir(path) {
-        path.join("workflows")
+    let redirected = if is_github_dir(path) {
+        Some(path.join("workflows"))
+    } else if path.join(".github").is_dir() || path.join(".git").exists() {
+        Some(path.join(".github/workflows"))
     } else {
-        path.join(".github/workflows")
+        None
     };
-    let path = if workflows_dir.is_dir() {
-        workflows_dir.as_path()
-    } else {
-        path
-    };
-    collect(path, &mut workflows)?;
+    let path = redirected.as_deref().unwrap_or(path);
+    // A repository without `.github/workflows` has no workflow, which the error below says.
+    if redirected.is_none() || path.is_dir() {
+        collect(path, &mut workflows)?;
+    }
     workflows.sort();
     if workflows.is_empty() {
         return Err(format!(
@@ -57,12 +65,7 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
             .file_type()
             .map_err(|error| format!("cannot inspect `{}`: {error}", entry.path().display()))?;
 
-        if entry_type.is_dir() {
-            collect(&entry.path(), workflows)?;
-            continue;
-        }
-        // ponytail: Symlinked files are scanned like direct paths; symlinked
-        // directories are not followed, which avoids cycle detection for now.
+        // Symlinked files are scanned like direct paths.
         let is_file = entry_type.is_file()
             || (entry_type.is_symlink()
                 && entry.path().metadata().is_ok_and(|meta| meta.is_file()));

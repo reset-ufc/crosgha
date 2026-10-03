@@ -1269,6 +1269,40 @@ fn a_workflow_named_zizmor_yml_is_never_read_as_the_config() {
     );
 }
 
+#[test]
+fn only_files_directly_in_the_workflows_directory_are_scanned() {
+    // `config/labels.yml` is data read by a job; GitHub never loads it as a workflow.
+    let nested = fixture("repos/nested");
+    for input in [nested.clone(), nested.join(".github/workflows")] {
+        let output = bin().arg("--offline").arg(&input).output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            output.status.success(),
+            "{input:?}: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(stdout, "✓ Checked 1 workflow file: no findings.\n");
+    }
+
+    // A repository root without workflows is not searched for other YAML (action.yml, compose).
+    let output = bin()
+        .arg("--offline")
+        .arg(fixture("repos/action-only"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("no .yml or .yaml workflow files found in")
+            && stderr.contains(".github/workflows"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("missing required top-level key"),
+        "{stderr}"
+    );
+}
+
 /// A throwaway repository whose git ignores the user's global and system config (hooksPath, signing).
 fn git_repo(name: &str) -> PathBuf {
     let unique = SystemTime::now()

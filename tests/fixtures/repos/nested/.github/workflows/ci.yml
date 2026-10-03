@@ -1,0 +1,13 @@
+name: CI
+on:
+  pull_request:
+permissions: {}
+jobs:
+  labels:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+      - run: ./scripts/sync-labels .github/workflows/config/labels.yml
