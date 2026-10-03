@@ -165,11 +165,14 @@ pub fn vulnerable(
         let Some(version) = &pin.version else {
             continue;
         };
+        let Ok(resolved) = release_version(github, &pin, version) else {
+            continue;
+        };
         let path = format!(
             "/advisories?ecosystem=actions&affects={}/{}@{}",
             pin.owner,
             pin.repo,
-            version.trim_start_matches('v')
+            resolved.trim_start_matches('v')
         );
         let Ok(advisories) = github.get(&path) else {
             continue;
@@ -183,16 +186,53 @@ pub fn vulnerable(
             .filter(|id| !allowed.contains(id))
             .collect();
         if !ids.is_empty() {
+            let named = if resolved == *version {
+                version.clone()
+            } else {
+                format!("{version} ({resolved})")
+            };
             findings.push(common::finding(
                 workflow,
                 &VULNERABLE,
                 pin.route,
                 pin.location,
-                format!("{version} is affected by {}", ids.join(", ")),
+                format!("{named} is affected by {}", ids.join(", ")),
             )?);
         }
     }
     Ok(findings)
+}
+
+/// The full release a partial version such as `v4` stands for: the `vX.Y.Z` tag on the same
+/// commit. The advisories API reads `@4` as 4.0.0, so `actions/download-artifact@4` matched
+/// GHSA-cxww-7g56-2vh6 (`>= 4.0.0, < 4.1.3`) although `v4` points at a fixed 4.x release
+/// (`gh api '/advisories?ecosystem=actions&affects=actions/download-artifact@4'`, 2026-10-03).
+/// The version stays as written when no full tag shares its commit.
+fn release_version(github: &GitHub, pin: &Pin, version: &str) -> Result<String, ApiError> {
+    let wanted = numbers(version);
+    if wanted.len() >= 3 {
+        return Ok(version.to_owned());
+    }
+    let mut tags: Vec<(String, String)> = Vec::new();
+    each_tag(github, pin.owner, pin.repo, |name, sha| {
+        tags.push((name.to_owned(), sha.to_ascii_lowercase()));
+        ControlFlow::Continue(())
+    })?;
+    let commit = match pin.sha {
+        Some(sha) => Some(sha.to_ascii_lowercase()),
+        None => tags
+            .iter()
+            .find(|(name, _)| name == version)
+            .map(|(_, sha)| sha.clone()),
+    };
+    Ok(tags
+        .iter()
+        .filter(|(name, sha)| {
+            let found = numbers(name);
+            Some(sha) == commit.as_ref() && found.len() >= 3 && found.starts_with(&wanted)
+        })
+        .max_by_key(|(name, _)| numbers(name))
+        .map_or_else(|| version.to_owned(), |(name, _)| name.clone()))
 }
 
 const TAGS_PER_PAGE: usize = 100;

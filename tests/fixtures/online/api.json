@@ -39,6 +39,12 @@
   },
   "/repos/actions/checkout/tags?per_page=100&page=1": [
     {
+      "name": "v4",
+      "commit": {
+        "sha": "1111111111111111111111111111111111111111"
+      }
+    },
+    {
       "name": "v4.2.2",
       "commit": {
         "sha": "1111111111111111111111111111111111111111"
@@ -91,6 +97,23 @@
     "default_branch": "main",
     "archived": true
   },
+  "/advisories?ecosystem=actions&affects=actions/checkout@4.2.2": [],
+  "/advisories?ecosystem=actions&affects=example/moving@4": [
+    {
+      "ghsa_id": "GHSA-aaaa-bbbb-cccc"
+    }
+  ],
+  "/advisories?ecosystem=actions&affects=example/moving@4.0.0": [
+    {
+      "ghsa_id": "GHSA-aaaa-bbbb-cccc"
+    }
+  ],
+  "/advisories?ecosystem=actions&affects=example/moving@4.1.3": [],
+  "/repos/example/moving/tags?per_page=100&page=1": [
+    {"name": "v4", "commit": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+    {"name": "v4.1.3", "commit": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+    {"name": "v4.0.0", "commit": {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+  ],
   "/repos/example/many-tags": {
     "default_branch": "main",
     "archived": false
