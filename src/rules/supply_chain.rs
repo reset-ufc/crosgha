@@ -111,12 +111,43 @@ pub fn unpinned_package(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 }
 
 /// Shell commands split on newlines and control operators, without `sudo` and env assignments.
+/// A `${{ }}` expression stays inside one word, and quotes around a word are dropped.
 fn commands(script: &str) -> impl Iterator<Item = Vec<&str>> {
-    script
-        .split(['\n', ';', '|', '&'])
-        .map(|command| {
-            command
-                .split_whitespace()
+    let bytes = script.as_bytes();
+    let mut commands: Vec<Vec<&str>> = vec![Vec::new()];
+    let mut start = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index..].starts_with(b"${{") {
+            start.get_or_insert(index);
+            index = bytes[index..]
+                .windows(2)
+                .position(|pair| pair == b"}}")
+                .map_or(bytes.len(), |end| index + end + 2);
+            continue;
+        }
+        let byte = bytes[index];
+        if matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | b';' | b'|' | b'&') {
+            if let Some(begin) = start.take() {
+                commands.last_mut().unwrap().push(&script[begin..index]);
+            }
+            if matches!(byte, b'\n' | b';' | b'|' | b'&') {
+                commands.push(Vec::new());
+            }
+        } else {
+            start.get_or_insert(index);
+        }
+        index += 1;
+    }
+    if let Some(begin) = start {
+        commands.last_mut().unwrap().push(&script[begin..]);
+    }
+    commands
+        .into_iter()
+        .map(|words| {
+            words
+                .into_iter()
+                .map(|word| word.trim_matches(['"', '\'']))
                 .skip_while(|word| *word == "sudo" || word.contains('=') && !word.starts_with('-'))
                 .collect::<Vec<_>>()
         })
@@ -162,8 +193,29 @@ fn unpinned_install(words: &[&str]) -> bool {
             ],
         )
         .any(|package| !package.contains("==") && !is_local_or_url(package)),
-        ["npm" | "pnpm", "install" | "i" | "add", args @ ..]
-        | ["yarn", "global", "add", args @ ..] => arguments(args, &["--prefix", "--registry"])
+        // Options that take a value: npm's config definitions (workspaces/config/lib/definitions/
+        // definitions.js in npm/cli), and https://pnpm.io/pnpm-cli plus https://pnpm.io/cli/add,
+        // where `-w` and `--workspace` take none.
+        ["npm", "install" | "i" | "add", args @ ..] => arguments(
+            args,
+            &[
+                "--prefix",
+                "--registry",
+                "-w",
+                "--workspace",
+                "--loglevel",
+                "--omit",
+                "--include",
+                "--tag",
+            ],
+        )
+        .any(|package| !has_npm_version(package) && !is_local_or_url(package)),
+        ["pnpm", "install" | "i" | "add", args @ ..] => arguments(
+            args,
+            &["--registry", "--loglevel", "--filter", "-F", "--dir", "-C"],
+        )
+        .any(|package| !has_npm_version(package) && !is_local_or_url(package)),
+        ["yarn", "global", "add", args @ ..] => arguments(args, &["--prefix", "--registry"])
             .any(|package| !has_npm_version(package) && !is_local_or_url(package)),
         // A module version is `v<semver>` or a commit hash; `latest` and branch names move.
         ["go", "install", args @ ..] => arguments(args, &["-C", "-o"]).any(|module| {
