@@ -31,18 +31,20 @@ The stages have these interfaces:
 
 | Module | Input | Output and responsibility |
 |---|---|---|
-| `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, file contents, the owning `.github` directory, and per-file verified writes. |
+| `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, file contents without a BOM (`Source`), the owning `.github` directory, and per-file verified writes that put the BOM back and refuse a file changed since it was read. |
 | `workflow` | YAML source | A `yamlpath::Document` and semantic YAML value; `parse` also validates the `on`/`jobs` structure. A parse error is reported for that file, the other files are still checked, and the run exits with status 2 without writing. |
 | `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order. |
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
-| `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, expressions, untrusted contexts, and `uses` refs. |
+| `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, `uses` refs, action versions, and boolean inputs. |
+| `rules::expression` | Text with `${{ }}` | Expression spans and bodies, context paths, which of them an outsider controls, and how a condition compares or negates a path. |
+| `rules::shell` | `run` script | Simple commands, the program each runs past keywords, assignments, and wrappers such as `sudo`/`env`, getopt-style options, and git subcommands. |
 | `github` | API path | Cached read-only GitHub REST responses for online rules, failures included. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal or a 401 no further request is sent. The tag walk fails when a page repeats the previous one or after 100 pages. |
 | `engine` | Source and scan/fix mode | Findings and a prepared fix result. This is the main in-memory analysis interface. Workflows and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. A rejected proposal keeps its finding, records the reason, and the next proposal still runs. |
 | `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. |
 | `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
 | `migrate` | Workflows and the tool to replace | Rewrites zizmor or actionlint Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
-| `hook` | Current git repository | Writes or removes the `pre-push` hook that runs the CLI. Refuses to install into a hooks directory outside the repository, and never touches a hook that differs from the script it would write. |
+| `hook` | Current git repository | Writes or removes the `pre-push` hook that runs the CLI. Refuses to install into a hooks directory outside the repository, and never touches a hook that differs from every script a release has written (`TEMPLATES`). |
 | `cli` | Command-line options | Preflight, output, exit policy, and the decision to persist verified fixes. |
 
 `src/main.rs` only enters the CLI. The library modules hold the behavior so
@@ -58,6 +60,8 @@ Each rule lives in `src/rules/` and declares:
 - `persona`: the lowest persona that runs it.
 - `equivalents`: `(tool, id)` pairs for the same concept in zizmor or actionlint.
 - `configurable`: whether it reads `rules.<id>.config`.
+- `relational`: whether its findings compare steps with each other, so fixing one step may clear
+  or restore them; fix validation tolerates that change.
 
 Equivalent IDs keep existing ignore comments and `zizmor.yml` entries working after a switch, and
 the report names them. The concept and primary source are cited above each rule. Rules come in
@@ -171,8 +175,13 @@ validated and then refused until its repository operations have end-to-end fixtu
 |---|---|
 | `tests/rules.rs` | Scans every `tests/fixtures/rules/<rule>[.<variant>].before.yml` at the `auditor` persona. Findings of the rule must match the `# expect: <rule>` markers exactly, `--fix` must remove all or none of them and write exactly `.after.yml` (or nothing when that file is absent; `CROSGHA_BLESS=1` regenerates it), and the hand-written `.clean.yml` must not be reported. |
 | `tests/rules.rs` (online) | Runs the online fixtures against a local server that replays `tests/fixtures/online/api.json` and rejects wrong tokens. |
-| `tests/rules.rs` (coverage) | Fails if any registered rule lacks a fixture. |
-| `tests/cli.rs` | The binary end to end: fixes, exit codes, symlinks, ignores, config discovery, repository rules, report formats, `migrate`, and `hook`. |
+| `tests/rules.rs` (coverage) | Fails if any registered rule lacks a fixture, and scans each `tests/fixtures/repos/<rule>/` repository, offline and against the fake API, which must report its rule. |
+| `tests/cli.rs` | The binary end to end: inputs, discovery, exit codes, and flags. |
+| `tests/fix.rs` | `--fix`: verified writes, rejected fixes, line breaks, BOMs, symlinks, and a file edited during the scan. |
+| `tests/config.rs` | Config discovery, per-input configs, ignores, and schema errors. |
+| `tests/report.rs` | Every report format and the rule catalog. |
+| `tests/repository.rs` | Repository rules: Dependabot cooldown, security tooling, local actions, and github.com-only rules. |
+| `tests/migrate.rs`, `tests/hook.rs` | `migrate` on workflows and repositories; `hook install` and `uninstall` in scratch git repositories. |
 | `tests/action.rs` | `action/entrypoint.sh` with a runner environment against a local release server: verified install, SARIF and outputs, a tampered checksum, and `fail-on-no-inputs`. |
 | `tests/install.rs` | `install.sh` piped into `sh` against the same local release server: the latest release on the user's `PATH` and in-place upgrades, a tampered or missing release, a new binary that cannot run, plain HTTP only for a loopback origin, and platforms without a release binary. |
 

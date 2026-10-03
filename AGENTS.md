@@ -66,8 +66,8 @@ It is listed in `.git/info/exclude` and never committed.
    detect whether code changed.
 6. Bug fixes get a regression test only when existing behavior tests leave a real gap.
 7. Every rule ships with YAML fixtures. Workflow rules live in `tests/fixtures/rules/`,
-   online rules live in `tests/fixtures/online/`, and repository rules have a test in
-   `tests/cli.rs` or `tests/rules.rs` whose name contains the rule id (`-` → `_`). `tests/rules.rs` checks each `.before.yml` against its
+   online rules live in `tests/fixtures/online/`, and each repository rule has a repository in
+   `tests/fixtures/repos/<rule>/` that must report it. `tests/rules.rs` checks each `.before.yml` against its
    `# expect: <rule>` markers and fails when a registered rule has no fixture. Markers count:
    `# expect: <rule>, <rule>` requires two findings of that rule on the line. The hand-written
    `.clean.yml` applies the remediation and must not be reported. `.after.yml` is never written by
@@ -81,7 +81,8 @@ src/main.rs                 CLI entry point
 src/cli.rs                  CLI options, orchestration, exit status
 src/workflow.rs             YAML parsing and workflow validation
 src/engine.rs               Per-file inspection: parse, run rules, prepare the fix
-src/rules/                  Rules by dimension, shared traversal (common.rs), repository and online rules
+src/rules/                  Rules by dimension, repository and online rules; shared traversal (common.rs),
+                            `${{ }}` expressions (expression.rs), and shell commands (shell.rs)
 src/fix.rs                  Shared fix validation
 src/filesystem.rs           Workflow discovery and verified writes
 src/report.rs               Text, JSON, SARIF, annotation, and agent output; rule catalog
@@ -94,10 +95,12 @@ action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs
 install.sh                  `curl | sh` installer: verified release binary into ~/.local/bin
 docs/ARCHITECTURE.md        Module interfaces and Action flow
-tests/cli.rs                end-to-end tests of the built binary
+tests/cli.rs                end-to-end scans: inputs, discovery, exit status, flags
+tests/{fix,config,report,repository,migrate,hook}.rs  end-to-end tests per feature
 tests/rules.rs              fixture-driven rule checks, fake GitHub API server
 tests/action.rs             Action entry point against a local release server
-tests/install.rs            install.sh piped into sh against the same server (tests/common)
+tests/install.rs            install.sh piped into sh against the same server
+tests/common/               shared test helpers: the binary, fixtures, TempDir, the release server
 tests/fixtures/             rules/, online/ (+ api.json), repos/, migrate/, and CLI inputs
 .githooks/                  commit-msg (Conventional Commits), pre-push (full check)
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)
