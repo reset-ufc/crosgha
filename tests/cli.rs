@@ -1093,6 +1093,15 @@ fn migrate_converts_configs_and_shell_steps() {
                         && note.contains("`--format json` has no crosgha Action input")),
                     "{stderr}"
                 );
+                // Chains, redirects, and substitutions inside a word cannot become Action inputs.
+                for line in ["ci.yml:52", "ci.yml:53", "ci.yml:54"] {
+                    assert!(
+                        stderr
+                            .lines()
+                            .any(|note| note.contains(line) && note.contains("shell syntax")),
+                        "{line}: {stderr}"
+                    );
+                }
             }
             _ => {
                 assert!(stderr.contains("`config-variables`"), "{stderr}");

@@ -45,3 +45,10 @@ jobs:
       - name: Install zizmor
         run: sudo pip install --quiet zizmor==1.30.0
       - run: zizmor --persona=auditor .
+  chained:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: zizmor .; echo done
+      - run: uvx zizmor --persona pedantic . 2>/dev/null
+      - run: zizmor $(ls .github/workflows/*.yml)

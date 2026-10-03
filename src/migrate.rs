@@ -361,8 +361,11 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
     while index < args.len() {
         let arg = args[index].as_str();
         index += 1;
-        if arg.starts_with(['>', '|', '&', ';']) {
-            return Err(format!("`{arg}` redirects the output"));
+        if shell_syntax(arg) {
+            return Err(format!(
+                "`{arg}` uses shell syntax (a chain, pipe, redirect, or expansion) that Action \
+                 inputs cannot express"
+            ));
         }
         if !arg.starts_with('-') {
             inputs.push(arg.to_owned());
@@ -451,6 +454,25 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
         ordered.push(("annotations", value.clone()));
     }
     Ok(ordered)
+}
+
+/// Whether the word holds shell syntax anywhere (`.;`, `2>/dev/null`, `$(...)`, `$VAR`); an
+/// Action input would pass it on literally. `${{ ... }}` is expanded by Actions, not the shell.
+fn shell_syntax(word: &str) -> bool {
+    let mut rest = word;
+    let mut outside = String::new();
+    while let Some(start) = rest.find("${{") {
+        outside.push_str(&rest[..start]);
+        match rest[start..].find("}}") {
+            Some(end) => rest = &rest[start + end + 2..],
+            None => {
+                rest = &rest[start..];
+                break;
+            }
+        }
+    }
+    outside.push_str(rest);
+    outside.contains([';', '>', '<', '|', '&', '`', '$'])
 }
 
 /// Replaces the step's `run:` with `uses:` and `with:`, and drops `shell:`, which `uses`
