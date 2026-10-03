@@ -1,7 +1,7 @@
 //! Rules that need the GitHub API. They run only when a token is available and `--offline`
 //! is not set, like zizmor's online audits: https://docs.zizmor.sh/usage/#operating-modes
 
-use std::path::Path;
+use std::{ops::ControlFlow, path::Path};
 
 use yamlpath::Route;
 
@@ -195,6 +195,41 @@ pub fn vulnerable(
     Ok(findings)
 }
 
+const TAGS_PER_PAGE: usize = 100;
+
+/// Visits the repository's tags as `(name, commit SHA)` until `visit` breaks, one request per
+/// 100 tags: https://docs.github.com/en/rest/repos/repos#list-repository-tags
+fn each_tag(
+    github: &GitHub,
+    owner: &str,
+    repo: &str,
+    mut visit: impl FnMut(&str, &str) -> ControlFlow<()>,
+) -> Result<(), ApiError> {
+    for page in 1.. {
+        let tags = github
+            .get(&format!(
+                "/repos/{owner}/{repo}/tags?per_page={TAGS_PER_PAGE}&page={page}"
+            ))?
+            .unwrap_or_default();
+        let tags = tags.as_array().map_or(&[][..], Vec::as_slice);
+        for tag in tags {
+            let name = tag.get("name").and_then(|name| name.as_str());
+            let sha = tag
+                .get("commit")
+                .and_then(|commit| commit.get("sha")?.as_str());
+            if let (Some(name), Some(sha)) = (name, sha)
+                && visit(name, sha).is_break()
+            {
+                return Ok(());
+            }
+        }
+        if tags.len() < TAGS_PER_PAGE {
+            break;
+        }
+    }
+    Ok(())
+}
+
 pub fn outdated(
     workflow: &Workflow,
     github: &GitHub,
@@ -287,8 +322,8 @@ pub fn impostor(
         else {
             continue;
         };
-        // ponytail: Checks the default branch and the first page of tags; walk every
-        // branch when release branches produce false positives.
+        // ponytail: Checks the default branch and every tag; walk every branch when release
+        // branches produce false positives.
         let Ok(comparison) = github.get(&format!(
             "/repos/{}/{}/compare/{branch}...{sha}",
             pin.owner, pin.repo
@@ -299,23 +334,19 @@ pub fn impostor(
             .as_ref()
             .and_then(|comparison| comparison.get("status")?.as_str())
             .is_some_and(|status| matches!(status, "behind" | "identical"));
-        let Ok(tags) = github.get(&format!(
-            "/repos/{}/{}/tags?per_page=100",
-            pin.owner, pin.repo
-        )) else {
+        if on_branch {
             continue;
-        };
-        let tagged = tags
-            .unwrap_or_default()
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|tag| {
-                tag.get("commit")
-                    .and_then(|commit| commit.get("sha")?.as_str())
-                    .is_some_and(|tagged| tagged.eq_ignore_ascii_case(sha))
-            });
-        if !on_branch && !tagged {
+        }
+        let mut tagged = false;
+        let walked = each_tag(github, pin.owner, pin.repo, |_, tagged_sha| {
+            tagged = tagged_sha.eq_ignore_ascii_case(sha);
+            if tagged {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        });
+        if walked.is_ok() && !tagged {
             findings.push(common::finding(
                 workflow,
                 &IMPOSTOR,
