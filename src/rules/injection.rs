@@ -826,6 +826,21 @@ fn saves_cache(workflow: &Workflow, step: &common::Step, after_checkout: bool) -
     match name.as_deref() {
         Some("actions/cache/save") => after_checkout,
         Some("actions/cache/restore") => false,
+        // From v5, setup-node also caches when package.json has a `packageManager` field unless
+        // `package-manager-cache` is false (action.yml and README at v5.0.0, commit
+        // a0853c24544627f65ddf259abe73b1d18a591444). The checked-out pull request controls that
+        // file, so any setup-node from v5 may save.
+        Some("actions/setup-node") => {
+            let before_v5 = maintainability::versioned_action(workflow, step)
+                .is_some_and(|(_, version)| version.first().is_some_and(|major| *major < 5));
+            let automatic = !before_v5
+                && !matches!(
+                    step.input("package-manager-cache"),
+                    Some(Value::Bool(false))
+                )
+                && step.input_str("package-manager-cache") != Some("false");
+            automatic || uses_cache(workflow, step)
+        }
         _ => uses_cache(workflow, step),
     }
 }
