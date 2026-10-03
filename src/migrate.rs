@@ -77,7 +77,8 @@ pub fn run(
     let mut rewrites = Vec::new();
     for file in filesystem::discover(path)? {
         let located = |error: String| format!("{}: {error}", file.display());
-        let source = filesystem::read(&file, true).map_err(located)?;
+        // A symbolic link is refused only when it needs an edit, below.
+        let source = filesystem::read(&file, false).map_err(located)?;
         let workflow = Workflow::parse(source).map_err(located)?;
         let mut edits = Vec::new();
         let mut steps = 0;
@@ -159,6 +160,9 @@ pub fn run(
         }
         if edits.is_empty() {
             continue;
+        }
+        if fs::symlink_metadata(&file).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(located("refusing to replace a symbolic link".to_owned()));
         }
         summary.steps += steps;
         summary.files += 1;

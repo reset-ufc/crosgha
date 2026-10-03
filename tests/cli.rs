@@ -1118,6 +1118,65 @@ fn migrate_converts_configs_and_shell_steps() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn migrate_refuses_only_the_symlinked_workflows_it_must_edit() {
+    let action = format!("meiazero/crosgha@{}", "c".repeat(40));
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("crosgha-migrate-links-{unique}"));
+    let workflows = root.join(".github/workflows");
+    fs::create_dir_all(&workflows).unwrap();
+    let (plain, scanner) = (root.join("plain.yml"), root.join("scanner.yml"));
+    fs::copy(fixture("workflows/ci.yml"), &plain).unwrap();
+    fs::copy(fixture("migrate/zizmor.before.yml"), &scanner).unwrap();
+    let ci = workflows.join("ci.yml");
+    let link = workflows.join("linked.yml");
+    let migrate = || {
+        fs::copy(fixture("migrate/zizmor.before.yml"), &ci).unwrap();
+        let output = bin()
+            .args(["migrate", "--from", "zizmor", "--action", &action])
+            .args(["--action-version", "v0.1.0"])
+            .arg(&workflows)
+            .output()
+            .unwrap();
+        (output, fs::read_to_string(&ci).unwrap())
+    };
+
+    // A link that needs no edit is only read.
+    std::os::unix::fs::symlink(&plain, &link).unwrap();
+    let (untouched_link, migrated) = migrate();
+    // A link that needs an edit stops the migration before any file is written.
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&scanner, &link).unwrap();
+    let (edited_link, unmigrated) = migrate();
+    let scanner_after = fs::read_to_string(&scanner).unwrap();
+    let still_linked = fs::symlink_metadata(&link).unwrap().is_symlink();
+    fs::remove_dir_all(&root).unwrap();
+
+    assert!(
+        untouched_link.status.success(),
+        "{}",
+        String::from_utf8_lossy(&untouched_link.stderr)
+    );
+    assert_eq!(
+        migrated,
+        fs::read_to_string(fixture("migrate/zizmor.after.yml")).unwrap()
+    );
+    assert_eq!(edited_link.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&edited_link.stderr);
+    assert!(
+        stderr.contains("linked.yml") && stderr.contains("symbolic link"),
+        "{stderr}"
+    );
+    let original = fs::read_to_string(fixture("migrate/zizmor.before.yml")).unwrap();
+    assert_eq!(unmigrated, original);
+    assert_eq!(scanner_after, original);
+    assert!(still_linked);
+}
+
 #[test]
 fn every_format_reports_the_findings_of_the_text_report() {
     let repo = fixture("repos/configured");
