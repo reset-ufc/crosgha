@@ -10,3 +10,8 @@ rules:
   excessive-permissions:
     remap:
       severity: high
+  artipacked:
+    disable: true
+  persist-credentials:
+    ignore:
+      - ci.yml

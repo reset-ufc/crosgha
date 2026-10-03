@@ -575,7 +575,8 @@ fn zizmor_config(
         .flatten()
         .filter_map(|(id, _)| id.as_str().map(str::to_owned))
         .collect();
-    for id in ids {
+    for id in &ids {
+        let id = id.clone();
         let route = Route::default().with_key("rules").with_key(id.clone());
         let Some((rule, _)) = rules::all().find(|(rule, _)| rule.answers_to(&id)) else {
             notes.push(format!(
@@ -594,7 +595,13 @@ fn zizmor_config(
             .count();
         // A key for part of a rule (`unpinned-images`) keeps its zizmor name, which crosgha
         // applies to that part only.
-        if zizmor_ids == 1 {
+        if zizmor_ids == 1 && ids.iter().any(|other| other == rule.id) {
+            // A second key with the same name would make the config invalid YAML for crosgha.
+            notes.push(format!(
+                "`{id}` was not renamed: `{}` is already set; merge the two by hand",
+                rule.id
+            ));
+        } else if zizmor_ids == 1 {
             let key = config
                 .document
                 .query_key_only(&route)

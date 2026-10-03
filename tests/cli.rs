@@ -1077,6 +1077,7 @@ fn migrate_converts_configs_and_shell_steps() {
                     stderr.contains("`use-trusted-publishing` has no crosgha rule"),
                     "{stderr}"
                 );
+                assert!(stderr.contains("`artipacked` was not renamed"), "{stderr}");
                 assert!(stderr.contains("ci.yml:21"), "{stderr}");
                 // Steps that install zizmor next to other tools or commands stay, with a note.
                 for line in ["ci.yml:32", "ci.yml:35"] {
