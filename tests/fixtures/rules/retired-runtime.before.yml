@@ -19,10 +19,12 @@ jobs:
       - uses: actions/create-release@v1 # expect: retired-runtime
       # v1 of checkout ran as a runner plugin, not on Node.js.
       - uses: actions/checkout@v1
+        with: { persist-credentials: false }
       # Latest v3 artifact releases were rebuilt on node24; removed-feature reports the shutdown.
       - uses: actions/upload-artifact@v3
         with: { name: logs, path: logs }
       - uses: actions/checkout@main
+        with: { persist-credentials: false }
       - uses: actions/upload-pages-artifact@v3
       - uses: ./.github/actions/local
       - uses: docker://alpine:3.20

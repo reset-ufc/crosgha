@@ -9,6 +9,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: { persist-credentials: false }
       - uses: tj-actions/changed-files@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: forbidden-action
       - uses: tj-actions/verify-changed-files/sub@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: forbidden-action
       - uses: docker://alpine:3.20

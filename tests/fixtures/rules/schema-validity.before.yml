@@ -10,6 +10,7 @@ jobs:
     steps:
       - name: Both # expect: schema-validity
         uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: { persist-credentials: false }
         run: echo both
       - name: Neither # expect: schema-validity
       - run: echo ok

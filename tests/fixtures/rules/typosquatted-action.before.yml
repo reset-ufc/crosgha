@@ -10,7 +10,9 @@ jobs:
       - uses: action/setup-node@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: typosquatted-action
       - uses: githbu/codeql-action/init@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # expect: typosquatted-action
       - uses: Actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: { persist-credentials: false }
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: { persist-credentials: false }
       - uses: docker/login-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       - uses: acme/actions@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       - uses: actionsx/prettier@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

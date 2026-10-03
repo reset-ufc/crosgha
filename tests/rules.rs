@@ -445,8 +445,8 @@ fn a_failing_api_path_skips_only_the_checks_that_need_it() {
     let healthy: serde_json::Value = serde_json::from_slice(&healthy.stdout).unwrap();
     let failing: serde_json::Value = serde_json::from_slice(&failing.stdout).unwrap();
     let mut expected = finding_keys(&healthy);
-    // Line 12 pins the SHA whose comparison fails.
-    expected.retain(|(_, rule, line)| !(rule == "impostor-commit" && *line == 12));
+    // Line 13 pins the SHA whose comparison fails.
+    expected.retain(|(_, rule, line)| !(rule == "impostor-commit" && *line == 13));
     assert_eq!(finding_keys(&failing), expected);
 }
 
