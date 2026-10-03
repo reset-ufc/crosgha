@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,10 +23,25 @@ pub fn temp_dir(label: &str) -> PathBuf {
 /// A release directory for `version` with the archive and the release-wide `sha256.sum`, optionally
 /// tampered.
 pub fn release(version: &str, tamper: bool) -> PathBuf {
+    package(
+        version,
+        &fs::read(env!("CARGO_BIN_EXE_crosgha")).unwrap(),
+        tamper,
+    )
+}
+
+/// A release with a matching checksum whose `crosgha` is `script`: a binary that crashes or
+/// cannot run on the host, which no checksum catches.
+pub fn broken_release(version: &str, script: &str) -> PathBuf {
+    package(version, script.as_bytes(), false)
+}
+
+fn package(version: &str, binary: &[u8], tamper: bool) -> PathBuf {
     let root = temp_dir("release");
     let staging = root.join("crosgha-x86_64-unknown-linux-gnu");
     fs::create_dir_all(&staging).unwrap();
-    fs::copy(env!("CARGO_BIN_EXE_crosgha"), staging.join("crosgha")).unwrap();
+    fs::write(staging.join("crosgha"), binary).unwrap();
+    fs::set_permissions(staging.join("crosgha"), fs::Permissions::from_mode(0o755)).unwrap();
     let tag = root.join(format!("v{version}"));
     fs::create_dir_all(&tag).unwrap();
     let status = Command::new("tar")

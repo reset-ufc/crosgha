@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{release, serve, temp_dir};
+use common::{broken_release, release, serve, temp_dir};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{PermissionsExt, symlink};
@@ -12,9 +12,8 @@ use std::process::{Command, Output, Stdio};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// A release served under both GitHub URL shapes: `download/vX.Y.Z/` and `latest/download/`.
-fn github_release(tamper: bool) -> (PathBuf, String) {
-    let root = release(VERSION, tamper);
+/// `root` served under both GitHub URL shapes: `download/vX.Y.Z/` and `latest/download/`.
+fn github_release(root: PathBuf) -> (PathBuf, String) {
     symlink(".", root.join("download")).unwrap();
     fs::create_dir(root.join("latest")).unwrap();
     symlink(
@@ -55,7 +54,7 @@ fn text(output: &Output) -> String {
 
 #[test]
 fn install_puts_the_latest_release_on_the_user_path_and_upgrades_in_place() {
-    let (root, base) = github_release(false);
+    let (root, base) = github_release(release(VERSION, false));
     let home = temp_dir("home");
     let system_path = std::env::var("PATH").unwrap();
     let bin = home.join(".local/bin");
@@ -85,7 +84,7 @@ fn install_puts_the_latest_release_on_the_user_path_and_upgrades_in_place() {
 
 #[test]
 fn install_refuses_a_tampered_or_missing_release_and_installs_nothing() {
-    let (root, base) = github_release(true);
+    let (root, base) = github_release(release(VERSION, true));
     let home = temp_dir("home");
     let path = std::env::var("PATH").unwrap();
     let installed = home.join(".local/bin/crosgha");
@@ -102,6 +101,47 @@ fn install_refuses_a_tampered_or_missing_release_and_installs_nothing() {
 
     fs::remove_dir_all(home).unwrap();
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn install_keeps_the_working_binary_when_the_new_one_cannot_run() {
+    let (good_root, good) = github_release(release(VERSION, false));
+    // Correctly signed, yet built for another machine: only running it tells.
+    let (bad_root, bad) = github_release(broken_release(
+        VERSION,
+        "#!/bin/sh\necho 'cannot execute binary file: Exec format error' >&2\nexit 126\n",
+    ));
+    let home = temp_dir("home");
+    let path = std::env::var("PATH").unwrap();
+    let bin = home.join(".local/bin");
+
+    let first = install(&good, &home, &path, &[]);
+    assert!(first.status.success(), "{}", text(&first));
+    let upgrade = install(&bad, &home, &path, &[]);
+    assert!(!upgrade.status.success(), "{}", text(&upgrade));
+    assert!(
+        text(&upgrade).contains("Exec format error"),
+        "{}",
+        text(&upgrade)
+    );
+
+    let version = Command::new(bin.join("crosgha"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("crosgha {VERSION}")
+    );
+    assert_eq!(
+        fs::read_dir(&bin).unwrap().count(),
+        1,
+        "the rejected binary was left behind"
+    );
+
+    fs::remove_dir_all(home).unwrap();
+    fs::remove_dir_all(good_root).unwrap();
+    fs::remove_dir_all(bad_root).unwrap();
 }
 
 #[test]
