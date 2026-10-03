@@ -1629,6 +1629,78 @@ fn ignore_entries_with_a_malformed_position_are_config_errors() {
 }
 
 #[test]
+fn config_keys_with_a_wrong_type_or_an_unknown_name_are_config_errors() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("crosgha-config-types-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    let config = root.join("zizmor.yml");
+    let scan = |text: &str| {
+        fs::write(&config, text).unwrap();
+        bin()
+            .args(["--offline", "--fail-on", "none", "--config"])
+            .arg(&config)
+            .arg(fixture("repos/configured/.github/workflows"))
+            .output()
+            .unwrap()
+    };
+    // Each typo would otherwise be dropped silently and leave the rule enabled.
+    let broken = [
+        (
+            "rules:\n  artipacked:\n    ignore: ci.yml\n",
+            "rules.artipacked.ignore",
+        ),
+        (
+            "rules:\n  artipacked:\n    ignore: [4]\n",
+            "rules.artipacked.ignore",
+        ),
+        (
+            "rules:\n  artipacked:\n    disable: \"true\"\n",
+            "rules.artipacked.disable",
+        ),
+        (
+            "rules:\n  artipacked:\n    disabled: true\n",
+            "rules.artipacked.disabled",
+        ),
+        (
+            "rules:\n  artipacked:\n    remap:\n      severity: hihg\n",
+            "rules.artipacked.remap.severity",
+        ),
+        (
+            "rules:\n  artipacked:\n    remap:\n      level: high\n",
+            "rules.artipacked.remap.level",
+        ),
+        (
+            "rules:\n  artipacked:\n    config: 3\n",
+            "rules.artipacked.config",
+        ),
+        ("rules:\n  artipacked: true\n", "rules.artipacked"),
+        ("rules:\n  - artipacked\n", "`rules`"),
+        ("rule:\n  artipacked:\n    disable: true\n", "`rule`"),
+        ("- rules\n", "mapping"),
+    ];
+    let outputs: Vec<_> = broken.iter().map(|(text, _)| scan(text)).collect();
+    // An empty file, or an empty `rules`, configures nothing.
+    let empty = [scan(""), scan("rules:\n"), scan("rules:\n  artipacked:\n")];
+    fs::remove_dir_all(&root).unwrap();
+
+    for ((text, key), output) in broken.iter().zip(outputs) {
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(2), "{text}: {stderr}");
+        assert!(stderr.contains(key), "{text}: {stderr}");
+    }
+    for output in empty {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn a_workflow_named_zizmor_yml_is_never_read_as_the_config() {
     // The root `zizmor.yml` disables artipacked; `.github/workflows/zizmor.yml` runs zizmor.
     let repo = fixture("repos/zizmor-workflow");

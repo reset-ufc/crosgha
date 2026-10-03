@@ -111,37 +111,106 @@ impl Config {
         let value: Value =
             yaml_serde::from_str(&source).map_err(|error| describe(error.to_string()))?;
         let mut config = Self::default();
-        let Some(rules) = value.get("rules").and_then(Value::as_mapping) else {
-            return Ok(config);
-        };
-        for (id, settings) in rules {
-            let Some(id) = id.as_str() else { continue };
-            let ignore = settings
-                .get("ignore")
-                .and_then(Value::as_sequence)
+        // zizmor rejects unknown keys at every level of its schema
+        // (https://docs.zizmor.sh/configuration/#json-schema), so a typo cannot leave a rule
+        // silently enabled. `null` is read as an absent key.
+        let known = |value: &Value, at: &str, keys: &[&str]| -> Result<(), String> {
+            let unknown = value
+                .as_mapping()
                 .into_iter()
                 .flatten()
-                .filter_map(Value::as_str)
-                .map(|entry| {
-                    ignore_entry(entry).ok_or_else(|| {
-                        describe(format!(
-                            "`rules.{id}.ignore` entry `{entry}` is not `file`, `file:line`, or \
-                             `file:line:column`"
-                        ))
+                .map(|(key, _)| key.as_str().unwrap_or("?"))
+                .find(|key| !keys.contains(key));
+            match unknown {
+                Some(key) => Err(describe(format!(
+                    "unknown key `{at}{key}`; expected {}",
+                    keys.join(", ")
+                ))),
+                None => Ok(()),
+            }
+        };
+        let present = |value: &Value, key: &str| value.get(key).cloned().filter(|v| !v.is_null());
+        match &value {
+            Value::Null => return Ok(config),
+            Value::Mapping(_) => known(&value, "", &["rules"])?,
+            _ => {
+                return Err(describe(
+                    "the config must be a mapping with a `rules` key".to_owned(),
+                ));
+            }
+        }
+        let rules = match present(&value, "rules") {
+            None => return Ok(config),
+            Some(Value::Mapping(rules)) => rules,
+            Some(_) => return Err(describe("`rules` must be a mapping of rule IDs".to_owned())),
+        };
+        for (id, settings) in &rules {
+            let Some(id) = id.as_str() else {
+                return Err(describe("`rules` keys must be rule IDs".to_owned()));
+            };
+            if !(settings.is_null() || settings.is_mapping()) {
+                return Err(describe(format!("`rules.{id}` must be a mapping")));
+            }
+            known(
+                settings,
+                &format!("rules.{id}."),
+                &["disable", "ignore", "remap", "config"],
+            )?;
+            let disable = match present(settings, "disable") {
+                None => false,
+                Some(Value::Bool(disable)) => disable,
+                Some(_) => {
+                    return Err(describe(format!(
+                        "`rules.{id}.disable` must be true or false"
+                    )));
+                }
+            };
+            let ignore = match present(settings, "ignore") {
+                None => Vec::new(),
+                Some(Value::Sequence(entries)) => entries
+                    .iter()
+                    .map(|entry| {
+                        let entry = entry.as_str().ok_or_else(|| {
+                            describe(format!("`rules.{id}.ignore` entries must be strings"))
+                        })?;
+                        ignore_entry(entry).ok_or_else(|| {
+                            describe(format!(
+                                "`rules.{id}.ignore` entry `{entry}` is not `file`, \
+                                 `file:line`, or `file:line:column`"
+                            ))
+                        })
                     })
-                })
-                .collect::<Result<_, _>>()?;
-            let remapped = settings
-                .get("remap")
-                .and_then(|remap| remap.get("severity"))
-                .and_then(Value::as_str);
+                    .collect::<Result<_, _>>()?,
+                Some(_) => return Err(describe(format!("`rules.{id}.ignore` must be a list"))),
+            };
+            let remapped = match present(settings, "remap") {
+                None => None,
+                Some(remap @ Value::Mapping(_)) => {
+                    known(&remap, &format!("rules.{id}.remap."), &["severity"])?;
+                    present(&remap, "severity")
+                }
+                Some(_) => return Err(describe(format!("`rules.{id}.remap` must be a mapping"))),
+            };
+            let severity = match remapped {
+                None => None,
+                Some(name) => Some(name.as_str().and_then(severity).ok_or_else(|| {
+                    describe(format!(
+                        "`rules.{id}.remap.severity` must be informational, low, medium, or high"
+                    ))
+                })?),
+            };
+            let options = match present(settings, "config") {
+                None => None,
+                Some(options @ Value::Mapping(_)) => Some(options),
+                Some(_) => return Err(describe(format!("`rules.{id}.config` must be a mapping"))),
+            };
             config.rules.push((
                 id.to_owned(),
                 RuleConfig {
-                    disable: settings.get("disable").and_then(Value::as_bool) == Some(true),
+                    disable,
                     ignore,
-                    severity: remapped.and_then(severity),
-                    options: settings.get("config").cloned(),
+                    severity,
+                    options,
                 },
             ));
         }
