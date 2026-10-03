@@ -1,23 +1,95 @@
-//! A fake GitHub release: this build's binary in cargo-dist's archive layout, served over HTTP.
+//! Shared by the end-to-end tests: the built binary, fixtures, scratch directories, and a fake
+//! GitHub release (this build's binary in cargo-dist's archive layout, served over HTTP).
+// Each test crate uses a different subset of these helpers.
+#![allow(dead_code)]
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub const ASSET: &str = "crosgha-x86_64-unknown-linux-gnu.tar.xz";
 
+/// The built binary, without the variables that would change what a scan does here.
+pub fn bin() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_crosgha"));
+    command
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("FORCE_COLOR");
+    isolate_git(&mut command);
+    command
+}
+
+/// Run from a git hook or `rebase --exec`, git exports these, and a test's `git init` would then
+/// rewrite the developer's repository instead of a scratch one.
+pub fn isolate_git(command: &mut Command) -> &mut Command {
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_PREFIX",
+    ] {
+        command.env_remove(name);
+    }
+    command
+}
+
+pub fn fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}
+
+/// `(header, path:line:col)` of each `rule` diagnostic in a text report.
+pub fn diagnostics<'a>(report: &'a str, rule: &str) -> Vec<(&'a str, &'a str)> {
+    let header = format!("[{rule}]: ");
+    let lines: Vec<&str> = report.lines().collect();
+    lines
+        .windows(2)
+        .filter(|pair| pair[0].contains(&header))
+        .map(|pair| (pair[0], pair[1].trim_start().trim_start_matches("--> ")))
+        .collect()
+}
+
+/// A new, empty directory under the system temp dir.
 pub fn temp_dir(label: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("crosgha-action-{label}-{unique}"));
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("crosgha-{label}-{}-{sequence}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+/// A `temp_dir` removed with its contents when dropped, so a failing assertion leaves nothing
+/// behind.
+pub struct TempDir(PathBuf);
+
+impl TempDir {
+    pub fn new(label: &str) -> Self {
+        Self(temp_dir(label))
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 /// A release directory for `version` with the archive and the release-wide `sha256.sum`, optionally

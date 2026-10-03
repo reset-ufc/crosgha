@@ -687,47 +687,82 @@ fn repo_org_settings_are_read_for_the_named_repository() {
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("401"));
 }
 
-#[test]
-fn every_registered_rule_has_a_fixture() {
+/// `(rule, scope)` for every rule in the catalog.
+fn catalog() -> Vec<(String, String)> {
     let output = bin().arg("--list-rules").output().unwrap();
     assert!(output.status.success());
-    // Names of the `#[test]` functions: a repository rule is covered by a test named after it.
-    let mut tests: Vec<String> = Vec::new();
-    for file in ["tests/cli.rs", "tests/rules.rs"] {
-        let source =
-            fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
-        let mut lines = source.lines();
-        while let Some(line) = lines.next() {
-            if line.trim() == "#[test]"
-                && let Some(name) = lines
-                    .next()
-                    .and_then(|next| next.strip_prefix("fn "))
-                    .and_then(|next| next.split_once('('))
-            {
-                tests.push(name.0.to_owned());
-            }
-        }
-    }
-    let missing: Vec<String> = String::from_utf8(output.stdout)
+    String::from_utf8(output.stdout)
         .unwrap()
         .lines()
-        .filter_map(|line| {
+        .map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            let (rule, scope) = (fields[0], fields[fields.len() - 1]);
-            let covered = match scope {
-                "workflow" => fixtures().join(format!("rules/{rule}.before.yml")).exists(),
-                "online" => fixtures()
-                    .join(format!("online/{rule}.before.yml"))
-                    .exists(),
-                _ => {
-                    let name = rule.replace('-', "_");
-                    tests.iter().any(|test| test.contains(&name))
-                }
-            };
-            (!covered).then(|| format!("{rule} ({scope})"))
+            (fields[0].to_owned(), fields[fields.len() - 1].to_owned())
         })
+        .collect()
+}
+
+#[test]
+fn every_registered_rule_has_a_fixture() {
+    let missing: Vec<String> = catalog()
+        .into_iter()
+        .filter(|(rule, scope)| {
+            let fixture = match scope.as_str() {
+                "workflow" => format!("rules/{rule}.before.yml"),
+                "online" => format!("online/{rule}.before.yml"),
+                _ => format!("repos/{rule}"),
+            };
+            !fixtures().join(fixture).exists()
+        })
+        .map(|(rule, scope)| format!("{rule} ({scope})"))
         .collect();
     assert!(missing.is_empty(), "rules without fixtures: {missing:?}");
+}
+
+/// Each `repos/<rule>` repository reports its rule, offline (where github.com-only rules run) or
+/// against the fake API (where `repo-org-settings` reads the settings). Its workflows only `run`,
+/// so the online rules ask the API for nothing else.
+#[test]
+fn every_repository_rule_reports_its_fixture_repository() {
+    let api = fake_github();
+    let online = [
+        "--repository",
+        "example/project",
+        "--gh-token",
+        TOKEN,
+        "--gh-hostname",
+        &api,
+    ];
+    for (rule, _) in catalog()
+        .into_iter()
+        .filter(|(_, scope)| scope == "repository")
+    {
+        let reported = [&["--offline"][..], &online[..]].iter().any(|mode| {
+            let output = bin()
+                .env_remove("GH_TOKEN")
+                .env_remove("GITHUB_TOKEN")
+                .args([
+                    "--persona",
+                    "auditor",
+                    "--fail-on",
+                    "none",
+                    "--format",
+                    "json",
+                ])
+                .args(*mode)
+                .arg(fixtures().join(format!("repos/{rule}")))
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{rule} {mode:?}: {stderr}");
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            report["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding["rule"] == rule.as_str())
+        });
+        assert!(reported, "{rule}: not reported by its fixture repository");
+    }
 }
 
 #[test]

@@ -1,0 +1,5 @@
+name: Greet
+description: Prints a greeting.
+runs:
+  using: node20
+  main: index.js
