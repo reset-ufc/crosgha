@@ -124,6 +124,17 @@ const PERMISSION_SCOPES: &[&str] = &[
     "vulnerability-alerts",
 ];
 
+/// Access levels a scope accepts. The workflow syntax reference lists `id-token: write|none`,
+/// `vulnerability-alerts: read|none`, and `read|write|none` for the rest; `read-all`,
+/// `write-all`, and `{}` are the only shorthands.
+fn permission_levels(scope: &str) -> &'static [&'static str] {
+    match scope {
+        "id-token" => &["write", "none"],
+        "vulnerability-alerts" => &["read", "none"],
+        _ => &["read", "write", "none"],
+    }
+}
+
 /// https://docs.github.com/en/actions/reference/workflows-and-actions/reusable-workflows
 const CALLER_KEYS: &[&str] = &[
     "name",
@@ -279,12 +290,39 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             continue;
         };
         let route = route.with_key("permissions");
+        if let Some(shorthand) = permissions.as_str()
+            && !matches!(shorthand, "read-all" | "write-all")
+        {
+            problems.push((
+                route.clone(),
+                location.clone(),
+                format!(
+                    "`permissions: {shorthand}` must be `read-all`, `write-all`, or a map of scopes"
+                ),
+            ));
+        }
         for (route, key) in unknown_keys(permissions, PERMISSION_SCOPES, &route) {
             problems.push((
                 route,
                 location.clone(),
                 format!("unknown permission `{key}`"),
             ));
+        }
+        for (scope, level) in permissions.as_mapping().into_iter().flatten() {
+            let Some(scope) = scope
+                .as_str()
+                .filter(|scope| PERMISSION_SCOPES.contains(scope))
+            else {
+                continue;
+            };
+            let levels = permission_levels(scope);
+            if !level.as_str().is_some_and(|level| levels.contains(&level)) {
+                problems.push((
+                    route.with_key(scope.to_owned()),
+                    location.clone(),
+                    format!("`{scope}` accepts only {}", levels.join(", ")),
+                ));
+            }
         }
     }
     problems

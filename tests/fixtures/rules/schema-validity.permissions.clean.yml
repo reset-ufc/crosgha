@@ -3,11 +3,13 @@ on: [push]
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 jobs:
   label:
     permissions:
       issues: write
       models: read
+      contents: read
       id-token: write
       repository-projects: read
     runs-on: ubuntu-24.04
@@ -31,6 +33,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo none
+  shorthand:
+    permissions: read-all
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo write
+  alerts:
+    permissions:
+      vulnerability-alerts: read
+      statuses: none
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo alerts
   release:
     permissions:
       contents: write
