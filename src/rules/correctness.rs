@@ -418,24 +418,39 @@ fn undefined_references(job: &common::Job<'_>) -> Vec<(Route<'static>, String, S
     problems
 }
 
-/// Property names read as `<context>.<name>` in an expression, outside string literals.
+/// Property names read as `<context>.<name>` or `<context>['<name>']` in an expression, outside
+/// other string literals. Contexts accept both forms:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
 pub(super) fn context_names<'a>(expression: &'a str, context: &str) -> Vec<&'a str> {
     let prefix = format!("{context}.");
+    let indexed = format!("{context}[");
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
-    expression
-        .split('\'')
-        .step_by(2)
-        .flat_map(|code| {
+    let starts_context =
+        |code: &str, index: usize| !code[..index].ends_with(|c: char| is_name(c) || c == '.');
+    // Even parts are code; odd parts are the contents of string literals.
+    let parts: Vec<&str> = expression.split('\'').collect();
+    let mut names = Vec::new();
+    for (index, code) in parts.iter().enumerate().step_by(2) {
+        names.extend(
             code.match_indices(prefix.as_str())
-                .filter(|(index, _)| !code[..*index].ends_with(|c: char| is_name(c) || c == '.'))
-                .map(|(index, _)| {
-                    let rest = &code[index + prefix.len()..];
+                .filter(|(at, _)| starts_context(code, *at))
+                .map(|(at, _)| {
+                    let rest = &code[at + prefix.len()..];
                     &rest[..rest.find(|c: char| !is_name(c)).unwrap_or(rest.len())]
                 })
-                .filter(|name| !name.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .collect()
+                .filter(|name| !name.is_empty()),
+        );
+        if code.ends_with(indexed.as_str())
+            && starts_context(code, code.len() - indexed.len())
+            && let (Some(name), Some(next)) = (parts.get(index + 1), parts.get(index + 2))
+            && next.starts_with(']')
+            && !name.is_empty()
+            && name.chars().all(is_name)
+        {
+            names.push(*name);
+        }
+    }
+    names
 }
 
 /// Whether an `if` expression reads the `secrets` context outside a string literal.

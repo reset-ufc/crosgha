@@ -32,3 +32,24 @@ jobs:
         run: echo "generate moved HEAD"
       - name: Snapshot again
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT" # expect: duplicated-steps
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: t1
+        run: ./clock.sh
+      - run: make work
+      - id: t2
+        run: ./clock.sh
+      - run: echo "took $(( ${{ steps['t2'].outputs.ms }} - ${{ steps['t1'].outputs.ms }} ))"
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: m1
+        run: ./measure.sh
+      - id: m2
+        run: ./measure.sh # expect: duplicated-steps
+      - run: |
+          # steps.m2 used to feed the summary.
+          echo done

@@ -459,23 +459,23 @@ pub fn cache_misuse(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-/// Step `id`s a job reads as `steps.<id>`, in `${{ }}` expressions or bare `if` conditions.
+/// Step `id`s a job reads as `steps.<id>`, in `${{ }}` expressions or bare `if` conditions. Other
+/// text without `${{` is not evaluated, so a `steps.<id>` there reads nothing.
 fn read_step_ids(job: &common::Job<'_>) -> Vec<String> {
-    let mut ids = Vec::new();
+    let mut expressions = Vec::new();
     common::strings(job.value, &job.route, &mut |_, text| {
-        let expressions = match common::expressions(text) {
-            found if found.is_empty() => vec![text],
-            found => found,
-        };
-        for expression in expressions {
-            ids.extend(
-                correctness::context_names(expression, "steps")
-                    .into_iter()
-                    .map(str::to_ascii_lowercase),
-            );
-        }
+        expressions.extend(common::expressions(text));
     });
-    ids
+    let conditions = std::iter::once(job.value)
+        .chain(common::steps(job).into_iter().map(|step| step.value))
+        .filter_map(|value| value.get("if").and_then(Value::as_str))
+        .filter(|condition| !condition.contains("${{"));
+    expressions.extend(conditions);
+    expressions
+        .into_iter()
+        .flat_map(|expression| correctness::context_names(expression, "steps"))
+        .map(str::to_ascii_lowercase)
+        .collect()
 }
 
 pub fn duplicated_steps(workflow: &Workflow) -> Result<Vec<Finding>, String> {
