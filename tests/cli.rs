@@ -9,6 +9,22 @@ fn bin() -> Command {
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .env_remove("GITHUB_ACTIONS");
+    isolate_git(&mut command);
+    command
+}
+
+/// Run from a git hook or `rebase --exec`, git exports these, and a test's `git init` would then
+/// rewrite the developer's repository instead of a scratch one.
+fn isolate_git(command: &mut Command) -> &mut Command {
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_PREFIX",
+    ] {
+        command.env_remove(name);
+    }
     command
 }
 
@@ -1664,7 +1680,7 @@ fn git(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
         std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    Command::new("git")
+    isolate_git(&mut Command::new("git"))
         .current_dir(dir)
         .args(args)
         .env("PATH", path)
@@ -1739,7 +1755,7 @@ fn pre_push_hook_blocks_smelly_workflows_until_they_are_fixed() {
     );
 
     // Without crosgha on PATH the hook fails closed instead of letting the push through.
-    let missing = Command::new("git")
+    let missing = isolate_git(&mut Command::new("git"))
         .current_dir(&work)
         .args(["push", remote_url, "HEAD:refs/heads/main"])
         .env("PATH", "/usr/bin:/bin")
