@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.2](https://github.com/reset-ufc/crosgha/compare/v0.13.1...v0.13.2) (2026-10-28)
+
+
+### Fixed
+
+* **action:** keep the findings of other inputs when one has no workflows ([0033991](https://github.com/reset-ufc/crosgha/commit/0033991292773bc4f2f54252bbfe1f17af2b80a5))
+* **action:** keep the findings of other inputs when one has no workflows ([205beb5](https://github.com/reset-ufc/crosgha/commit/205beb5f7b1c921d156e1a397d9c64efb61e62d8)), closes [#105](https://github.com/reset-ufc/crosgha/issues/105)
+
 ## [0.13.1](https://github.com/reset-ufc/crosgha/compare/v0.13.0...v0.13.1) (2026-10-28)
 
 
