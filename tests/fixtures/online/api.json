@@ -61,10 +61,10 @@
     "default_workflow_permissions": "write",
     "can_approve_pull_request_reviews": true
   },
-  "/repos/meiazero/crosgha/releases/latest": {
+  "/repos/reset-ufc/crosgha/releases/latest": {
     "tag_name": "v0.1.0"
   },
-  "/repos/meiazero/crosgha/commits/v0.1.0": {
+  "/repos/reset-ufc/crosgha/commits/v0.1.0": {
     "sha": "cccccccccccccccccccccccccccccccccccccccc"
   },
   "/advisories?ecosystem=actions&affects=example/vulnerable@1": [

@@ -7,7 +7,7 @@ use std::fs;
 
 #[test]
 fn migrate_replaces_other_scanners_with_the_crosgha_action() {
-    let action = format!("meiazero/crosgha@{}", "c".repeat(40));
+    let action = format!("reset-ufc/crosgha@{}", "c".repeat(40));
     for tool in ["zizmor", "actionlint"] {
         let temp = TempDir::new("migrate");
         let path = temp.join("workflow.yml");
@@ -75,7 +75,7 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
 
 #[test]
 fn migrate_converts_configs_and_shell_steps() {
-    let action = format!("meiazero/crosgha@{}", "c".repeat(40));
+    let action = format!("reset-ufc/crosgha@{}", "c".repeat(40));
     for (tool, workflow, config) in [
         ("zizmor", "ci.yml", "zizmor.yml"),
         ("actionlint", "lint.yml", "actionlint.yaml"),
@@ -174,7 +174,7 @@ fn migrate_converts_configs_and_shell_steps() {
 #[cfg(unix)]
 #[test]
 fn migrate_refuses_only_the_symlinked_workflows_it_must_edit() {
-    let action = format!("meiazero/crosgha@{}", "c".repeat(40));
+    let action = format!("reset-ufc/crosgha@{}", "c".repeat(40));
     let temp = TempDir::new("migrate");
     let root = temp.join("work");
     let workflows = root.join(".github/workflows");

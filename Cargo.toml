@@ -4,7 +4,7 @@ version = "0.12.0"
 edition = "2024"
 rust-version = "1.97.0"
 description = "GitHub Actions workflow smell tool"
-repository = "https://github.com/meiazero/crosgha"
+repository = "https://github.com/reset-ufc/crosgha"
 publish = false
 
 [[bin]]

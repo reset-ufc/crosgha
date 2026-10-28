@@ -111,7 +111,7 @@ ROADMAP.md                  shipped vs. next; PR and auto-merge mode design
 ```
 
 ## Hosting
-- GitHub repo: `meiazero/crosgha`, **private** (a study comes out of it), default branch `master`, remote `origin`.
+- GitHub repo: `reset-ufc/crosgha`, **private** (a study comes out of it), default branch `master`, remote `origin`.
 - "Allow GitHub Actions to create and approve pull requests" is enabled, so release-please can open its release PR.
 
 No PAT or secret is needed: `release-please.yml` dispatches `release.yml` with the default `GITHUB_TOKEN`.
