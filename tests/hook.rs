@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! `crosgha hook install|uninstall` in scratch git repositories.
 
 mod common;

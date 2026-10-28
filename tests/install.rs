@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! Pipes `install.sh` into `sh`, as `curl -fsSL .../install.sh | sh` does, against a local release
 //! server laid out like GitHub's release download URLs.
 

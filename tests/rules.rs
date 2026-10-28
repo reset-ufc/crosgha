@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! Data-driven checks for every rule. Each `<rule>.before.yml` fixture marks the lines that
 //! must be reported with `# expect: <rule>`; every other line is a negative case. `.after.yml`
 //! is the exact `--fix` output (absent when `--fix` changes nothing; regenerate with

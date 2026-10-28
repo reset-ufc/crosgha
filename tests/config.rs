@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! crosgha.yml and zizmor.yml: discovery, per-input configs, ignores, and schema errors.
 
 mod common;

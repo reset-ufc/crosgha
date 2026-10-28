@@ -12,6 +12,9 @@ publish = false
 name = "crosgha"
 path = "src/main.rs"
 
+[lints.rust]
+unsafe_code = "forbid"
+
 [dependencies]
 anstream = "1.0.0"
 anstyle = "1.0.14"
@@ -31,3 +34,6 @@ dist = true
 [profile.dist]
 inherits = "release"
 lto = "thin"
+# The Action downloads this binary on every run.
+codegen-units = 1
+strip = true

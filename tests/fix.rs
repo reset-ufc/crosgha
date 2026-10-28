@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! `--fix`: verified writes, rejected fixes, line breaks, BOMs, symlinks, and concurrent edits.
 
 mod common;
