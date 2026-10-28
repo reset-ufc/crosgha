@@ -375,10 +375,11 @@ fn rule_catalog_as_json_matches_the_text_catalog() {
         .find(|rule| rule["id"] == "script-injection")
         .unwrap();
     assert_eq!(injection["equivalents"][0]["rule"], "template-injection");
-    // README's catalog marks the rules that read `rules.<id>.config` in its last column.
-    let readme =
-        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap();
-    let documented: Vec<(String, bool)> = readme
+    // The documented catalog marks the rules that read `rules.<id>.config` in its last column.
+    let catalog =
+        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/rules.md"))
+            .unwrap();
+    let documented: Vec<(String, bool)> = catalog
         .lines()
         .filter_map(|line| {
             let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();

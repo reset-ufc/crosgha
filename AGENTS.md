@@ -95,6 +95,7 @@ action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs
 install.sh                  `curl | sh` installer: verified release binary into ~/.local/bin
 docs/ARCHITECTURE.md        Module interfaces and Action flow
+docs/*.md                   User docs linked from README.md; docs/rules.md is checked against the code by tests/report.rs
 tests/cli.rs                end-to-end scans: inputs, discovery, exit status, flags
 tests/{fix,config,report,repository,migrate,hook}.rs  end-to-end tests per feature
 tests/rules.rs              fixture-driven rule checks, fake GitHub API server
