@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/reset-ufc/crosgha/compare/v0.12.1...v0.12.2) (2026-10-28)
+
+
+### Documentation
+
+* track planned work in issues instead of ROADMAP.md ([ad5827a](https://github.com/reset-ufc/crosgha/commit/ad5827a4c88866b01220783235bee5f7110ab065))
+
 ## [0.12.1](https://github.com/reset-ufc/crosgha/compare/v0.12.0...v0.12.1) (2026-10-28)
 
 
