@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub const ASSET: &str = "crosgha-x86_64-unknown-linux-gnu.tar.xz";
+pub const ASSET: &str = "crosgha-x86_64-unknown-linux-musl.tar.xz";
 
 /// The built binary, without the variables that would change what a scan does here.
 pub fn bin() -> Command {
@@ -111,7 +111,7 @@ pub fn broken_release(version: &str, script: &str) -> PathBuf {
 
 fn package(version: &str, binary: &[u8], tamper: bool) -> PathBuf {
     let root = temp_dir("release");
-    let staging = root.join("crosgha-x86_64-unknown-linux-gnu");
+    let staging = root.join("crosgha-x86_64-unknown-linux-musl");
     fs::create_dir_all(&staging).unwrap();
     fs::write(staging.join("crosgha"), binary).unwrap();
     fs::set_permissions(staging.join("crosgha"), fs::Permissions::from_mode(0o755)).unwrap();
@@ -123,7 +123,7 @@ fn package(version: &str, binary: &[u8], tamper: bool) -> PathBuf {
         .arg(tag.join(ASSET))
         .arg("-C")
         .arg(&root)
-        .arg("crosgha-x86_64-unknown-linux-gnu")
+        .arg("crosgha-x86_64-unknown-linux-musl")
         .status()
         .unwrap();
     assert!(status.success());
