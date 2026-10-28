@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.1](https://github.com/reset-ufc/crosgha/compare/v0.12.0...v0.12.1) (2026-10-28)
+
+
+### Fixed
+
+* follow the move to reset-ufc and split the README ([1f8bd4a](https://github.com/reset-ufc/crosgha/commit/1f8bd4a1352896a5755312329b3d4985386ff55d))
+* point repository and install URLs at reset-ufc ([00d481b](https://github.com/reset-ufc/crosgha/commit/00d481bbc8b137e7c9800cd12b532e2ff65bd057))
+
+
+### Documentation
+
+* **agents:** list allowed crates without versions ([3d32c9a](https://github.com/reset-ufc/crosgha/commit/3d32c9a46867ebc7f84579108ea8f9e0353349fe))
+* split the README into topic pages under docs/ ([6d5d1e9](https://github.com/reset-ufc/crosgha/commit/6d5d1e9244ba778dfac6421f39cbfd3dea7bcaba))
+
 ## [0.12.0](https://github.com/meiazero/crosgha/compare/v0.11.2...v0.12.0) (2026-10-03)
 
 
