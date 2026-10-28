@@ -28,6 +28,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # Against the empty tree, so the whole commit is checked, not only the last change.
+      - name: Check whitespace
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD
+
       - name: Install toolchain (mise.toml)
         uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
         with:
@@ -67,3 +71,35 @@ jobs:
 
       - name: Build release
         run: cargo build --release --locked
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # cargo-deny runs `cargo metadata`, so it needs the pinned toolchain.
+      - name: Install toolchain (mise.toml)
+        uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.9.14
+          sha256: 2b289d1b3074e0b1d3f95bad0bd78bbc517c1a5bcb020cbc1643d260f5d1a351
+
+      # The release asset is pinned by sha256 (GitHub release digest), as dist is in release.yml.
+      - name: Install cargo-deny
+        env:
+          DENY_URL: https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz
+          DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+        run: |
+          curl --proto '=https' --tlsv1.2 -fLsS "$DENY_URL" -o "$RUNNER_TEMP/deny.tar.gz"
+          echo "$DENY_SHA256  $RUNNER_TEMP/deny.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/deny.tar.gz" --strip-components=1 -C "$RUNNER_TEMP" cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny
+
+      - name: Check dependencies
+        run: '"$RUNNER_TEMP/cargo-deny" --locked check'

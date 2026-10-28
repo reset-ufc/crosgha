@@ -1,0 +1,5 @@
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "AGENTS.md rule 1: crosgha never shells out to another detector; only src/hook.rs runs git" },
+    { path = "std::fs::write", reason = "AGENTS.md rule 2: workflows are written only through filesystem::replace, the verified write" },
+    { path = "std::fs::rename", reason = "AGENTS.md rule 2: workflows are written only through filesystem::replace, the verified write" },
+]

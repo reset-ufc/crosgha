@@ -14,14 +14,18 @@ curl -fsSL https://crosgha.resetlab.com.br/install.sh | sh
 
 ## From a release
 
-Releases ship one Linux binary (`x86_64-unknown-linux-gnu`) with a `sha256.sum`:
+Releases ship one statically linked Linux binary (`x86_64-unknown-linux-musl`), so it also runs in Alpine
+containers, with a `sha256.sum` and a build provenance attestation:
 
 ```sh
-gh release download -R reset-ufc/crosgha -p crosgha-x86_64-unknown-linux-gnu.tar.xz -p sha256.sum
+gh release download -R reset-ufc/crosgha -p crosgha-x86_64-unknown-linux-musl.tar.xz -p sha256.sum
 sha256sum -c sha256.sum
-tar -xJf crosgha-x86_64-unknown-linux-gnu.tar.xz
-install crosgha-x86_64-unknown-linux-gnu/crosgha ~/.local/bin/
+tar -xJf crosgha-x86_64-unknown-linux-musl.tar.xz
+install crosgha-x86_64-unknown-linux-musl/crosgha ~/.local/bin/
 ```
+
+`gh attestation verify crosgha-x86_64-unknown-linux-musl.tar.xz -R reset-ufc/crosgha` checks that the archive was
+built by this repository's release workflow.
 
 ## From source
 

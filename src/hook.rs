@@ -23,6 +23,10 @@ pub fn install(args: &[String]) -> Result<PathBuf, String> {
     }
     refuse_foreign(&hook)?;
     fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "writes the git hook, not a workflow"
+    )]
     fs::write(&hook, script(args)).map_err(|error| format!("{}: {error}", hook.display()))?;
     #[cfg(unix)]
     {
@@ -131,6 +135,7 @@ fn unquote(mut rest: &str) -> Option<Vec<String>> {
 /// The pre-push hook git would run, after `core.hooksPath` and worktrees, and the directories
 /// that belong to this repository: its working tree and the git directory worktrees share.
 fn locate() -> Result<(PathBuf, Vec<PathBuf>), String> {
+    #[allow(clippy::disallowed_methods, reason = "git, not a detector")]
     let output = Command::new("git")
         .args([
             "rev-parse",

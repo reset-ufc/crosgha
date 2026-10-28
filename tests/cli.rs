@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! End-to-end runs of the built binary: inputs, discovery, exit status, and flags.
 
 mod common;

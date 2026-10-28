@@ -11,16 +11,29 @@ fi
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+# Against the empty tree, so the whole commit is checked, not only the last change.
+echo "pre-push: git diff --check"
+git diff --check "$(git hash-object -t tree /dev/null)" HEAD
+
 echo "pre-push: cargo fmt --check"
 cargo fmt --check
 
-echo "pre-push: cargo clippy --all-targets -- -D warnings"
-cargo clippy --all-targets -- -D warnings
+echo "pre-push: cargo clippy --locked --all-targets -- -D warnings"
+cargo clippy --locked --all-targets -- -D warnings
 
-echo "pre-push: cargo test"
-cargo test
+echo "pre-push: cargo test --locked"
+cargo test --locked
 
 echo "pre-push: crosgha dogfood"
-cargo run -- --offline --persona pedantic .github/workflows
+cargo run --locked -- --offline --persona pedantic .github/workflows
+
+# CI always runs it; locally only when installed (PATH or .tools/bin), since it is a separate download.
+for deny in cargo-deny .tools/bin/cargo-deny; do
+  if command -v "$deny" >/dev/null; then
+    echo "pre-push: cargo-deny check"
+    "$deny" --locked check
+    break
+  fi
+done
 
 echo "pre-push: all checks passed"

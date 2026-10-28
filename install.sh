@@ -14,7 +14,7 @@ main() {
     platform="$(uname -s) $(uname -m)"
     # ponytail: releases ship Linux x86_64 only; add a case per target once dist-workspace.toml builds it.
     case "$platform" in
-        "Linux x86_64") target=x86_64-unknown-linux-gnu ;;
+        "Linux x86_64") target=x86_64-unknown-linux-musl ;;
         *) fail "no release binary for $platform; build from source: cargo install --git https://github.com/reset-ufc/crosgha" ;;
     esac
     for tool in curl tar xz sha256sum; do

@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! The text, JSON, SARIF, annotation, and agent reports, and the rule catalog.
 
 mod common;

@@ -189,6 +189,10 @@ pub fn run(
             .map_err(|error| format!("{}: {error}", file.display()))?;
     }
     if let Some((target, text)) = config {
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "writes the new crosgha.yml, not a workflow"
+        )]
         fs::write(&target, text).map_err(|error| format!("{}: {error}", target.display()))?;
         summary.config = Some(target);
     }

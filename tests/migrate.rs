@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! `crosgha migrate --from zizmor|actionlint` on workflows and repositories.
 
 mod common;

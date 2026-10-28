@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! Runs `action/entrypoint.sh` the way the composite Action does, against a local release
 //! server that serves this build's binary in cargo-dist's archive layout.
 

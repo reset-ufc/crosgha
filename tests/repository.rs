@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests stage files and run the binary"
+)]
+
 //! Rules that read the repository around the workflows: Dependabot, security tooling, and local actions.
 
 mod common;

@@ -170,6 +170,7 @@ pub fn replace(path: &Path, original: &Source, text: &str) -> Result<(), String>
         if current.strip_prefix(bom.as_bytes()) != Some(original.text.as_bytes()) {
             return Err("file changed since it was read".to_owned());
         }
+        #[allow(clippy::disallowed_methods, reason = "the verified write itself")]
         fs::rename(&temporary, path).map_err(cannot)
     })();
     if result.is_err() {

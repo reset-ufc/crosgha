@@ -479,6 +479,10 @@ fn finish(args: &Args, scan: &Scan) -> ExitCode {
         repository,
         errors,
     } = scan;
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "writes the SARIF report, not a workflow"
+    )]
     if let Some(target) = &args.sarif_file
         && let Err(error) = std::fs::write(target, report::sarif(files, repository, errors))
     {

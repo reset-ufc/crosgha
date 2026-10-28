@@ -18,7 +18,7 @@ boolean() {
     esac
 }
 
-# The release ships one asset, crosgha-x86_64-unknown-linux-gnu.
+# The release ships one asset, crosgha-x86_64-unknown-linux-musl.
 [[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == X64 ]] \
     || fail "crosgha Action supports Linux X64 runners only, not ${RUNNER_OS:-?} ${RUNNER_ARCH:-?}"
 
@@ -84,7 +84,7 @@ protocol='=https'
 # Tests serve a local release over plain HTTP; nothing else may.
 [[ "$base" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] && protocol='=http'
 
-asset=crosgha-x86_64-unknown-linux-gnu.tar.xz
+asset=crosgha-x86_64-unknown-linux-musl.tar.xz
 install_dir="$RUNNER_TEMP/crosgha-$version"
 mkdir -p "$install_dir"
 download() {
@@ -99,7 +99,7 @@ download sha256.sum
     | sha256sum --check --status -) \
     || fail "checksum mismatch for $asset; refusing to run it"
 tar -xJf "$install_dir/$asset" -C "$install_dir"
-crosgha="$install_dir/crosgha-x86_64-unknown-linux-gnu/crosgha"
+crosgha="$install_dir/crosgha-x86_64-unknown-linux-musl/crosgha"
 [[ -x "$crosgha" ]] || fail "release archive has no crosgha binary"
 
 args=(--persona "${CROSGHA_PERSONA:-regular}" --fail-on "${CROSGHA_FAIL_ON:-any}")
