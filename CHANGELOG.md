@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/reset-ufc/crosgha/compare/v0.13.0...v0.13.1) (2026-10-28)
+
+
+### Fixed
+
+* **install:** stop running the downloaded binary before installing it ([b3fb2d1](https://github.com/reset-ufc/crosgha/commit/b3fb2d1f0beabc6f611c8dad8994e985cc811974))
+* **install:** stop running the downloaded binary before installing it ([0463510](https://github.com/reset-ufc/crosgha/commit/0463510ab58dfcf8e5471b8a0351198896705c80))
+
 ## [0.13.0](https://github.com/reset-ufc/crosgha/compare/v0.12.2...v0.13.0) (2026-10-28)
 
 
