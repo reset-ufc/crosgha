@@ -1,0 +1,31 @@
+# `cargo deny check`: CI job `deny` and, when installed, .githooks/pre-push.
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+
+[advisories]
+# Every RustSec advisory fails the check, including unmaintained and unsound crates.
+unmaintained = "all"
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+# crosgha itself has `publish = false`.
+private = { ignore = true }
+
+[bans]
+wildcards = "deny"
+# AGENTS.md rule 1: no other detector as a library.
+deny = [
+    { crate = "zizmor", reason = "AGENTS.md rule 1: another detector" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
