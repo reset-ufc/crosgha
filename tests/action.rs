@@ -186,6 +186,60 @@ fn action_can_tolerate_missing_inputs() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// One empty input among others must not hide their findings: the Action reports the inputs that
+/// have workflows and warns only about the empty one.
+#[test]
+fn action_tolerating_missing_inputs_still_reports_the_other_inputs() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+    let empty = temp_dir("empty");
+    let findings = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/checkout-credentials.before.yml");
+    let present = format!(".github/workflows/ci.yml\n{}\n", findings.display());
+    let mixed = format!("{present}{}\n", empty.display());
+
+    let alone = run_action(&base, &present, &[]);
+    let expected = output_value(&alone.outputs, "findings").unwrap().to_owned();
+    assert_ne!(expected, "0", "the fixture must report findings");
+
+    let strict = run_action(&base, &mixed, &[]);
+    assert!(!strict.output.status.success());
+
+    let tolerant = run_action(&base, &mixed, &[("CROSGHA_FAIL_ON_NO_INPUTS", "false")]);
+    let log = String::from_utf8_lossy(&tolerant.output.stdout).into_owned();
+    assert!(tolerant.output.status.success(), "{log}");
+    assert_eq!(
+        output_value(&tolerant.outputs, "findings"),
+        Some(expected.as_str())
+    );
+    assert_eq!(output_value(&tolerant.outputs, "exit-code"), Some("1"));
+    let uris = sarif_uris(&tolerant);
+    for file in ["ci.yml", "checkout-credentials.before.yml"] {
+        assert!(
+            uris.iter().any(|uri| uri.ends_with(file)),
+            "{file}: {uris:?}"
+        );
+    }
+    let warnings: Vec<&str> = live_commands(&log)
+        .into_iter()
+        .filter(|line| line.starts_with("::warning::"))
+        .collect();
+    assert_eq!(
+        warnings,
+        [format!(
+            "::warning::crosgha found no workflow files in {}",
+            empty.display()
+        )],
+        "{log}"
+    );
+
+    for run in [alone, strict, tolerant] {
+        fs::remove_dir_all(&run.temp).unwrap();
+    }
+    fs::remove_dir_all(empty).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn action_uses_plain_http_only_for_a_bare_loopback_origin() {
     let root = release(env!("CARGO_PKG_VERSION"), false);

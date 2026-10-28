@@ -56,7 +56,7 @@ inputs:
     required: false
     default: ''
   fail-on-no-inputs:
-    description: Fail when no workflow files are found.
+    description: Fail when an input has no workflow files. With false, such inputs are skipped with a warning and the others are still scanned.
     required: false
     default: 'true'
   fail-on:
