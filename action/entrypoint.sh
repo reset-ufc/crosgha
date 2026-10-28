@@ -123,6 +123,30 @@ args+=(--sarif-file "$sarif")
 
 # Block scalars put one path per line, so split on newlines too.
 read -r -d '' -a inputs <<< "${CROSGHA_INPUTS:-.}" || true
+# crosgha stops at the first input without workflows, so tolerating them means finding them first:
+# each input is probed alone, and only the ones with workflows are scanned.
+if [[ "${CROSGHA_FAIL_ON_NO_INPUTS:-true}" == false ]]; then
+    kept=()
+    empty=()
+    for input in "${inputs[@]}"; do
+        if ! "$crosgha" --offline --no-config --fail-on none --format json -- "$input" \
+                > /dev/null 2> "$RUNNER_TEMP/crosgha.probe" \
+            && grep -q "no .yml or .yaml workflow files found" "$RUNNER_TEMP/crosgha.probe"; then
+            empty+=("$input")
+        else
+            kept+=("$input")
+        fi
+    done
+    if (( ${#empty[@]} )); then
+        printf '::warning::crosgha found no workflow files in %s\n' "${empty[*]}"
+    fi
+    if (( ${#kept[@]} == 0 )); then
+        echo "findings=0" >> "$GITHUB_OUTPUT"
+        echo "exit-code=0" >> "$GITHUB_OUTPUT"
+        exit 0
+    fi
+    inputs=("${kept[@]}")
+fi
 report="$RUNNER_TEMP/crosgha.txt"
 set +e
 "$crosgha" "${args[@]}" -- "${inputs[@]}" > "$report" 2> "$RUNNER_TEMP/crosgha.err"
@@ -140,13 +164,6 @@ echo "::stop-commands::$token"
 cat "$RUNNER_TEMP/crosgha.err"
 echo "::$token::"
 
-if [[ "$code" == 2 ]] && grep -q "no .yml or .yaml workflow files found" "$RUNNER_TEMP/crosgha.err" \
-    && [[ "${CROSGHA_FAIL_ON_NO_INPUTS:-true}" == false ]]; then
-    printf '::warning::crosgha found no workflow files in %s\n' "${inputs[*]}"
-    echo "findings=0" >> "$GITHUB_OUTPUT"
-    echo "exit-code=0" >> "$GITHUB_OUTPUT"
-    exit 0
-fi
 # 0 is clean and 1 is findings. Anything else (2, a panic's 101, a binary that cannot execute's
 # 126) leaves no complete report or SARIF to publish.
 [[ "$code" == 0 || "$code" == 1 ]] || fail "crosgha could not complete the scan (exit status $code)"
