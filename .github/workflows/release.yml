@@ -81,6 +81,18 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      # release-please writes both; a mismatch would publish a release the Action at this tag never installs,
+      # since it downloads the version in its own Cargo.toml.
+      - name: Check that the tag matches the Cargo.toml version
+        if: ${{ inputs.tag != 'dry-run' }}
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match Cargo.toml version $version"
+            exit 1
+          fi
       # The release asset is pinned by sha256 (GitHub release digest) instead of piping the installer to sh.
       - name: Install dist
         shell: bash
@@ -281,6 +293,33 @@ jobs:
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
+  # Build provenance for the archive users install (`gh attestation verify`). host waits for it, so no
+  # release is published without one.
+  attest:
+    name: attest
+    needs:
+      - plan
+      - build-local-artifacts
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      id-token: write # Sigstore signing certificate for the attestation
+      attestations: write # stores the attestation on this repository
+    steps:
+      - name: Fetch local artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: artifacts-build-local-*
+          path: artifacts
+          merge-multiple: true
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/*.tar.xz
+          # The storage record is for package registries; release assets do not need it.
+          create-storage-record: false
+
   # Determines if we should publish/announce
   host:
     name: host
@@ -289,8 +328,9 @@ jobs:
       - test
       - build-local-artifacts
       - build-global-artifacts
-    # Only run if we're "publishing", the tests passed, and local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.test.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+      - attest
+    # Only run if we're "publishing", the tests and attestation passed, and local and global didn't fail (skipped is fine)
+    if: ${{ always() && needs.plan.result == 'success' && needs.test.result == 'success' && needs.attest.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"
