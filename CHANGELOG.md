@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.13.0](https://github.com/reset-ufc/crosgha/compare/v0.12.2...v0.13.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **release:** the release asset is now crosgha-x86_64-unknown-linux-musl.tar.xz; scripts that download crosgha-x86_64-unknown-linux-gnu.tar.xz by name must switch.
+
+### Added
+
+* **release:** attest build provenance and check the tag version ([121b788](https://github.com/reset-ufc/crosgha/commit/121b788656a7c6d0d9159c94304a0b6048fd14d0))
+* **release:** ship a static musl binary instead of the glibc one ([8d82750](https://github.com/reset-ufc/crosgha/commit/8d827502115faf69affb7ccb9c2f1806db89a85c))
+
+
+### Fixed
+
+* **deps:** update rustls and webpki crates for RustSec advisories ([da917f6](https://github.com/reset-ufc/crosgha/commit/da917f69c3a1c79d59abe525f48b0dda9fa32c9e))
+
+
+### Documentation
+
+* **agents:** document the new checks and the third-party test rule ([2c4123b](https://github.com/reset-ufc/crosgha/commit/2c4123b8b54067eb679b4dc5342d59cd4273aa7b))
+* **agents:** mark the repository as public ([29ee7dd](https://github.com/reset-ufc/crosgha/commit/29ee7ddcded8e19c70bc9c5c1f56b755c8e953e0))
+
 ## [0.12.2](https://github.com/reset-ufc/crosgha/compare/v0.12.1...v0.12.2) (2026-10-28)
 
 
