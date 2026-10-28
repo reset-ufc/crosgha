@@ -35,7 +35,7 @@ It is listed in `.git/info/exclude` and never committed.
    - `yamlpath`, `yamlpatch`, `yaml_serde`, `github-actions-models`, `github-actions-expressions`
    - generic crates such as clap, serde, and ureq
 
-   Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: crosgha checks our own workflows in CI and the pre-push hook. Compatibility is allowed: reading another tool's config format, accepting its rule IDs as aliases, and rewriting its Action step in `migrate`. Running or porting its detection logic is not.
+   Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: crosgha checks our own workflows in CI and the pre-push hook. cargo-deny is allowed because it checks dependencies, not workflows: RustSec advisories, licenses, sources, and a ban on detector crates (`deny.toml`). `clippy.toml` enforces rules 1 and 2: only `src/hook.rs` runs a process, and only `filesystem::replace` writes a workflow. Compatibility is allowed: reading another tool's config format, accepting its rule IDs as aliases, and rewriting its Action step in `migrate`. Running or porting its detection logic is not.
 2. **Fix validation is ours.** A fix is accepted only when all three hold:
    - the patched file re-parses
    - the targeted smell is gone and no new smell appeared
@@ -52,7 +52,7 @@ It is listed in `.git/info/exclude` and never committed.
    - `persist-credentials: false`
 
    `.githooks/pre-push` and CI run crosgha on `.github/workflows` with `--offline --persona pedantic`. Accepted exceptions need a written reason in a comment next to the exception.
-5. **Toolchain.** The Rust toolchain is pinned only in `mise.toml` (1.97), matching the workspace; `rust-version` in `Cargo.toml` declares the same minimum. `.githooks/pre-push` re-runs itself under `mise exec` when mise is not active in the calling shell (e.g., `gh repo create --push`, IDEs), so it never falls back to rustup's default toolchain. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
+5. **Toolchain.** The Rust toolchain is pinned only in `mise.toml` (1.97), matching the workspace; `rust-version` in `Cargo.toml` declares the same minimum. `.githooks/pre-push` re-runs itself under `mise exec` when mise is not active in the calling shell (e.g., `gh repo create --push`, IDEs), so it never falls back to rustup's default toolchain. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`, `cargo-deny`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
 
 ## Tests
 
@@ -73,6 +73,9 @@ It is listed in `.git/info/exclude` and never committed.
    `.clean.yml` applies the remediation and must not be reported. `.after.yml` is never written by
    hand: it is the exact `--fix` output, regenerated with `CROSGHA_BLESS=1 cargo test --test rules`
    and reviewed in the diff; it is absent when `--fix` leaves the file unchanged.
+8. Behavior copied from another tool (zizmor's config, ignore comments, and personas; `migrate`'s view of
+   zizmor and actionlint steps) follows that tool's documentation. Link the doc page next to the code, and give
+   every case the page describes its own test, not only the first one.
 
 ## Layout
 
@@ -106,8 +109,10 @@ tests/fixtures/             rules/, online/ (+ api.json), repos/, migrate/, and 
 .githooks/                  commit-msg (Conventional Commits), pre-push (full check)
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)
 release-please-config.json  release PR + changelog config (manifest: .release-please-manifest.json)
-dist-workspace.toml         cargo-dist target: x86_64-unknown-linux-gnu only
-mise.toml                   Rust version (the only pin; used locally and in CI)
+dist-workspace.toml         cargo-dist target: x86_64-unknown-linux-musl only (static, so it also runs in Alpine job containers)
+mise.toml                   Rust version and musl target (the only pin; used locally and in CI)
+clippy.toml                 disallowed-methods for rules 1 and 2
+deny.toml                   cargo-deny: advisories, licenses, sources, banned detector crates
 ```
 
 ## Hosting
