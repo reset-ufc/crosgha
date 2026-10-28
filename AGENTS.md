@@ -25,7 +25,7 @@ It is listed in `.git/info/exclude` and never committed.
 |---|---|
 | One-time hook setup after cloning | `make setup` (sets `core.hooksPath=.githooks`) |
 | Build / run | `cargo build --release` · `cargo run` |
-| Everything the pre-push hook checks | `.githooks/pre-push` or `make check` (fmt, clippy `-D warnings`, tests, dogfood) |
+| Everything the pre-push hook checks | `make check` (whitespace, fmt, clippy `-D warnings`, tests, dogfood, cargo-deny). On a push, the hook and CI skip all but whitespace when no path in `ci.yml`'s `paths` changed |
 | Rule catalog (id, tag, severity, persona, scope) | `cargo run -- --list-rules` (`-f json` adds summaries, equivalents, and `configurable`) |
 | Release plan preview (offline) | `.tools/bin/dist plan` |
 

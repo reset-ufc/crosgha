@@ -15,6 +15,34 @@ cd "$repo_root"
 echo "pre-push: git diff --check"
 git diff --check "$(git hash-object -t tree /dev/null)" HEAD
 
+# What the cargo checks below read; keep in sync with `paths` in .github/workflows/ci.yml.
+rust_paths='^(src/|tests/|action/|\.github/workflows/|Cargo\.(toml|lock)$|(mise|clippy|deny)\.toml$|install\.sh$|action\.yml$|docs/rules\.md$)'
+
+# git passes the remote as arguments and one "<local ref> <local sha> <remote ref> <remote sha>" line per
+# pushed ref. Without arguments (`make check`), everything is checked.
+if [[ $# -gt 0 ]]; then
+  rust_changed=false
+  while read -r _ local_sha _ remote_sha; do
+    [[ "$local_sha" =~ ^0+$ ]] && continue # a deleted ref
+    if [[ "$remote_sha" =~ ^0+$ ]]; then
+      # A new branch: compare with where it left master.
+      base="$(git merge-base "$local_sha" origin/master 2>/dev/null || true)"
+    else
+      base="$remote_sha"
+    fi
+    # A base git cannot diff against (unknown remote commit, no origin/master) checks everything.
+    if [[ -z "$base" ]] || ! changed="$(git diff --name-only "$base" "$local_sha" 2>/dev/null)" \
+      || grep -Eq "$rust_paths" <<<"$changed"; then
+      rust_changed=true
+      break
+    fi
+  done
+  if [[ "$rust_changed" == false ]]; then
+    echo "pre-push: no change to Rust code, tests, or workflows; skipping the cargo checks"
+    exit 0
+  fi
+fi
+
 echo "pre-push: cargo fmt --check"
 cargo fmt --check
 

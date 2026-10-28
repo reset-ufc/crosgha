@@ -3,8 +3,36 @@ name: CI
 on:
   push:
     branches: [master]
+    paths:
+      # What the jobs below read; keep in sync with rust_paths in .githooks/pre-push.
+      - "src/**"
+      - "tests/**"
+      - "action/**"
+      - ".github/workflows/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "mise.toml"
+      - "clippy.toml"
+      - "deny.toml"
+      - "install.sh"
+      - "action.yml"
+      - "docs/rules.md"
   pull_request:
     branches: [master]
+    paths:
+      # What the jobs below read; keep in sync with rust_paths in .githooks/pre-push.
+      - "src/**"
+      - "tests/**"
+      - "action/**"
+      - ".github/workflows/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "mise.toml"
+      - "clippy.toml"
+      - "deny.toml"
+      - "install.sh"
+      - "action.yml"
+      - "docs/rules.md"
 
 permissions: {}
 
