@@ -183,7 +183,9 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         }
 
         // `--fix` either removes every finding of the rule or leaves all of them in place.
-        let copy = std::env::temp_dir().join(format!("crosgha-{}-{name}", std::process::id()));
+        // rules/ and online/ share fixture names and run in parallel threads of one process.
+        let copy =
+            std::env::temp_dir().join(format!("crosgha-{}-{directory}-{name}", std::process::id()));
         fs::copy(&path, &copy).unwrap();
         scan(&copy, true, api, config);
         let fixed_source = fs::read_to_string(&copy).unwrap();
