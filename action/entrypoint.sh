@@ -57,7 +57,7 @@ if [[ "${CROSGHA_ANNOTATIONS:-false}" == true && "${CROSGHA_ADVANCED_SECURITY:-t
     fail "annotations requires advanced-security: false"
 fi
 if [[ "${CROSGHA_FIX:-none}" == pull-request && -z "${CROSGHA_FIX_TOKEN:-}" ]]; then
-    fail "fix: pull-request requires fix-token; see ROADMAP.md"
+    fail "fix: pull-request requires fix-token: a GitHub App token or fine-grained PAT with Contents, Pull requests, and Workflows: write"
 fi
 if [[ "${CROSGHA_AUTO_MERGE:-false}" == true && "${CROSGHA_FIX:-none}" != pull-request ]]; then
     fail "dangerously-auto-merge requires fix: pull-request"

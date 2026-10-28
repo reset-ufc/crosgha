@@ -160,8 +160,8 @@ over this CLI. Its inputs are a superset of `zizmorcore/zizmor-action`'s, so
    action; the caller grants `security-events: write`.
 5. In requested PR mode, run verified fixes, then create a branch and a PR with
    the supplied `fix-token` (GitHub App token or fine-grained PAT) that lists
-   each rule and fix. Auto-merge is a separate explicit opt-in and requires the
-   checks described in [ROADMAP.md](../ROADMAP.md). The Action never merges directly.
+   each rule and fix. Auto-merge is a separate explicit opt-in that fails fast when the
+   base branch has no required status checks. The Action never merges directly.
 
 Steps 1-4 are implemented in `action/entrypoint.sh` and `action.yml`. The release version comes
 from the Action's own `Cargo.toml`, which release-please bumps in the tagged commit, and tags are

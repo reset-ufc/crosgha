@@ -24,4 +24,4 @@ A run goes like this:
 3. It uploads SARIF with `github/codeql-action/upload-sarif`, pinned by SHA.
 4. Only then does it fail according to `fail-on`.
 
-Linux X64 runners only. `fix: pull-request` is validated but not implemented yet; see [ROADMAP.md](../ROADMAP.md).
+Linux X64 runners only. `fix: pull-request` is validated but not implemented yet.
