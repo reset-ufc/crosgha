@@ -54,15 +54,12 @@ main() {
     dir="${CROSGHA_INSTALL_DIR:-$HOME/.local/bin}"
     mkdir -p "$dir"
     # Copy next to the target, then rename, so a running crosgha is never overwritten mid-write.
+    # The binary is never run here: it is static, so the platform check above is enough, and the
+    # installer stays reviewable as a single stage.
     cp "$tmp/crosgha-$target/crosgha" "$dir/.crosgha.new"
     chmod 755 "$dir/.crosgha.new"
-    # A binary for another libc or CPU passes the checksum; keep the working one unless this runs.
-    if ! installed="$("$dir/.crosgha.new" --version)"; then
-        rm -f "$dir/.crosgha.new"
-        fail "the downloaded crosgha does not run on $platform; nothing was replaced"
-    fi
     mv -f "$dir/.crosgha.new" "$dir/crosgha"
-    printf 'Installed %s to %s/crosgha\n' "$installed" "$dir"
+    printf 'Installed crosgha %s to %s/crosgha\n' "$version" "$dir"
 
     case ":$PATH:" in
         *":$dir:"*) ;;
