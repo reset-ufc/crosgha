@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.97.0"
 description = "GitHub Actions workflow smell tool"
 repository = "https://github.com/reset-ufc/crosgha"
+license = "Apache-2.0"
 publish = false
 
 [[bin]]

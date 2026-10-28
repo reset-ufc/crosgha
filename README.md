@@ -10,7 +10,7 @@ workflows and fixes them deterministically, preserving comments and formatting.
 - Output is text, JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), or brief lines for AI
   agents.
 
-License: TBD by the author.
+License: [Apache-2.0](LICENSE).
 
 ## Install
 
