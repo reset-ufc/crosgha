@@ -1,7 +1,7 @@
 # Roadmap
 
-What is still planned. Shipped behavior is documented in [README.md](README.md) and
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+What is still planned. Shipped behavior is documented in [README.md](README.md) and the
+[docs/](docs/) it links to.
 
 ## Shipped
 

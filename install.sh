@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs the crosgha release binary for the current user:
-#   curl -fsSL https://crosgha.meiazero.dev/install.sh | sh
+#   curl -fsSL https://crosgha.resetlab.com.br/install.sh | sh
 # CROSGHA_VERSION pins a release (default: latest); CROSGHA_INSTALL_DIR overrides ~/.local/bin.
 # Everything runs inside main, so a download cut short never executes half a script.
 set -eu
@@ -15,13 +15,13 @@ main() {
     # ponytail: releases ship Linux x86_64 only; add a case per target once dist-workspace.toml builds it.
     case "$platform" in
         "Linux x86_64") target=x86_64-unknown-linux-gnu ;;
-        *) fail "no release binary for $platform; build from source: cargo install --git https://github.com/meiazero/crosgha" ;;
+        *) fail "no release binary for $platform; build from source: cargo install --git https://github.com/reset-ufc/crosgha" ;;
     esac
     for tool in curl tar xz sha256sum; do
         command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
     done
 
-    base="${CROSGHA_RELEASE_BASE:-https://github.com/meiazero/crosgha/releases}"
+    base="${CROSGHA_RELEASE_BASE:-https://github.com/reset-ufc/crosgha/releases}"
     protocol='=https'
     # Tests serve a local release over plain HTTP; nothing else may.
     case "$base" in

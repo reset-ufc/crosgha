@@ -14,7 +14,7 @@ jobs:
       - name: Install zizmor
         run: pip install zizmor==1.30.0
       - name: Run zizmor
-        uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
         with:
           inputs: .github/workflows
           persona: pedantic
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
         with:
           persist-credentials: false
-      - uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
         with:
           persona: auditor
           advanced-security: 'false'

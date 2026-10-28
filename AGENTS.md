@@ -31,9 +31,9 @@ It is listed in `.git/info/exclude` and never committed.
 
 ## Rules
 
-1. **Independence.** Allowed dependencies are infrastructure crates only, pinned exactly:
-   - `github-actions-models`, `yamlpath`, `yamlpatch`, `github-actions-expressions` at `=1.30.1`
-   - generic crates such as clap and serde
+1. **Independence.** Allowed dependencies are infrastructure crates only, pinned exactly in `Cargo.toml`:
+   - `yamlpath`, `yamlpatch`, `yaml_serde`, `github-actions-models`, `github-actions-expressions`
+   - generic crates such as clap, serde, and ureq
 
    Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: crosgha checks our own workflows in CI and the pre-push hook. Compatibility is allowed: reading another tool's config format, accepting its rule IDs as aliases, and rewriting its Action step in `migrate`. Running or porting its detection logic is not.
 2. **Fix validation is ours.** A fix is accepted only when all three hold:
@@ -95,6 +95,7 @@ action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs
 install.sh                  `curl | sh` installer: verified release binary into ~/.local/bin
 docs/ARCHITECTURE.md        Module interfaces and Action flow
+docs/*.md                   User docs linked from README.md; docs/rules.md is checked against the code by tests/report.rs
 tests/cli.rs                end-to-end scans: inputs, discovery, exit status, flags
 tests/{fix,config,report,repository,migrate,hook}.rs  end-to-end tests per feature
 tests/rules.rs              fixture-driven rule checks, fake GitHub API server
@@ -111,7 +112,7 @@ ROADMAP.md                  shipped vs. next; PR and auto-merge mode design
 ```
 
 ## Hosting
-- GitHub repo: `meiazero/crosgha`, **private** (a study comes out of it), default branch `master`, remote `origin`.
+- GitHub repo: `reset-ufc/crosgha`, **private** (a study comes out of it), default branch `master`, remote `origin`.
 - "Allow GitHub Actions to create and approve pull requests" is enabled, so release-please can open its release PR.
 
 No PAT or secret is needed: `release-please.yml` dispatches `release.yml` with the default `GITHUB_TOKEN`.

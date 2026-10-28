@@ -14,10 +14,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Run zizmor 🌈
-        uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
         with:
           persona: pedantic # Code smells too.
           min-severity: medium
-      - uses: meiazero/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
         with:
           advanced-security: 'false'
