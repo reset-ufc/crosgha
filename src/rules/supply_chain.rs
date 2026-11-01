@@ -160,10 +160,12 @@ const YARN: Spec = Spec {
     long: &["prefix", "registry", "cwd"],
 };
 // `ToolInstallArgs` in astral-sh/uv crates/uv-cli/src/lib.rs at
-// e4c55567ada966de4911513b5c526070e6cddd3f. `--with` is left out on purpose: its value is a package.
+// e4c55567ada966de4911513b5c526070e6cddd3f.
 const UV_TOOL: Spec = Spec {
-    short: &['p', 'i', 'f', 'c', 'b'],
+    short: &['p', 'i', 'f', 'c', 'b', 'w'],
     long: &[
+        "from",
+        "with",
         "python",
         "python-platform",
         "torch-backend",
@@ -231,7 +233,7 @@ fn unpinned_install(program: &Program) -> bool {
         }
         // uv also pins with `name@version`; `name@latest` moves (astral-sh/uv docs/concepts/tools.md
         // at e4c55567ada966de4911513b5c526070e6cddd3f).
-        ["uv tool", "install", args @ ..] => packages(args, &UV_TOOL).any(|package| {
+        ["uv tool", "install", args @ ..] => uv_tool_packages(args).into_iter().any(|package| {
             !package.contains("==")
                 && !is_local_or_url(package)
                 && package
@@ -275,7 +277,25 @@ fn packages<'a>(args: &'a [&'a str], spec: &'a Spec) -> impl Iterator<Item = &'a
             Arg::Operand(operand) => Some(operand),
             _ => None,
         })
-        .filter(|arg| !arg.contains("${{") && !arg.starts_with('$') && !arg.starts_with('>'))
+        .filter(|arg| is_named_package(arg))
+}
+
+fn is_named_package(arg: &str) -> bool {
+    !arg.contains("${{") && !arg.starts_with('$') && !arg.starts_with('>')
+}
+
+/// What `uv tool install` installs: `--with` values, and `--from`'s value or else the operand,
+/// which with `--from` only names the executable.
+fn uv_tool_packages<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let from = shell::args(args, &UV_TOOL).any(|arg| matches!(arg, Arg::Long("from", _)));
+    shell::args(args, &UV_TOOL)
+        .filter_map(|arg| match arg {
+            Arg::Long("from" | "with", value) | Arg::Short('w', value) => value,
+            Arg::Operand(operand) if !from => Some(operand),
+            _ => None,
+        })
+        .filter(|arg| is_named_package(arg))
+        .collect()
 }
 
 fn is_local_or_url(argument: &str) -> bool {
