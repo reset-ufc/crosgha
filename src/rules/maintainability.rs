@@ -428,9 +428,11 @@ pub fn cache_misuse(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     .iter()
                     .filter(move |(setup, since, _)| {
                         step.uses_action(setup)
-                            && version
-                                .as_ref()
-                                .is_none_or(|version| version.as_slice() >= since.as_slice())
+                            // `@vN` follows that major's newest release, so a major-only ref is
+                            // compared by its major alone.
+                            && version.as_ref().is_none_or(|version| {
+                                version.as_slice() >= &since[..since.len().min(version.len())]
+                            })
                     })
                     .flat_map(|(_, _, directories)| directories.iter().copied())
             })

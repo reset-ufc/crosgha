@@ -16,6 +16,17 @@ jobs:
           echo "::add-path::/opt/bin"
       - run: echo "x=1" >> "$GITHUB_OUTPUT"
       - run: echo "::add-mask::value"
+      # A comment that names a command runs nothing.
+      - run: |
+          # migrated from ::set-output to GITHUB_OUTPUT
+          echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: |
+          echo "x=1" >> "$GITHUB_OUTPUT" # was ::set-output
+      - run: | # expect: deprecated-command
+          # still uses the old form
+          echo "::set-env name=A::1"
+      - run: | # expect: deprecated-command
+          printf '%s\n' '::save-state name=a # b::1'
       - run: ./legacy-tool
         env:
           ACTIONS_ALLOW_UNSECURE_COMMANDS: 'true' # expect: deprecated-command

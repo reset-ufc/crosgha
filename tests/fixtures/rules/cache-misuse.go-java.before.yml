@@ -29,3 +29,32 @@ jobs:
         with:
           path: ~/.gradle/caches
           key: gradle-${{ hashFiles('**/*.gradle*') }}
+  major-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-go@v3
+      - uses: actions/cache@v4 # expect: cache-misuse
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go
+  older-major:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-go@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go
+  older-minor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-go@v3.1.0
+      - uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go

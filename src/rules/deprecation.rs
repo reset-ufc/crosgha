@@ -5,7 +5,7 @@ use yaml_serde::Value;
 use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{ChangeKind, Finding, ProposedFix, Rule, common, repository, runner};
+use super::{ChangeKind, Finding, ProposedFix, Rule, common, repository, runner, shell};
 use crate::{
     policy::{Persona, Severity},
     workflow::Workflow,
@@ -67,9 +67,13 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         scopes.push((job.route.clone(), job.location(), job.value));
         for step in common::steps(&job) {
             if let Some(command) = step.run().and_then(|script| {
-                DEPRECATED_COMMANDS
-                    .iter()
-                    .find(|command| script.contains(*command))
+                let commands = shell::commands(script);
+                DEPRECATED_COMMANDS.iter().find(|command| {
+                    commands
+                        .iter()
+                        .flat_map(|run| &run.words)
+                        .any(|word| word.contains(**command))
+                })
             }) {
                 findings.push(common::finding(
                     workflow,

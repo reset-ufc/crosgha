@@ -44,7 +44,7 @@ inputs:
     required: false
     default: 'true'
   color:
-    description: Colorize terminal output.
+    description: Accepted for zizmor-action compatibility; crosgha's report in the Action is never colored.
     required: false
     default: 'true'
   annotations:

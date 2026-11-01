@@ -1,4 +1,7 @@
 rules:
+  dangerous-triggers:
+    config:
+      allow: [issue_comment]
   secrets-outside-env:
     config:
       allow: [CI_COVERAGE_TOKEN]

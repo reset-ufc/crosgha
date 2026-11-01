@@ -399,3 +399,55 @@ fn action_keeps_scanned_file_names_from_forging_commands_or_breaking_the_summary
     fs::remove_dir_all(repo).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn job_summary_is_plain_markdown_in_every_mode() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+
+    // Annotations go to the log; the summary keeps the count and no workflow commands.
+    let annotated = run_action(
+        &base,
+        ".",
+        &[
+            ("CROSGHA_ANNOTATIONS", "true"),
+            ("CROSGHA_ADVANCED_SECURITY", "false"),
+        ],
+    );
+    assert!(annotated.output.status.success());
+    let findings = output_value(&annotated.outputs, "findings").unwrap();
+    assert_ne!(findings, "0", "{}", annotated.outputs);
+    assert_eq!(
+        annotated.summary,
+        format!(
+            "### crosgha v{}: {findings} finding(s)\n\nFindings are annotations in this run's log.\n",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+
+    // A caller's FORCE_COLOR reaches neither the summary nor the log.
+    for extra in [
+        vec![("FORCE_COLOR", "1")],
+        vec![
+            ("FORCE_COLOR", "1"),
+            ("CROSGHA_ANNOTATIONS", "true"),
+            ("CROSGHA_ADVANCED_SECURITY", "false"),
+        ],
+    ] {
+        let run = run_action(&base, ".", &extra);
+        let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+        assert!(run.output.status.success(), "{stdout}");
+        assert!(!run.summary.contains('\u{1b}'), "{:?}", run.summary);
+        assert!(!stdout.contains('\u{1b}'), "{stdout:?}");
+    }
+
+    // The default mode still puts the text report in the summary.
+    let plain = run_action(&base, ".", &[("FORCE_COLOR", "1")]);
+    assert!(plain.summary.contains("```text\n"), "{}", plain.summary);
+    assert!(
+        plain.summary.contains("error[persist-credentials]"),
+        "{}",
+        plain.summary
+    );
+    assert!(!plain.summary.contains("::warning"), "{}", plain.summary);
+}
