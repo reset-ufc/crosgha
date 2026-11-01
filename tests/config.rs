@@ -166,10 +166,71 @@ fn config_blocks_without_a_crosgha_reader_are_reported() {
     assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("`rules.secrets-outside-env.config` has no crosgha equivalent"),
+        stderr.contains("`rules.dangerous-triggers.config` has no crosgha equivalent"),
         "{stderr}"
     );
+    assert!(
+        stderr.contains("`rules.secrets-outside-env` matches no crosgha rule"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("secrets-outside-env.config"), "{stderr}");
     assert!(!stderr.contains("unpinned-uses"), "{stderr}");
+}
+
+#[test]
+fn rule_ids_no_rule_answers_to_are_named_and_leave_the_scan_unchanged() {
+    let repo = TempDir::new("unknown-rule-id");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    fs::create_dir_all(repo.join(".github/workflows")).unwrap();
+    fs::write(
+        repo.join(".github/workflows/ci.yml"),
+        fs::read(fixture("rules/persist-credentials.before.yml")).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        repo.join("crosgha.yml"),
+        concat!(
+            "rules:\n",
+            "  persist-credential:\n", // typo for persist-credentials
+            "    disable: true\n",
+            "  also-unknown:\n",
+            "    disable: true\n",
+            "    config:\n",
+            "      key: value\n",
+            "  persist-credentials:\n", // the real ID
+            "    remap:\n",
+            "      severity: high\n",
+            "  artipacked:\n", // zizmor's name for the same rule
+            "    ignore: [other.yml]\n",
+            "  template-injection:\n", // an equivalent, also known
+            "    disable: true\n",
+        ),
+    )
+    .unwrap();
+
+    let output = bin()
+        .args(["--offline", "--color", "never"])
+        .arg(&*repo)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+
+    let warned: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("rules."))
+        .collect();
+    assert_eq!(
+        warned,
+        [
+            "warning: `rules.persist-credential` matches no crosgha rule and is ignored",
+            "warning: `rules.also-unknown` matches no crosgha rule and is ignored",
+        ],
+        "{stderr}"
+    );
+    // The misspelled key disabled nothing, and the valid keys next to it still apply.
+    assert!(stdout.contains("error[persist-credentials]"), "{stdout}");
 }
 
 #[test]

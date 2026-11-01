@@ -245,6 +245,11 @@ fn scan(args: &Args) -> Result<Scan, String> {
         .or_else(|| std::env::var("GITHUB_TOKEN").ok())
         .filter(|token| !token.is_empty());
     let (mut configs, owners) = load_configs(args)?;
+    for id in configs.iter().flat_map(rules::unknown_ids) {
+        report::warning(format_args!(
+            "`rules.{id}` matches no crosgha rule and is ignored"
+        ));
+    }
     for id in configs.iter().flat_map(rules::unused_options) {
         report::warning(format_args!(
             "`rules.{id}.config` has no crosgha equivalent and is ignored"

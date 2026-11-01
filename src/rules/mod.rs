@@ -256,7 +256,16 @@ pub fn all() -> impl Iterator<Item = (&'static Rule, &'static str)> {
         .chain([(&online::SETTINGS, "repository")])
 }
 
-/// Config IDs whose `config` block no crosgha rule reads.
+/// Config IDs that no crosgha rule or equivalent answers to.
+pub fn unknown_ids(config: &crate::config::Config) -> Vec<String> {
+    config
+        .ids()
+        .filter(|id| !all().any(|(rule, _)| rule.answers_to(id)))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Config IDs of known rules whose `config` block no crosgha rule reads.
 pub fn unused_options(config: &crate::config::Config) -> Vec<String> {
     let readers: Vec<&Rule> = CONFIGURABLE
         .iter()
@@ -268,7 +277,10 @@ pub fn unused_options(config: &crate::config::Config) -> Vec<String> {
         .collect();
     config
         .configured_ids()
-        .filter(|id| !readers.iter().any(|rule| rule.answers_to(id)))
+        .filter(|id| {
+            all().any(|(rule, _)| rule.answers_to(id))
+                && !readers.iter().any(|rule| rule.answers_to(id))
+        })
         .map(str::to_owned)
         .collect()
 }

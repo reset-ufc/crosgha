@@ -32,7 +32,9 @@ config, or passed with `--config` (also `CROSGHA_CONFIG` or `ZIZMOR_CONFIG`; an 
 input. Discovery starts at the repository root whether the input is the root, its `.github`, `.github/workflows`, or a
 workflow in it, and walks up to the Git root; in each directory `.github/crosgha.yml` wins over `crosgha.yml`, then
 `.github/zizmor.yml`, then `zizmor.yml` (`.yaml` is accepted too). `--no-config` skips both. Keys may use crosgha's or
-zizmor's rule names. Unknown keys, wrong value types, and unknown severities are config errors (exit 2).
+zizmor's rule names. Unknown settings keys, wrong value types, and unknown severities are config errors (exit 2). A
+`rules.<id>` that matches no crosgha rule or equivalent, such as a typo or a zizmor rule crosgha lacks, is ignored with
+a warning on stderr that names it, so a file written for zizmor keeps working.
 
 | Key | Effect |
 |---|---|
