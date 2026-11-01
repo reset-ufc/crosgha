@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/reset-ufc/crosgha/compare/v0.13.4...v0.14.0) (2026-11-01)
+
+
+### Added
+
+* **rules:** report workflows GitHub refuses to run ([2351956](https://github.com/reset-ufc/crosgha/commit/2351956678b055c4768bf40ecde1d4f315b12810))
+* **rules:** report workflows GitHub refuses to run ([80a7c0b](https://github.com/reset-ufc/crosgha/commit/80a7c0b67a29dc17b2dc59c0cbc30a4d90d472ec))
+
 ## [0.13.4](https://github.com/reset-ufc/crosgha/compare/v0.13.3...v0.13.4) (2026-11-01)
 
 
