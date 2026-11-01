@@ -185,35 +185,46 @@ fn unpinned_install(program: &Program) -> bool {
     let words: Vec<&str> = match words.as_slice() {
         ["python" | "python3", "-m", rest @ ..] => rest.to_vec(),
         ["uv", "pip", rest @ ..] => [&["pip"][..], rest].concat(),
-        ["uv", "tool", rest @ ..] => [&["pipx"][..], rest].concat(),
+        ["uv", "tool", rest @ ..] => [&["uv tool"][..], rest].concat(),
         _ => words,
     };
-    // Global flags may precede the subcommand, as in `npm -g install`.
-    let words: Vec<&str> = words
-        .iter()
-        .take(1)
-        .chain(
-            words
-                .iter()
-                .skip(1)
-                .skip_while(|word| word.starts_with('-')),
-        )
-        .copied()
-        .collect();
+    // Global flags may precede the subcommand, as in `npm --prefix ./tools install`.
+    let spec = match words.first().copied() {
+        Some("pip" | "pip3" | "pipx" | "uv tool") => &PIP,
+        Some("npm") => &NPM,
+        Some("pnpm") => &PNPM,
+        Some("yarn") => &YARN,
+        Some("go") => &GO,
+        Some("conda" | "mamba" | "micromamba") => &CONDA,
+        Some("cargo") => &CARGO,
+        Some("gem") => &GEM,
+        _ => &Spec::NONE,
+    };
+    let subcommand = shell::leading_options(&words[1..], spec).1;
+    let words: Vec<&str> = words.iter().take(1).chain(subcommand).copied().collect();
     let npm_unpinned = |package: &str| !has_npm_version(package) && !is_local_or_url(package);
     match words.as_slice() {
         ["pip" | "pip3" | "pipx", "install", args @ ..] => {
             packages(args, &PIP).any(|package| !package.contains("==") && !is_local_or_url(package))
         }
+        // uv also pins with `name@version`; `name@latest` moves (astral-sh/uv docs/concepts/tools.md
+        // at e4c55567ada966de4911513b5c526070e6cddd3f).
+        ["uv tool", "install", args @ ..] => packages(args, &PIP).any(|package| {
+            !package.contains("==")
+                && !is_local_or_url(package)
+                && package
+                    .rsplit_once('@')
+                    .is_none_or(|(_, version)| version.eq_ignore_ascii_case("latest"))
+        }),
         ["npm", "install" | "i" | "add", args @ ..] => packages(args, &NPM).any(npm_unpinned),
         ["pnpm", "install" | "i" | "add", args @ ..] => packages(args, &PNPM).any(npm_unpinned),
         ["yarn", "global", "add", args @ ..] => packages(args, &YARN).any(npm_unpinned),
-        // A module version is `v<semver>` or a commit hash; `latest` and branch names move.
+        // An exact module version is `v<major.minor.patch>` or a commit hash; `latest`, branch names,
+        // and the prefixes `v1` and `v1.2` move (https://go.dev/ref/mod, Version queries).
         ["go", "install", args @ ..] => packages(args, &GO).any(|module| {
             !is_local_or_url(module)
                 && module.rsplit_once('@').is_none_or(|(_, version)| {
-                    !(version.starts_with('v')
-                        && version[1..].starts_with(|c: char| c.is_ascii_digit())
+                    !(version.strip_prefix('v').is_some_and(is_exact_semver)
                         || version.len() >= 7
                             && version.bytes().all(|byte| byte.is_ascii_hexdigit()))
                 })
@@ -222,14 +233,14 @@ fn unpinned_install(program: &Program) -> bool {
         ["conda" | "mamba" | "micromamba", "install", args @ ..] => packages(args, &CONDA)
             .any(|package| !package.contains('=') || package.contains(['<', '>'])),
         ["cargo", "install", args @ ..] => {
-            let pinned_by_flag = args
-                .iter()
-                .any(|arg| matches!(*arg, "--version" | "--vers" | "--path" | "--git"));
+            let pinned_by_flag = shell::args(args, &CARGO)
+                .any(|arg| matches!(arg, Arg::Long("version" | "vers" | "path" | "git", _)));
             !pinned_by_flag && packages(args, &CARGO).any(|name| !name.contains('@'))
         }
         ["gem", "install", args @ ..] => {
-            !args.iter().any(|arg| matches!(*arg, "-v" | "--version"))
-                && packages(args, &GEM).any(|name| !name.contains(':'))
+            let pinned_by_flag = shell::args(args, &GEM)
+                .any(|arg| matches!(arg, Arg::Short('v', _) | Arg::Long("version", _)));
+            !pinned_by_flag && packages(args, &GEM).any(|name| !name.contains(':'))
         }
         _ => false,
     }
@@ -261,7 +272,10 @@ fn has_npm_version(package: &str) -> bool {
     let Some(index) = package.rfind('@').filter(|index| *index > 0) else {
         return false;
     };
-    let version = package[index + 1..].trim_start_matches(['v', '=']);
+    is_exact_semver(package[index + 1..].trim_start_matches(['v', '=']))
+}
+
+fn is_exact_semver(version: &str) -> bool {
     let core = version.split(['-', '+']).next().unwrap_or("");
     let numbers: Vec<&str> = core.split('.').collect();
     numbers.len() == 3

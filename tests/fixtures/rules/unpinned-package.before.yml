@@ -54,3 +54,22 @@ jobs:
       - parallel:
           - run: npm install eslint # expect: unpinned-package
           - run: npm install eslint@9.9.0
+      - run: cargo install --version=0.28.0 cargo-dist --locked
+      - run: cargo install --vers=0.28.0 cargo-dist
+      - run: cargo install --git=https://example.com/tool.git tool
+      - run: gem install bundler --version=2.4.22
+      - run: gem install bundler -v2.4.22
+      - run: uv tool install ruff@0.6.0
+      - run: uv tool install ruff==0.6.0
+      - run: uv tool install ruff@latest # expect: unpinned-package
+      - run: uv tool install ruff # expect: unpinned-package
+      - run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1 # expect: unpinned-package
+      - run: go install golang.org/x/tools/gopls@v0.16 # expect: unpinned-package
+      - run: go install example.com/tool@v1.2.3-rc.1
+      - run: go install example.com/tool@v0.0.0-20240101000000-abcdefabcdef
+      - run: go install example.com/tool@v2.0.0+incompatible
+      - run: npm --prefix ./tools install eslint # expect: unpinned-package
+      - run: npm --prefix ./tools install eslint@9.9.0
+      - run: npm --prefix=./tools install eslint # expect: unpinned-package
+      - run: pnpm --dir ./tools add eslint # expect: unpinned-package
+      - run: pnpm -C ./tools add eslint # expect: unpinned-package
