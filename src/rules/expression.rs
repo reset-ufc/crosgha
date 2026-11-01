@@ -143,6 +143,9 @@ pub fn context_paths(text: &str) -> Vec<(usize, usize)> {
 /// actions/runner `DictionaryContextData.cs` at d7bc179baf11a02110b46cfbbc4040f74ac3f60a).
 pub fn untrusted_contexts(expression: &str) -> Vec<String> {
     let expression = dotted(&expression.to_ascii_lowercase());
+    if only_boolean(&expression) {
+        return Vec::new();
+    }
     let mut found = Vec::new();
     for (start, end) in context_paths(&expression) {
         let path = &expression[start..end];
@@ -171,6 +174,59 @@ pub fn untrusted_contexts(expression: &str) -> Vec<String> {
         }
     }
     found
+}
+
+/// Whether `expression` (lowercase) can only evaluate to `true` or `false`, so none of the text it
+/// reads comes out. `&&` and `||` return an operand, so every operand must be boolean too. Operators
+/// and the functions that return booleans, loosest operator first:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+fn only_boolean(expression: &str) -> bool {
+    let expression = expression.trim();
+    for operator in ["||", "&&"] {
+        let operands = split_outside_groups(expression, operator);
+        if operands.len() > 1 {
+            return operands.into_iter().all(only_boolean);
+        }
+    }
+    let compares = ["==", "!=", "<", ">"]
+        .iter()
+        .any(|operator| split_outside_groups(expression, operator).len() > 1);
+    if compares || expression.starts_with('!') {
+        return true;
+    }
+    match expression
+        .strip_suffix(')')
+        .and_then(|body| body.split_once('('))
+    {
+        Some(("", group)) => only_boolean(group),
+        Some((name, _)) => ["contains", "startswith", "endswith"].contains(&name.trim_end()),
+        None => false,
+    }
+}
+
+/// `text` split on `operator` where it stands outside string literals, parentheses, and indexes.
+fn split_outside_groups<'a>(text: &'a str, operator: &str) -> Vec<&'a str> {
+    let bytes = text.as_bytes();
+    let mut parts = Vec::new();
+    let (mut start, mut depth, mut quoted) = (0, 0, false);
+    for index in 0..bytes.len() {
+        match bytes[index] {
+            b'\'' => quoted = !quoted,
+            _ if quoted => {}
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            _ if depth == 0
+                && index >= start
+                && bytes[index..].starts_with(operator.as_bytes()) =>
+            {
+                parts.push(&text[start..index]);
+                start = index + operator.len();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
 }
 
 pub fn untrusted_in_text(text: &str) -> Vec<String> {
