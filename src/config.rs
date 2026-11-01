@@ -265,6 +265,10 @@ impl Config {
             .find_map(|settings| settings.options.as_ref())
     }
 
+    pub fn ids(&self) -> impl Iterator<Item = &str> {
+        self.rules.iter().map(|(id, _)| id.as_str())
+    }
+
     /// IDs that carry a `config` block, to warn about rules that cannot read one.
     pub fn configured_ids(&self) -> impl Iterator<Item = &str> {
         self.rules
