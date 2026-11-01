@@ -20,7 +20,9 @@ A run goes like this:
 
 1. It downloads the release that matches its own revision and checks the archive against the release's `sha256.sum`
    before running it.
-2. It runs crosgha once. The log and the job summary get the text report.
+2. It runs crosgha once. The log and the job summary get the uncolored text report; `color` is accepted for
+   zizmor-action compatibility and changes nothing. With `annotations: true`, the log gets annotations and the job
+   summary only the finding count.
 3. It uploads SARIF with `github/codeql-action/upload-sarif`, pinned by SHA.
 4. Only then does it fail according to `fail-on`.
 
