@@ -69,6 +69,25 @@ jobs:
       - parallel:
           - run: npm install eslint # expect: unpinned-package
           - run: npm install eslint@9.9.0
+      - run: cargo install --version=0.28.0 cargo-dist --locked
+      - run: cargo install --vers=0.28.0 cargo-dist
+      - run: cargo install --git=https://example.com/tool.git tool
+      - run: gem install bundler --version=2.4.22
+      - run: gem install bundler -v2.4.22
+      - run: uv tool install ruff@0.6.0
+      - run: uv tool install ruff==0.6.0
+      - run: uv tool install ruff@latest # expect: unpinned-package
+      - run: uv tool install ruff # expect: unpinned-package
+      - run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1 # expect: unpinned-package
+      - run: go install golang.org/x/tools/gopls@v0.16 # expect: unpinned-package
+      - run: go install example.com/tool@v1.2.3-rc.1
+      - run: go install example.com/tool@v0.0.0-20240101000000-abcdefabcdef
+      - run: go install example.com/tool@v2.0.0+incompatible
+      - run: npm --prefix ./tools install eslint # expect: unpinned-package
+      - run: npm --prefix ./tools install eslint@9.9.0
+      - run: npm --prefix=./tools install eslint # expect: unpinned-package
+      - run: pnpm --dir ./tools add eslint # expect: unpinned-package
+      - run: pnpm -C ./tools add eslint # expect: unpinned-package
 ```
 
 **Compliant**
@@ -327,6 +346,23 @@ jobs:
       - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with:
           title: ${{ github.event.issue.title }}
+      # A comparison, `!`, or boolean function returns only true or false, so no text reaches the script.
+      - run: |
+          if [ "${{ startsWith(github.event.comment.body, '/deploy') }}" = "true" ]; then echo deploy; fi
+      - run: echo "is-bug=${{ contains(github.event.issue.labels.*.name, 'bug') }}" >> "$GITHUB_OUTPUT"
+      - run: echo "${{ endsWith(github.event.issue.title, '!') }}"
+      - run: echo "${{ github.event.issue.body == '' }}"
+      - run: echo "${{ github.event.issue.title != 'a && b' }}"
+      - run: echo "${{ !github.event.issue.body }}"
+      - run: echo "${{ (github.event.issue.title == 'x') }}"
+      - run: echo "${{ contains(github.event.issue.title, 'x') && github.event.issue.body == '' }}"
+      # `&&` and `||` return an operand, and these functions return text.
+      - run: echo "${{ github.event.issue.body == '' || github.event.issue.body }}" # expect: script-injection
+      - run: echo "${{ contains(github.event.issue.title, 'x') && github.event.issue.title }}" # expect: script-injection
+      - run: echo "${{ format('{0}', github.event.comment.body) }}" # expect: script-injection
+      - run: echo "${{ join(github.event.issue.labels.*.name) }}" # expect: script-injection
+      - run: echo "${{ (github.event.issue.title) }}" # expect: script-injection
+      - run: echo "${{ format('{0}', github.event.issue.title == 'x') }} ${{ github.event.issue.title }}" # expect: script-injection
 ```
 
 **Compliant**
@@ -979,6 +1015,12 @@ on: [push]
 permissions: {}
 env:
   TOKEN: ${{ secrets.DEPLOY_TOKEN }} # expect: secrets-exposure
+  T2: ${{ SECRETS.OTHER }} # expect: secrets-exposure
+  T3: ${{ secrets['THIRD'] }} # expect: secrets-exposure
+  T4: ${{ secrets [ 'FOURTH' ] }} # expect: secrets-exposure
+  # Text that only looks like the context, in a literal or a longer name.
+  NOT_SECRET: ${{ 'secrets.NOPE' }}
+  NOT_SECRET_2: ${{ env.my_secrets.value }}
   MODE: production
 jobs:
   deploy:
@@ -2151,6 +2193,17 @@ jobs:
           echo "::add-path::/opt/bin"
       - run: echo "x=1" >> "$GITHUB_OUTPUT"
       - run: echo "::add-mask::value"
+      # A comment that names a command runs nothing.
+      - run: |
+          # migrated from ::set-output to GITHUB_OUTPUT
+          echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: |
+          echo "x=1" >> "$GITHUB_OUTPUT" # was ::set-output
+      - run: | # expect: deprecated-command
+          # still uses the old form
+          echo "::set-env name=A::1"
+      - run: | # expect: deprecated-command
+          printf '%s\n' '::save-state name=a # b::1'
       - run: ./legacy-tool
         env:
           ACTIONS_ALLOW_UNSECURE_COMMANDS: 'true' # expect: deprecated-command
