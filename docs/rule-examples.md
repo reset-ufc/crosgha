@@ -88,6 +88,17 @@ jobs:
       - run: npm --prefix=./tools install eslint # expect: unpinned-package
       - run: pnpm --dir ./tools add eslint # expect: unpinned-package
       - run: pnpm -C ./tools add eslint # expect: unpinned-package
+      - run: yarn --cwd tools global add eslint # expect: unpinned-package
+      - run: yarn --cwd tools global add eslint@9.9.0
+      - run: uv tool install --python 3.12 ruff@0.6.0
+      - run: uv tool install -p 3.12 ruff==0.6.0
+      - run: uv tool install --python=3.12 ruff@0.6.0
+      - run: uv tool install --python 3.12 ruff # expect: unpinned-package
+      - run: uv tool install --python 3.12 --python-platform linux ruff@0.6.0
+      - run: uv tool install --torch-backend cpu ruff@0.6.0
+      - run: uv tool install --with-requirements extras.txt ruff@0.6.0
+      - run: uv tool install -i https://example.com/simple ruff@0.6.0
+      - run: uv tool install --with black ruff@0.6.0 # expect: unpinned-package
 ```
 
 **Compliant**
