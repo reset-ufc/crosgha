@@ -6,7 +6,7 @@ On Linux x86_64, this installs the latest release to `~/.local/bin` after checki
 `sha256.sum`:
 
 ```sh
-curl -fsSL https://crosgha.resetlab.com.br/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/reset-ufc/crosgha/master/install.sh | sh
 ```
 
 `CROSGHA_VERSION=X.Y.Z` pins a release and `CROSGHA_INSTALL_DIR` changes the target directory. Uninstall with
