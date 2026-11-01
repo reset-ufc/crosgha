@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.4](https://github.com/reset-ufc/crosgha/compare/v0.13.3...v0.13.4) (2026-11-01)
+
+
+### Fixed
+
+* **rules:** skip option values of yarn and uv tool in unpinned-package ([bb0edc2](https://github.com/reset-ufc/crosgha/commit/bb0edc2f6f7ab59c2ab1660e2d9577c0375f2bdd))
+* **rules:** skip option values of yarn and uv tool in unpinned-package ([24936ff](https://github.com/reset-ufc/crosgha/commit/24936ff6e711c75cdca9f6e9a710e8eb55c7908d))
+
 ## [0.13.3](https://github.com/reset-ufc/crosgha/compare/v0.13.2...v0.13.3) (2026-11-01)
 
 
