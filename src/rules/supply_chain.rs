@@ -154,9 +154,30 @@ const PNPM: Spec = Spec {
     short: &['F', 'C'],
     long: &["registry", "loglevel", "filter", "dir"],
 };
+// `--cwd`: https://classic.yarnpkg.com/en/docs/cli/#toc-cwd
 const YARN: Spec = Spec {
     short: &[],
-    long: &["prefix", "registry"],
+    long: &["prefix", "registry", "cwd"],
+};
+// `ToolInstallArgs` in astral-sh/uv crates/uv-cli/src/lib.rs at
+// e4c55567ada966de4911513b5c526070e6cddd3f. `--with` is left out on purpose: its value is a package.
+const UV_TOOL: Spec = Spec {
+    short: &['p', 'i', 'f', 'c', 'b'],
+    long: &[
+        "python",
+        "python-platform",
+        "torch-backend",
+        "with-requirements",
+        "index",
+        "default-index",
+        "index-url",
+        "extra-index-url",
+        "find-links",
+        "constraints",
+        "overrides",
+        "excludes",
+        "build-constraints",
+    ],
 };
 const GO: Spec = Spec {
     short: &['C', 'o'],
@@ -190,7 +211,8 @@ fn unpinned_install(program: &Program) -> bool {
     };
     // Global flags may precede the subcommand, as in `npm --prefix ./tools install`.
     let spec = match words.first().copied() {
-        Some("pip" | "pip3" | "pipx" | "uv tool") => &PIP,
+        Some("pip" | "pip3" | "pipx") => &PIP,
+        Some("uv tool") => &UV_TOOL,
         Some("npm") => &NPM,
         Some("pnpm") => &PNPM,
         Some("yarn") => &YARN,
@@ -209,7 +231,7 @@ fn unpinned_install(program: &Program) -> bool {
         }
         // uv also pins with `name@version`; `name@latest` moves (astral-sh/uv docs/concepts/tools.md
         // at e4c55567ada966de4911513b5c526070e6cddd3f).
-        ["uv tool", "install", args @ ..] => packages(args, &PIP).any(|package| {
+        ["uv tool", "install", args @ ..] => packages(args, &UV_TOOL).any(|package| {
             !package.contains("==")
                 && !is_local_or_url(package)
                 && package
