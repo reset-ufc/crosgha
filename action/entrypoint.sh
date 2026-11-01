@@ -102,7 +102,9 @@ tar -xJf "$install_dir/$asset" -C "$install_dir"
 crosgha="$install_dir/crosgha-x86_64-unknown-linux-musl/crosgha"
 [[ -x "$crosgha" ]] || fail "release archive has no crosgha binary"
 
-args=(--persona "${CROSGHA_PERSONA:-regular}" --fail-on "${CROSGHA_FAIL_ON:-any}")
+# Never colored: the report goes to a file that the job summary, Markdown, may copy, whatever
+# FORCE_COLOR the caller's job sets.
+args=(--color never --persona "${CROSGHA_PERSONA:-regular}" --fail-on "${CROSGHA_FAIL_ON:-any}")
 [[ -n "${CROSGHA_MIN_SEVERITY:-}" ]] && args+=(--min-severity "$CROSGHA_MIN_SEVERITY")
 [[ -n "${CROSGHA_MIN_CONFIDENCE:-}" ]] && args+=(--min-confidence "$CROSGHA_MIN_CONFIDENCE")
 [[ -n "${CROSGHA_CONFIG_FILE:-}" ]] && args+=(--config "$CROSGHA_CONFIG_FILE")
@@ -175,13 +177,18 @@ findings="$(grep -c '"ruleId":' "$sarif" || true)"
     echo "exit-code=$code"
     [[ "${CROSGHA_ADVANCED_SECURITY:-true}" == true ]] && echo "output-file=$sarif"
 } >> "$GITHUB_OUTPUT"
-# A fence longer than every backtick run in the report keeps the whole report inside the block.
-fence="$(awk '{ while (match($0, /`+/)) { if (RLENGTH > max) max = RLENGTH; $0 = substr($0, RSTART + RLENGTH) } }
-    END { for (n = (max < 3 ? 3 : max + 1); n > 0; n--) printf "`" }' "$report")"
 {
     echo "### crosgha v$version: $findings finding(s)"
     echo
-    echo "${fence}text"
-    cat "$report"
-    echo "$fence"
+    # Annotation output is workflow commands, which mean nothing in Markdown.
+    if [[ "${CROSGHA_ANNOTATIONS:-false}" == true ]]; then
+        echo "Findings are annotations in this run's log."
+    else
+        # A fence longer than every backtick run in the report keeps the whole report inside the block.
+        fence="$(awk '{ while (match($0, /`+/)) { if (RLENGTH > max) max = RLENGTH; $0 = substr($0, RSTART + RLENGTH) } }
+            END { for (n = (max < 3 ? 3 : max + 1); n > 0; n--) printf "`" }' "$report")"
+        echo "${fence}text"
+        cat "$report"
+        echo "$fence"
+    fi
 } >> "$GITHUB_STEP_SUMMARY"
