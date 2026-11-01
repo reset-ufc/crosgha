@@ -1,0 +1,113 @@
+name: Refused by GitHub
+on: [push]
+permissions: {}
+jobs:
+  ids:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: build
+        run: make build
+      - run: make test
+      - id: build # expect: schema-validity
+        run: make again
+      - id: build # expect: schema-validity
+        run: make once-more
+      # The parser compares IDs exactly, so another casing is a different ID.
+      - id: Build
+        run: make other
+      - parallel:
+          - id: lint
+            run: make lint
+          - id: lint # expect: schema-validity
+            run: make lint-again
+      # Each `parallel` block is its own ID scope, apart from the list around it and other blocks.
+      - parallel:
+          - id: lint
+            run: make lint
+          - id: build
+            run: make build
+  same-id-in-another-job:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: build
+        run: make build
+  expressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: example/action@${{ github.sha }} # expect: schema-validity
+      - uses: ./${{ github.workflow }} # expect: schema-validity
+      - uses: ${{ vars.ACTION }} # expect: schema-validity
+      - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          ref: ${{ github.sha }}
+  called-with-expression:
+    uses: example/repo/.github/workflows/ci.yml@${{ github.sha }} # expect: schema-validity
+  needs-unknown-string:
+    needs: nowhere # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  needs-unknown-in-list:
+    needs:
+      - ids
+      - nowhere # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  needs-flow-list:
+    needs: [ghost, phantom] # expect: schema-validity, schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  needs-other-casing:
+    needs: IDS # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  # Only the missing job is wrong: this job would start if that one existed.
+  needs-a-job-with-unknown-needs:
+    needs: needs-unknown-string
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  self:
+    needs: self # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  cycle-a:
+    needs: cycle-c # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  cycle-b:
+    needs: cycle-a # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  cycle-c:
+    needs: # A started need next to a stuck one: only the stuck one is reported.
+      - ids
+      - cycle-b # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  # GitHub refuses this one too: it waits on a job that never starts.
+  after-the-cycle:
+    needs: cycle-a # expect: schema-validity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make

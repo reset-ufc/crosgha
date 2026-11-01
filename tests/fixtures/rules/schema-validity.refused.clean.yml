@@ -1,0 +1,40 @@
+name: Accepted by GitHub
+on: [push]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: build
+        run: make build
+      - run: make test
+      - id: Build
+        run: make other
+      - parallel:
+          - id: lint
+            run: make lint
+          - id: format
+            run: make format
+      - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          ref: ${{ github.sha }}
+  test:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: build
+        run: make build
+  lint:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make
+  # A diamond repeats a job in the graph without a cycle.
+  deploy:
+    needs:
+      - test
+      - lint
+    uses: example/repo/.github/workflows/deploy.yml@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
