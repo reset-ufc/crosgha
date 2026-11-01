@@ -100,6 +100,7 @@ action/entrypoint.sh        Action: input checks, verified release install, one 
 install.sh                  `curl | sh` installer: verified release binary into ~/.local/bin
 docs/ARCHITECTURE.md        Module interfaces and Action flow
 docs/*.md                   User docs linked from README.md; docs/rules.md is checked against the code by tests/report.rs
+docs/rule-examples.md       Generated from tests/fixtures/: `CROSGHA_BLESS=1 cargo test --test report`
 tests/cli.rs                end-to-end scans: inputs, discovery, exit status, flags
 tests/{fix,config,report,repository,migrate,hook}.rs  end-to-end tests per feature
 tests/rules.rs              fixture-driven rule checks, fake GitHub API server

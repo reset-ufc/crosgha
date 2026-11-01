@@ -388,8 +388,11 @@ fn rule_catalog_as_json_matches_the_text_catalog() {
         .lines()
         .filter_map(|line| {
             let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
-            (cells.len() == 7 && cells[0].starts_with('`'))
-                .then(|| (cells[0].trim_matches('`').to_owned(), !cells[6].is_empty()))
+            (cells.len() == 8 && cells[0].starts_with('`')).then(|| {
+                let id = cells[0].trim_matches('`');
+                assert_eq!(cells[7], format!("[examples](rule-examples.md#{id})"));
+                (id.to_owned(), !cells[6].is_empty())
+            })
         })
         .collect();
     let listed: Vec<(String, bool)> = rules
@@ -406,6 +409,102 @@ fn rule_catalog_as_json_matches_the_text_catalog() {
         .output()
         .unwrap();
     assert_eq!(rejected.status.code(), Some(2));
+}
+
+/// Rules whose examples are not `<rule>.before.yml` and `<rule>.clean.yml`: non-compliant and
+/// compliant fixtures, the compliant ones being the `hardened` repository.
+const REPOSITORY_EXAMPLES: &[(&str, &[&str], &[&str])] = &[
+    (
+        "missing-release-cooldown",
+        &["repos/missing-release-cooldown/.github/dependabot.yml"],
+        &["repos/hardened/.github/dependabot.yml"],
+    ),
+    (
+        "missing-security-tooling",
+        &["repos/missing-security-tooling/.github/workflows/ci.yml"],
+        &[
+            "repos/hardened/.github/dependabot.yml",
+            "repos/hardened/.github/workflows/security.yml",
+        ],
+    ),
+];
+
+/// `docs/rule-examples.md`: each rule's fixtures, verbatim, so the examples cannot drift from what
+/// the tests run.
+fn rule_examples(rules: &[serde_json::Value]) -> String {
+    let block = |label: &str, paths: &[String]| {
+        let mut text = format!("**{label}**\n");
+        for path in paths {
+            let yaml = fs::read_to_string(fixture(path)).unwrap_or_else(|_| panic!("no {path}"));
+            text += &format!("\n`tests/fixtures/{path}`\n\n```yaml\n{yaml}```\n");
+        }
+        text
+    };
+    let mut out = String::from(
+        "# Rule examples\n\n\
+         Generated from `tests/fixtures/` by `CROSGHA_BLESS=1 cargo test --test report`; never edit it\n\
+         by hand. In a non-compliant example, `# expect: <rule>` marks a line the rule reports. Fixtures\n\
+         also cover edge cases, so lines without a marker show what the rule must not report.\n",
+    );
+    for rule in rules {
+        let id = rule["id"].as_str().unwrap();
+        out += &format!("\n## `{id}`\n\n{}\n\n", rule["summary"].as_str().unwrap());
+        if id == "repo-org-settings" {
+            out += "This rule reads the repository's Actions settings through the GitHub API, so no \
+                    YAML shows it.\nIts test responses are in `tests/fixtures/online/api.json`.\n";
+            continue;
+        }
+        let (bad, good): (Vec<String>, Vec<String>) =
+            match REPOSITORY_EXAMPLES.iter().find(|(rule, ..)| *rule == id) {
+                Some((_, bad, good)) => (
+                    bad.iter().map(|path| path.to_string()).collect(),
+                    good.iter().map(|path| path.to_string()).collect(),
+                ),
+                None => {
+                    let dir = ["rules", "online"]
+                        .into_iter()
+                        .find(|dir| fixture(&format!("{dir}/{id}.before.yml")).is_file())
+                        .unwrap_or_else(|| panic!("no fixture for {id}"));
+                    (
+                        vec![format!("{dir}/{id}.before.yml")],
+                        vec![format!("{dir}/{id}.clean.yml")],
+                    )
+                }
+            };
+        out += &block("Non-compliant", &bad);
+        out.push('\n');
+        out += &block("Compliant", &good);
+    }
+    out
+}
+
+#[test]
+fn rule_examples_match_their_fixtures() {
+    let output = bin()
+        .args(["--list-rules", "--format", "json"])
+        .output()
+        .unwrap();
+    let catalog: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let generated = rule_examples(catalog["rules"].as_array().unwrap());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/rule-examples.md");
+    if std::env::var_os("CROSGHA_BLESS").is_some() {
+        fs::write(&path, &generated).unwrap();
+    }
+    assert!(
+        fs::read_to_string(&path).unwrap_or_default() == generated,
+        "docs/rule-examples.md differs from the fixtures; rerun with CROSGHA_BLESS=1"
+    );
+
+    // Unlike `.clean.yml` files, these compliant examples are checked by no other test.
+    let hardened = bin()
+        .args(["--offline", "--no-config", "--persona", "auditor"])
+        .arg(fixture("repos/hardened"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(hardened.stdout).unwrap();
+    for (rule, ..) in REPOSITORY_EXAMPLES {
+        assert!(!stdout.contains(&format!("[{rule}]")), "{stdout}");
+    }
 }
 
 #[test]
