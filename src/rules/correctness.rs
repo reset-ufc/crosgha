@@ -154,6 +154,10 @@ const CALLER_KEYS: &[&str] = &[
 /// "The maximum number of top-level properties for `inputs` is 25."
 const MAX_DISPATCH_INPUTS: usize = 25;
 
+/// `step-uses` and a job's `uses` declare no expression context in GitHub's workflow schema
+/// (`workflow-v1.0.json`, same commit as above), so `${{ }}` there is refused.
+const USES_EXPRESSION: &str = "`uses` cannot contain a `${{ }}` expression";
+
 /// A step does exactly one of these.
 const STEP_ACTIONS: &[&str] = &["uses", "run", "parallel", "wait", "wait-all", "cancel"];
 
@@ -228,12 +232,43 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 "job needs `runs-on` or `uses`".to_owned(),
             ));
         }
+        if job
+            .get("uses")
+            .and_then(Value::as_str)
+            .is_some_and(|uses| uses.contains("${{"))
+        {
+            problems.push((
+                job.route.with_key("uses"),
+                job.location(),
+                USES_EXPRESSION.to_owned(),
+            ));
+        }
+        // `convertSteps` builds one `IdBuilder` per list, so a `parallel` block is its own scope.
+        // IDs cannot hold a dot, so what precedes one in a nested step's location names its block.
+        let mut ids = BTreeSet::new();
         for step in common::steps(&job) {
             for (route, key) in unknown_keys(step.value, STEP_KEYS, &step.route) {
                 problems.push((
                     route,
                     step.location.clone(),
                     format!("unknown step key `{key}`"),
+                ));
+            }
+            let block = step.location.split_once('.').map(|(block, _)| block);
+            if let Some(id) = step.value.get("id").and_then(Value::as_str)
+                && !ids.insert((block.map(str::to_owned), id))
+            {
+                problems.push((
+                    step.key("id"),
+                    step.location.clone(),
+                    format!("step id `{id}` is already used in this list of steps"),
+                ));
+            }
+            if step.uses().is_some_and(|uses| uses.contains("${{")) {
+                problems.push((
+                    step.key("uses"),
+                    step.location.clone(),
+                    USES_EXPRESSION.to_owned(),
                 ));
             }
             let actions = STEP_ACTIONS
@@ -250,6 +285,7 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             }
         }
     }
+    problems.extend(refused_needs(&common::jobs(workflow)));
     for trigger in common::triggers(workflow) {
         let inputs = trigger
             .config
@@ -333,6 +369,57 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             common::finding(workflow, &SCHEMA, route, location, message)
         })
         .collect()
+}
+
+/// The names in a job's `needs`, a string or a list of strings, with the route of each.
+fn needs<'a>(job: &common::Job<'a>) -> Vec<(Route<'static>, &'a str)> {
+    let route = job.route.with_key("needs");
+    match job.get("needs") {
+        Some(Value::String(name)) => vec![(route, name.as_str())],
+        Some(Value::Sequence(names)) => names
+            .iter()
+            .enumerate()
+            .filter_map(|(index, name)| Some((route.with_key(index), name.as_str()?)))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `needs` GitHub refuses: an unknown job, or a job that never starts because of a cycle. As in
+/// `validateNeeds` (actions/languageservices `workflow-parser/src/model/converter/jobs.ts` at
+/// 4043eda158e16579cc5fb1b0b07a4bce2a76f0b5), names compare exactly and jobs start once their needs
+/// have. An unknown name does not hold a job back here, so only the wrong `needs` is reported.
+fn refused_needs(jobs: &[common::Job<'_>]) -> Vec<(Route<'static>, String, String)> {
+    let names: BTreeSet<&str> = jobs.iter().map(|job| job.name).collect();
+    let mut started = BTreeSet::new();
+    loop {
+        let before = started.len();
+        for job in jobs {
+            if needs(job)
+                .iter()
+                .all(|(_, need)| !names.contains(need) || started.contains(need))
+            {
+                started.insert(job.name);
+            }
+        }
+        if started.len() == before {
+            break;
+        }
+    }
+    let mut problems = Vec::new();
+    for job in jobs {
+        for (route, need) in needs(job) {
+            let message = if !names.contains(need) {
+                format!("`needs` names `{need}`, which is not a job in this workflow")
+            } else if !started.contains(need) {
+                format!("`needs` names `{need}`, which never starts because of a dependency cycle")
+            } else {
+                continue;
+            };
+            problems.push((route, job.location(), message));
+        }
+    }
+    problems
 }
 
 /// `matrix.<key>` and `steps.<id>` references in a job that name no key of its matrix and no step
