@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs the crosgha release binary for the current user:
-#   curl -fsSL https://crosgha.resetlab.com.br/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/reset-ufc/crosgha/master/install.sh | sh
 # CROSGHA_VERSION pins a release (default: latest); CROSGHA_INSTALL_DIR overrides ~/.local/bin.
 # Everything runs inside main, so a download cut short never executes half a script.
 set -eu
