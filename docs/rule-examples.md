@@ -99,6 +99,18 @@ jobs:
       - run: uv tool install --with-requirements extras.txt ruff@0.6.0
       - run: uv tool install -i https://example.com/simple ruff@0.6.0
       - run: uv tool install --with black ruff@0.6.0 # expect: unpinned-package
+      # With `--from`, the package is its value and the operand only names the executable.
+      - run: uv tool install --from 'ruff==0.6.0' ruff
+      - run: uv tool install --from ruff@0.6.0 ruff
+      - run: uv tool install --from=ruff==0.6.0 ruff
+      - run: uv tool install --from git+https://example.com/ruff.git ruff
+      - run: uv tool install --from ruff ruff # expect: unpinned-package
+      - run: uv tool install --from ruff@latest ruff # expect: unpinned-package
+      - run: uv tool install --from 'ruff==0.6.0' --with black ruff # expect: unpinned-package
+      - run: uv tool install --from 'ruff==0.6.0' --with black==24.1.0 ruff
+      - run: uv tool install --with=black ruff@0.6.0 # expect: unpinned-package
+      - run: uv tool install -w black ruff@0.6.0 # expect: unpinned-package
+      - run: uv tool install -w black==24.1.0 ruff@0.6.0
 ```
 
 **Compliant**
