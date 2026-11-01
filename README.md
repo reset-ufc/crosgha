@@ -63,7 +63,7 @@ goes: [docs/action.md](docs/action.md).
 | [docs/configuration.md](docs/configuration.md) | Personas, online rules, `crosgha.yml` / `zizmor.yml`, ignoring findings, severity |
 | [docs/output.md](docs/output.md) | Output formats and exit status |
 | [docs/fixes.md](docs/fixes.md) | When `--fix` applies a fix, and which rules have one |
-| [docs/rules.md](docs/rules.md) | The rule catalog: tag, severity, persona, scope, equivalents |
+| [docs/rules.md](docs/rules.md) | The rule catalog: tag, severity, persona, scope, equivalents, examples |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module interfaces, the rule contract, and fix safety |
 
 ## Development
