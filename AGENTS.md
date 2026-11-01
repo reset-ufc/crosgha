@@ -31,9 +31,10 @@ It is listed in `.git/info/exclude` and never committed.
 
 ## Rules
 
-1. **Independence.** Allowed dependencies are infrastructure crates only, pinned exactly in `Cargo.toml`:
-   - `yamlpath`, `yamlpatch`, `yaml_serde`, `github-actions-models`, `github-actions-expressions`
-   - generic crates such as clap, serde, and ureq
+1. **Independence.** Allowed dependencies are infrastructure crates only:
+   - YAML crates, pinned exactly with `=` in `Cargo.toml`: `yamlpath`, `yamlpatch`, `yaml_serde`
+   - generic crates, with caret requirements: `anstream`, `anstyle`, `clap`, `serde`, `serde_json`, `ureq`
+   - allowed but unused, pinned with `=` if ever added: `github-actions-models`, `github-actions-expressions`
 
    Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: crosgha checks our own workflows in CI and the pre-push hook. cargo-deny is allowed because it checks dependencies, not workflows: RustSec advisories, licenses, sources, and a ban on detector crates (`deny.toml`). `clippy.toml` enforces rules 1 and 2: only `src/hook.rs` runs a process, and only `filesystem::replace` writes a workflow. Compatibility is allowed: reading another tool's config format, accepting its rule IDs as aliases, and rewriting its Action step in `migrate`. Running or porting its detection logic is not.
 2. **Fix validation is ours.** A fix is accepted only when all three hold:
