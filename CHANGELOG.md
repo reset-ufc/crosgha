@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/reset-ufc/crosgha/compare/v0.14.0...v0.14.1) (2026-11-01)
+
+
+### Fixed
+
+* **rules:** read --from and --with as packages in uv tool install ([e26ba96](https://github.com/reset-ufc/crosgha/commit/e26ba96276b39a2680c5265a03eb7838c57dfa30))
+* **rules:** read --from and --with as packages in uv tool install ([a5d33ae](https://github.com/reset-ufc/crosgha/commit/a5d33ae6609e20466dd155d51dd0a71dd18cbfa1))
+
 ## [0.14.0](https://github.com/reset-ufc/crosgha/compare/v0.13.4...v0.14.0) (2026-11-01)
 
 
