@@ -142,7 +142,7 @@ pub fn secrets_exposure(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             };
             if expression::expressions(text)
                 .iter()
-                .any(|expression| expression.contains("secrets."))
+                .any(|expression| expression::reads_named_secret(expression))
             {
                 findings.push(common::finding(
                     workflow,

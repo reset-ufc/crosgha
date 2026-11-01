@@ -236,6 +236,21 @@ pub fn untrusted_in_text(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether `expression` reads one named secret, in any casing and in property or index syntax. The
+/// text between single quotes is a literal (`''` reads as closing and reopening one), so it is skipped.
+pub fn reads_named_secret(expression: &str) -> bool {
+    let text = dotted(&expression.to_ascii_lowercase());
+    text.split('\'').step_by(2).any(|outside| {
+        outside.match_indices("secrets").any(|(start, name)| {
+            let preceded = outside[..start]
+                .bytes()
+                .next_back()
+                .is_some_and(|byte| is_context_char(byte) || byte == b'.');
+            !preceded && outside[start + name.len()..].trim_start().starts_with('.')
+        })
+    })
+}
+
 /// Rewrites index syntax with a literal name (`['body']`, `[ 'body' ]`) to property syntax
 /// (`.body`).
 pub fn dotted(expression: &str) -> String {
