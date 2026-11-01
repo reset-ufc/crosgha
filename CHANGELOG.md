@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.13.3](https://github.com/reset-ufc/crosgha/compare/v0.13.2...v0.13.3) (2026-11-01)
+
+
+### Fixed
+
+* **action:** keep the job summary free of workflow commands and ANSI codes ([593765b](https://github.com/reset-ufc/crosgha/commit/593765bbeb5493993f6d1b3b776eca7d2cd739dc))
+* **action:** keep the job summary free of workflow commands and ANSI codes ([58531b7](https://github.com/reset-ufc/crosgha/commit/58531b7e17b5f62fe6d99d7adee77f7655b605ef))
+* **config:** warn about rule IDs that no rule answers to ([d5dce65](https://github.com/reset-ufc/crosgha/commit/d5dce65dc557a0c62d7b4f256869d5aff567c674))
+* **config:** warn about rule IDs that no rule answers to ([1c1d56c](https://github.com/reset-ufc/crosgha/commit/1c1d56c104de7ef86307beedfbf7bf7bf93b2e1a))
+* **install:** point the documented URL at a host that serves it ([063b207](https://github.com/reset-ufc/crosgha/commit/063b20749fcd9defb645741388b46ffc9b7fcd22))
+* **install:** point the documented URL at a host that serves it ([686ebcb](https://github.com/reset-ufc/crosgha/commit/686ebcbc4d2350ca75df1be9160a51ba65861795))
+* **rules:** close version and text matching gaps in three rules ([c8a1f47](https://github.com/reset-ufc/crosgha/commit/c8a1f47739568dfc19e4c1592611ed72197ba2ad))
+* **rules:** close version and text matching gaps in three rules ([6fa4356](https://github.com/reset-ufc/crosgha/commit/6fa4356def1452bf83387f1631defa9468ef993c))
+* **rules:** read version flags and global options in unpinned-package ([58e3399](https://github.com/reset-ufc/crosgha/commit/58e3399249c31bcd2565a11254e7d3d3a9fd137f))
+* **rules:** read version flags and global options in unpinned-package ([a375258](https://github.com/reset-ufc/crosgha/commit/a375258ba95f56725e95406f3c360fe8ae8b4f82))
+* **rules:** stop reporting expressions that only return true or false ([280fc25](https://github.com/reset-ufc/crosgha/commit/280fc25ecabfb46b2769187b0fe2692f763a70f8))
+* **rules:** stop reporting expressions that only return true or false ([a8c44da](https://github.com/reset-ufc/crosgha/commit/a8c44da69e0e9ac4527e398a6d2900d24830c82c))
+
+
+### Documentation
+
+* **agents:** list the crates Cargo.toml actually depends on ([4b98e8a](https://github.com/reset-ufc/crosgha/commit/4b98e8a4eba226f10c8497407204b8a6a5506375))
+* **agents:** list the crates Cargo.toml actually depends on ([3a10fd6](https://github.com/reset-ufc/crosgha/commit/3a10fd6fa2243a27266bc6bdf83cd5abb93cd5f4))
+* **rules:** add non-compliant and compliant examples for every rule ([70eff61](https://github.com/reset-ufc/crosgha/commit/70eff617b6d4a0e17e6fe1a12913556bc59a0094))
+* **rules:** add non-compliant and compliant examples for every rule ([1f0e482](https://github.com/reset-ufc/crosgha/commit/1f0e48211c8b67f020965590f80bba8db7e8ae40))
+* **rules:** regenerate rule examples from the merged fixtures ([62d44f7](https://github.com/reset-ufc/crosgha/commit/62d44f71c8bb3c21332cc5563fea76da1d3d424d))
+
 ## [0.13.2](https://github.com/reset-ufc/crosgha/compare/v0.13.1...v0.13.2) (2026-10-28)
 
 
