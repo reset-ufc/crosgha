@@ -72,6 +72,7 @@ goes: [docs/action.md](docs/action.md).
 ```sh
 make setup   # enables the versioned git hooks in .githooks/; trusts mise.toml only if mise is installed
 cargo test   # end-to-end and fixture-driven rule tests
+cargo fmt-style   # format Rust per docs/rust-style.md; plain cargo fmt skips its import rules
 make check   # the pre-push checks: fmt, clippy -D warnings, tests, dogfood scan
 ```
 

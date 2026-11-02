@@ -17,12 +17,37 @@ The rest of crosgha is under Apache-2.0.
 ## How crosgha applies this guide
 
 - **Precedence:** the rules and the test rules in [AGENTS.md](../AGENTS.md) win over this guide when they conflict.
-- **Existing code:** new code follows this guide. Existing code is brought in line when a change touches it.
+- **Existing code:** new code follows this guide. For rules no tool checks, existing code is brought in line when a
+  change touches it.
 - **Code type:** crosgha is *application code* (see [Apply API design rules in context](#apply-api-design-rules-in-context)).
   `publish = false`, and `src/lib.rs` exposes only `cli`. API design rules are therefore a strong recommendation,
   and the rules about APIs used by other teams apply only if that changes.
-- **Enforcement:** `make check` and CI run rustfmt and clippy with `-D warnings`. Everything else here is checked in
-  code review.
+- **Enforcement:** `.githooks/pre-push` (also `make check`) and CI fail on the rules in the table below. Everything else
+  here is checked in code review.
+- **Exceptions:** use `#[expect(clippy::<lint>, reason = "...")]` on the smallest item that needs it. Never weaken a
+  check to get a push through.
+
+| Rule | Check |
+|---|---|
+| [Formatting](#use-the-appropriate-formatting-tool), [one module per `use`](#a-use-statement-should-import-items-from-one-module) | `cargo fmt-style --check` |
+| [No glob imports](#dont-use-glob-imports) | `wildcard_imports` |
+| [Flexible references](#accept-flexible-references-for-immutable-data) | `ptr_arg`, `borrowed_box`, `ref_option` |
+| [`enum` over `bool`](#prefer-enum-over-bool-in-apis) | `fn_params_excessive_bools`, only above 3 `bool` parameters |
+| [Standard library traits](#implement-known-standard-library-traits-instead-of-custom-methods) | `should_implement_trait` |
+| [`#[derive()]`](#use-derive-if-possible) | `derivable_impls` |
+| [`Default`](#specific-guidance-for-important-traits) | `new_without_default` |
+| [Method names](#naming-methods) | `wrong_self_convention` |
+| [`len()` with `is_empty()`](#implement-expected-api-sets-together) | `len_without_is_empty` |
+| [Deep copies](#prefer-borrows-over-deep-copies) | `implicit_clone`, only clones spelled as another method |
+| [Panics in documentation](#when-and-how-to-write-documentation) | `missing_panics_doc`, only on exported functions |
+| [Check-then-unwrap](#prefer-pattern-matching-over-check-then-unwrap) | `unnecessary_unwrap` |
+| [`expect` over `unwrap`](#prefer-expect-over-unwrap) | `unwrap_used`, set in `src/lib.rs` because tests may panic |
+| [Poisoned mutexes](#handling-poison), [`catch_unwind`](#dont-call-paniccatch_unwind) | `disallowed-methods` in `clippy.toml` |
+| [Assertion context](#use-context-strings-to-clarify-assertions) | `missing_assert_message`, which skips test functions |
+| [`for_each`](#dont-use-iterator-combinator-chains-when-direct-iteration-is-clearer) | `needless_for_each` |
+| [`format!` / `write!`](#prefer-format--write-for-concatenation-and-substitution) | `format_push_string`, `string_add` |
+| [Unsafe code](#unsafe-code) | `unsafe_code = "forbid"` |
+| [Unstable features](#no-unstable-features) | The stable toolchain rejects `#![feature]` |
 
 ## Goals of the style guide
 
@@ -254,14 +279,11 @@ This rule largely exists to avoid reviewer disagreements.
 
 ### Use the appropriate formatting tool
 
-Use `cargo fmt`. `make check` and CI run `cargo fmt --check` with the default `max_width` of 100 columns.
+Run `cargo fmt-style`. `.githooks/pre-push` and CI run `cargo fmt-style --check`, with the default `max_width` of 100
+columns.
 
-These options are unavailable in `rustfmt.toml` on stable Rust, so the repo has no such file. The command line still
-accepts them (checked with rustfmt 1.9.0-stable). To check a change against them:
-
-```sh
-cargo fmt --check -- --config imports_granularity=Module,hex_literal_case=Lower,format_macro_matchers=true
-```
+The alias, defined in `.cargo/config.toml`, passes options that `rustfmt.toml` rejects on stable Rust; the command line
+accepts them (checked with rustfmt 1.9.0-stable). Plain `cargo fmt` does not apply them.
 
 *   `imports_granularity = Module`: see
     [A use statement should import items from one module](#a-use-statement-should-import-items-from-one-module).

@@ -25,7 +25,8 @@ It is listed in `.git/info/exclude` and never committed.
 |---|---|
 | One-time hook setup after cloning | `make setup` (sets `core.hooksPath=.githooks`) |
 | Build / run | `cargo build --release` · `cargo run` |
-| Everything the pre-push hook checks | `make check` (whitespace, fmt, clippy `-D warnings`, tests, dogfood, cargo-deny). When a push changes no path listed in `ci.yml`'s `paths`, CI does not run and the hook checks only whitespace |
+| Format Rust | `cargo fmt-style` (never plain `cargo fmt`: it skips the options of rule 6) |
+| Everything the pre-push hook checks | `make check` (whitespace, `cargo fmt-style --check`, clippy `-D warnings`, tests, dogfood, cargo-deny). When a push changes no path listed in `ci.yml`'s `paths`, CI does not run and the hook checks only whitespace |
 | Rule catalog (id, tag, severity, persona, scope) | `cargo run -- --list-rules` (`-f json` adds summaries, equivalents, and `configurable`) |
 | Release plan preview (offline) | `.tools/bin/dist plan` |
 
@@ -36,7 +37,7 @@ It is listed in `.git/info/exclude` and never committed.
    - generic crates, with caret requirements: `anstream`, `anstyle`, `clap`, `serde`, `serde_json`, `ureq`
    - allowed but unused, pinned with `=` if ever added: `github-actions-models`, `github-actions-expressions`
 
-   Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: crosgha checks our own workflows in CI and the pre-push hook. cargo-deny is allowed because it checks dependencies, not workflows: RustSec advisories, licenses, sources, and a ban on detector crates (`deny.toml`). `clippy.toml` enforces rules 1 and 2: only `src/hook.rs` runs a process, and only `filesystem::replace` writes a workflow. Compatibility is allowed: reading another tool's config format, accepting its rule IDs as aliases, and rewriting its Action step in `migrate`. Running or porting its detection logic is not.
+   Never embed, vendor, or shell out to another detector (zizmor's audit crate, actionlint, poutine, …) for detection or fix validation. Rule *concepts* come from the literature and tool docs, cited in code comments. Our own untrusted-context list is derived from GitHub's docs. No third-party linter runs on this repo either: crosgha checks our own workflows in CI and the pre-push hook. cargo-deny is allowed because it checks dependencies, not workflows: RustSec advisories, licenses, sources, and a ban on detector crates (`deny.toml`). `clippy.toml` enforces rules 1 and 2 (and part of rule 6): only `src/hook.rs` runs a process, and only `filesystem::replace` writes a workflow. Compatibility is allowed: reading another tool's config format, accepting its rule IDs as aliases, and rewriting its Action step in `migrate`. Running or porting its detection logic is not.
 2. **Fix validation is ours.** A fix is accepted only when all three hold:
    - the patched file re-parses
    - the targeted smell is gone and no new smell appeared
@@ -54,7 +55,10 @@ It is listed in `.git/info/exclude` and never committed.
 
    `.githooks/pre-push` and CI run crosgha on `.github/workflows` with `--offline --persona pedantic`. Accepted exceptions need a written reason in a comment next to the exception.
 5. **Toolchain.** The Rust toolchain is pinned only in `mise.toml` (1.97), matching the workspace; `rust-version` in `Cargo.toml` declares the same minimum. `.githooks/pre-push` re-runs itself under `mise exec` when mise is not active in the calling shell (e.g., `gh repo create --push`, IDEs), so it never falls back to rustup's default toolchain. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`, `cargo-deny`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
-6. **Rust style.** [docs/rust-style.md](docs/rust-style.md), an adapted copy of the Google Rust Style Guide, is the standard for all Rust code. The rules in this file win when they conflict.
+6. **Rust style.** Every Rust change, in `src/` and `tests/`, must follow [docs/rust-style.md](docs/rust-style.md), an adapted copy of the Google Rust Style Guide. Read it before writing or reviewing Rust. A change that breaks it is not done, even when it compiles and the tests pass.
+   - **Checked by tools:** `cargo fmt-style --check` and clippy `-D warnings` run in `.githooks/pre-push` and CI, configured in `.cargo/config.toml`, `[lints.clippy]` in `Cargo.toml`, `clippy.toml`, and `src/lib.rs`. Fix the code instead of weakening them. An accepted exception is `#[expect(clippy::<lint>, reason = "...")]` on the smallest item that needs it, never `#[allow]` and never `--no-verify`.
+   - **Not checked by tools:** imports of traits and functions, module layout, `enum` over `bool`, iterator chains, naming, and comments. Passing `make check` says nothing about these, so check each change against the guide by hand.
+   - **Conflicts:** the other rules in this file win over the guide.
 
 ## Tests
 
@@ -115,7 +119,8 @@ tests/fixtures/             rules/, online/ (+ api.json), repos/, migrate/, and 
 release-please-config.json  release PR + changelog config (manifest: .release-please-manifest.json)
 dist-workspace.toml         cargo-dist target: x86_64-unknown-linux-musl only (static, so it also runs in Alpine job containers)
 mise.toml                   Rust version and musl target (the only pin; used locally and in CI)
-clippy.toml                 disallowed-methods for rules 1 and 2
+.cargo/config.toml          `cargo fmt-style` alias: the rustfmt options of rule 6
+clippy.toml                 disallowed-methods for rules 1, 2, and 6
 deny.toml                   cargo-deny: advisories, licenses, sources, banned detector crates
 ```
 
