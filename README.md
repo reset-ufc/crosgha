@@ -65,6 +65,7 @@ goes: [docs/action.md](docs/action.md).
 | [docs/fixes.md](docs/fixes.md) | When `--fix` applies a fix, and which rules have one |
 | [docs/rules.md](docs/rules.md) | The rule catalog: tag, severity, persona, scope, equivalents, examples |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module interfaces, the rule contract, and fix safety |
+| [docs/rust-style.md](docs/rust-style.md) | The Rust style guide for contributors |
 
 ## Development
 

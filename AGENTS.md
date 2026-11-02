@@ -54,6 +54,7 @@ It is listed in `.git/info/exclude` and never committed.
 
    `.githooks/pre-push` and CI run crosgha on `.github/workflows` with `--offline --persona pedantic`. Accepted exceptions need a written reason in a comment next to the exception.
 5. **Toolchain.** The Rust toolchain is pinned only in `mise.toml` (1.97), matching the workspace; `rust-version` in `Cargo.toml` declares the same minimum. `.githooks/pre-push` re-runs itself under `mise exec` when mise is not active in the calling shell (e.g., `gh repo create --push`, IDEs), so it never falls back to rustup's default toolchain. CI installs it with `jdx/mise-action`, whose mise binary is pinned by version and sha256. Local CLIs (e.g., `dist`, `cargo-deny`) live in `.tools/` (gitignored), installed with `cargo install --root .tools <crate> --locked`.
+6. **Rust style.** [docs/rust-style.md](docs/rust-style.md), an adapted copy of the Google Rust Style Guide, is the standard for all Rust code. The rules in this file win when they conflict.
 
 ## Tests
 
@@ -99,6 +100,7 @@ action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs
 install.sh                  `curl | sh` installer: verified release binary into ~/.local/bin
 docs/ARCHITECTURE.md        Module interfaces and Action flow
+docs/rust-style.md          Rust style guide (rule 6)
 docs/*.md                   User docs linked from README.md; docs/rules.md is checked against the code by tests/report.rs
 docs/rule-examples.md       Generated from tests/fixtures/: `CROSGHA_BLESS=1 cargo test --test report`
 tests/cli.rs                end-to-end scans: inputs, discovery, exit status, flags
