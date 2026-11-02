@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.0](https://github.com/reset-ufc/crosgha/compare/v0.14.1...v0.15.0) (2026-11-02)
+
+
+### Added
+
+* scan remote repository workflows ([6a231bd](https://github.com/reset-ufc/crosgha/commit/6a231bd18cf5ea393e273614ee4c46909b6e665c))
+* **scan:** read workflows from remote repositories ([1c8c196](https://github.com/reset-ufc/crosgha/commit/1c8c1964962860dd25268f32e9b23e99f43567cb))
+
+
+### Fixed
+
+* **scan:** keep missing local paths out of remote inputs ([b59cb1c](https://github.com/reset-ufc/crosgha/commit/b59cb1ca027740e433db52851198adcd5a628cf1))
+
 ## [0.14.1](https://github.com/reset-ufc/crosgha/compare/v0.14.0...v0.14.1) (2026-11-01)
 
 
