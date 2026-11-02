@@ -226,6 +226,21 @@
     {"name": "v0.0.99", "commit": {"sha": "00000000000000000000000000000000000d0063"}},
     {"name": "v0.0.100", "commit": {"sha": "00000000000000000000000000000000000d0064"}}
   ],
+  "/repos/example/remote/commits/v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "/repos/example/empty/commits/v1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "/repos/example/clean/commits/HEAD": "cccccccccccccccccccccccccccccccccccccccc",
+  "/repos/example/clean/contents/.github/workflows?ref=cccccccccccccccccccccccccccccccccccccccc": [
+    {"type": "file", "name": "my ci.yml"}
+  ],
+  "/repos/example/clean/contents/.github/workflows/my%20ci.yml?ref=cccccccccccccccccccccccccccccccccccccccc": "name: Clean\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - run: echo ok\n",
+  "/repos/example/remote/contents/.github/workflows?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": [
+    {"type": "file", "name": "bad.yml"},
+    {"type": "file", "name": "clean.yaml"},
+    {"type": "file", "name": "README.md"},
+    {"type": "dir", "name": "nested"}
+  ],
+  "/repos/example/remote/contents/.github/workflows/bad.yml?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "name: Bad\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n",
+  "/repos/example/remote/contents/.github/workflows/clean.yaml?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "name: Clean\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - run: echo ok\n",
   "/repos/example/many-tags/tags?per_page=100&page=2": [
     {"name": "v0.0.0", "commit": {"sha": "abababababababababababababababababababab"}}
   ]

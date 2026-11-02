@@ -8,6 +8,15 @@ workflows from them. Without a `PATH`, crosgha scans `.github/workflows`. A `dep
 Dependabot cooldown check. Symlinked files are scanned but never rewritten; a symlink to another scanned workflow is
 reported and fixed once, through its target.
 
+`crosgha owner/repo@ref` scans workflows directly in that GitHub repository's `.github/workflows`.
+Omit `@ref` to scan the default branch. A local path with the same spelling takes precedence.
+`https://github.com/owner/repo@ref` is also accepted. The report names the resolved commit SHA, so
+all files come from one revision. Remote inputs require `--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`;
+private repositories outside the caller's repository need a token that can read them. The scan
+makes one commit request, one directory request, and one request per YAML workflow before online
+rules. `--no-online-audits` skips those rules but still fetches the workflows. `--offline` and
+`--fix` reject remote inputs. Repository rules and remote config discovery are tracked in #99.
+
 ## Pre-push hook
 
 ```sh

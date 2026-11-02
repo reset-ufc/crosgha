@@ -26,8 +26,8 @@ struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Workflow files, workflow directories, or repository roots to scan.
-    #[arg(value_name = "PATH", default_value = ".github/workflows")]
+    /// Workflow paths, repository roots, or GitHub owner/repo[@ref] to scan.
+    #[arg(value_name = "INPUT", default_value = ".github/workflows")]
     paths: Vec<PathBuf>,
 
     #[command(flatten)]
@@ -45,7 +45,7 @@ struct Args {
     #[arg(long)]
     offline: bool,
 
-    /// GitHub token for online rules; also read from GH_TOKEN or GITHUB_TOKEN.
+    /// GitHub token for remote inputs and online rules; also read from GH_TOKEN or GITHUB_TOKEN.
     #[arg(long, env = "GH_TOKEN", hide_env_values = true)]
     gh_token: Option<String>,
 
@@ -206,7 +206,42 @@ pub fn run() -> ExitCode {
             Some(_) => fail("--list-rules prints text or json"),
         };
     }
-    match scan(&args) {
+    let (remote, local): (Vec<_>, Vec<_>) = args
+        .paths
+        .iter()
+        .cloned()
+        .partition(|path| !path.exists() && remote_input(path, &args.gh_hostname).is_some());
+    if !remote.is_empty() && args.modes.fix {
+        return fail("--fix does not support remote inputs");
+    }
+    if !remote.is_empty() && args.offline {
+        return fail("--offline does not support remote inputs");
+    }
+    let result = (|| {
+        let mut scan = if local.is_empty() {
+            Scan {
+                files: Vec::new(),
+                repository: Vec::new(),
+                errors: Vec::new(),
+            }
+        } else {
+            scan(&args, &local)?
+        };
+        let mut seen = HashSet::new();
+        for path in remote {
+            let (slug, reference) =
+                remote_input(&path, &args.gh_hostname).expect("classified remote input");
+            if !seen.insert((slug.clone(), reference.clone())) {
+                continue;
+            }
+            let added = scan_remote(&args, &slug, &reference)?;
+            scan.files.extend(added.files);
+            scan.repository.extend(added.repository);
+            scan.errors.extend(added.errors);
+        }
+        Ok::<_, String>(scan)
+    })();
+    match result {
         Ok(mut scan) => {
             if args.modes.fix {
                 write_fixes(&mut scan.files, &scan.errors);
@@ -215,6 +250,178 @@ pub fn run() -> ExitCode {
         }
         Err(error) => fail(error),
     }
+}
+
+fn remote_input(path: &Path, host: &str) -> Option<(String, String)> {
+    let input = path.to_str()?;
+    let input = if let Some(url) = input.strip_prefix("https://") {
+        let name = host
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/');
+        url.strip_prefix(name)?.strip_prefix('/')?
+    } else {
+        input
+    };
+    let (slug, reference) = input.split_once('@').unwrap_or((input, "HEAD"));
+    let (owner, repo) = slug.split_once('/')?;
+    let segment = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+    };
+    // Owners never hold dots, which keeps the default `.github/workflows` and `../x` local paths:
+    // https://docs.github.com/en/enterprise-cloud@latest/admin/managing-iam/iam-configuration-reference/username-considerations-for-external-authentication
+    if !segment(owner)
+        || owner.contains('.')
+        || !segment(repo)
+        || matches!(repo, "." | "..")
+        || reference.is_empty()
+        || !reference
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_./".contains(&byte))
+        || reference.contains("..")
+    {
+        return None;
+    }
+    Some((slug.to_owned(), reference.to_owned()))
+}
+
+fn url_segment(segment: &str) -> String {
+    segment.bytes().fold(String::new(), |mut encoded, byte| {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+        encoded
+    })
+}
+
+fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String> {
+    if args.modes.fix {
+        return Err("--fix does not support remote inputs".to_owned());
+    }
+    if args.offline {
+        return Err("--offline does not support remote inputs".to_owned());
+    }
+    let token = args
+        .gh_token
+        .clone()
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .filter(|token| !token.is_empty())
+        .ok_or("remote inputs require --gh-token, GH_TOKEN, or GITHUB_TOKEN")?;
+    let github = GitHub::new(&api_url(&args.gh_hostname), token.clone());
+    // https://docs.github.com/en/rest/commits/commits#get-a-commit
+    let commit_path = format!("/repos/{slug}/commits/{reference}");
+    let sha = github
+        .get_raw(&commit_path, "application/vnd.github.sha")?
+        .ok_or_else(|| format!("GitHub repository or ref not found: {slug}@{reference}"))?;
+    let sha = sha.trim().trim_matches('"');
+    if sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("GitHub API {commit_path}: expected a commit SHA"));
+    }
+    // https://docs.github.com/en/rest/repos/contents#get-repository-content
+    let directory = format!("/repos/{slug}/contents/.github/workflows?ref={sha}");
+    let listing = github
+        .get(&directory)?
+        .ok_or_else(|| format!("{slug}@{sha}: .github/workflows does not exist"))?;
+    let entries = listing
+        .as_array()
+        .ok_or_else(|| format!("GitHub API {directory}: expected a directory listing"))?;
+    if entries.len() >= 1000 {
+        return Err(format!(
+            "GitHub API {directory}: directory listing reached the 1000-entry limit"
+        ));
+    }
+    let mut names: Vec<&str> = entries
+        .iter()
+        .filter(|entry| entry["type"] == "file")
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.ends_with(".yml") || name.ends_with(".yaml"))
+        .collect();
+    names.sort_unstable();
+    if names.is_empty() {
+        return Err(format!(
+            "{slug}@{sha}: no .yml or .yaml workflow files found in .github/workflows"
+        ));
+    }
+    let explicit = args.config.clone().or_else(|| {
+        ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .find(|value| !value.is_empty())
+            .map(PathBuf::from)
+    });
+    let config = if args.no_config {
+        config::Config::default()
+    } else if let Some(path) = explicit {
+        config::Config::load(&path)?
+    } else {
+        config::Config::default()
+    };
+    let settings = policy::Settings {
+        persona: if args.pedantic {
+            policy::Persona::Pedantic
+        } else {
+            args.persona
+        },
+        github: (!args.no_online_audits).then(|| GitHub::new(&api_url(&args.gh_hostname), token)),
+        config,
+        ignores: !args.no_ignores,
+        min_severity: args.min_severity.as_deref().and_then(config::severity),
+        hosted: api_url(&args.gh_hostname).eq_ignore_ascii_case("https://api.github.com"),
+    };
+    let mut files = Vec::new();
+    let mut errors = Vec::new();
+    for name in names {
+        let path = PathBuf::from(format!("{slug}@{sha}:.github/workflows/{name}"));
+        let api_path = format!(
+            "/repos/{slug}/contents/.github/workflows/{}?ref={sha}",
+            url_segment(name)
+        );
+        let result = github
+            .get_raw(&api_path, "application/vnd.github.raw+json")
+            .and_then(|answer| {
+                answer.ok_or_else(|| crate::github::ApiError {
+                    status: Some(404),
+                    rate_limited: false,
+                    message: format!("GitHub API {api_path}: workflow disappeared"),
+                })
+            })
+            .map_err(String::from)
+            .and_then(|text| {
+                let bom = text.starts_with('\u{feff}');
+                let source = filesystem::Source {
+                    text: text.trim_start_matches('\u{feff}').to_owned(),
+                    bom,
+                };
+                engine::inspect(source, false, &settings, name)
+            });
+        match result {
+            Ok(inspection) => files.push(FileReport {
+                path,
+                inspection,
+                unwritten: None,
+            }),
+            Err(message) => {
+                report::error(format_args!("{}: {message}", path.display()));
+                errors.push(RunError::File { path, message });
+            }
+        }
+    }
+    if let Some(online) = &settings.github {
+        for failure in online.failures() {
+            let message = format!("{failure}; online checks that needed it were skipped");
+            errors.push(RunError::Skipped(message));
+        }
+    }
+    Ok(Scan {
+        files,
+        repository: Vec::new(),
+        errors,
+    })
 }
 
 /// Reports `error` and exits 2.
@@ -230,10 +437,9 @@ struct Scan {
     errors: Vec<RunError>,
 }
 
-fn scan(args: &Args) -> Result<Scan, String> {
+fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
     // Each workflow, `.github`, and Dependabot file is paired with the index of its input path.
-    let (dependabot, inputs): (Vec<_>, Vec<_>) = args
-        .paths
+    let (dependabot, inputs): (Vec<_>, Vec<_>) = paths
         .iter()
         .cloned()
         .zip(0..)
@@ -244,7 +450,7 @@ fn scan(args: &Args) -> Result<Scan, String> {
         .clone()
         .or_else(|| std::env::var("GITHUB_TOKEN").ok())
         .filter(|token| !token.is_empty());
-    let (mut configs, owners) = load_configs(args)?;
+    let (mut configs, owners) = load_configs(args, paths)?;
     for id in configs.iter().flat_map(rules::unknown_ids) {
         report::warning(format_args!(
             "`rules.{id}` matches no crosgha rule and is ignored"
@@ -297,7 +503,7 @@ fn scan(args: &Args) -> Result<Scan, String> {
             }
         }
     }
-    let github_dirs = owned(github_dirs(&args.paths));
+    let github_dirs = owned(github_dirs(paths));
     let dependabot = outside(owned(dependabot), &github_dirs);
     // Repository rules read the workflows parsed above instead of reading them again.
     let parsed: rules::Scanned = files
@@ -349,7 +555,7 @@ fn scan(args: &Args) -> Result<Scan, String> {
         }
     }
     if let Some(name) = &args.repository {
-        let first = [(args.paths[0].clone(), owners[0])];
+        let first = [(paths[0].clone(), owners[0])];
         let checked = per_config(&first, &mut configs, &mut settings, |scanned, settings| {
             vec![rules::detect_settings(name, &scanned[0], settings)]
         });
@@ -538,7 +744,10 @@ fn emit(text: &str, status: ExitCode) -> ExitCode {
 /// Configs and, for each input path, the index of its config. `--config` (or its environment
 /// variables) applies to every input; otherwise each input discovers its own, so the result never
 /// depends on the order of the inputs. Inputs that find the same file share one entry.
-fn load_configs(args: &Args) -> Result<(Vec<config::Config>, Vec<usize>), String> {
+fn load_configs(
+    args: &Args,
+    paths: &[PathBuf],
+) -> Result<(Vec<config::Config>, Vec<usize>), String> {
     let explicit = args.config.clone().or_else(|| {
         ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"]
             .iter()
@@ -551,12 +760,12 @@ fn load_configs(args: &Args) -> Result<(Vec<config::Config>, Vec<usize>), String
             Some(path) => config::Config::load(&path)?,
             None => config::Config::default(),
         };
-        return Ok((vec![config], vec![0; args.paths.len()]));
+        return Ok((vec![config], vec![0; paths.len()]));
     }
     let mut found: Vec<Option<PathBuf>> = Vec::new();
     let mut configs = Vec::new();
     let mut owners = Vec::new();
-    for input in &args.paths {
+    for input in paths {
         let discovered = config::Config::discover(input)?;
         let path = discovered.as_ref().map(|(path, _)| path.clone());
         let owner = match found.iter().position(|known| *known == path) {

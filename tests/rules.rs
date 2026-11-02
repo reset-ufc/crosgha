@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{bin, fixture};
+use common::{TempDir, bin, fixture};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -60,6 +60,7 @@ fn github_server(
             let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
             requests.lock().unwrap().push(path.clone());
             let mut authorized = false;
+            let mut raw = false;
             loop {
                 let mut header = String::new();
                 reader.read_line(&mut header).unwrap();
@@ -68,6 +69,12 @@ fn github_server(
                 }
                 authorized |=
                     header.to_ascii_lowercase().trim() == format!("authorization: bearer {TOKEN}");
+                raw |= header
+                    .to_ascii_lowercase()
+                    .contains("application/vnd.github.raw+json")
+                    || header
+                        .to_ascii_lowercase()
+                        .contains("application/vnd.github.sha");
             }
             let failure = failures
                 .iter()
@@ -86,6 +93,11 @@ fn github_server(
                     *status,
                     *headers,
                     serde_json::json!({ "message": message }).to_string(),
+                ),
+                (None, Some(body)) if raw => (
+                    "200 OK",
+                    "",
+                    body.as_str().expect("raw fixture must be text").to_owned(),
                 ),
                 (None, Some(body)) => ("200 OK", "", body.to_string()),
                 (None, None) => ("404 Not Found", "", r#"{"message":"Not Found"}"#.to_owned()),
@@ -115,6 +127,231 @@ fn scan(path: &Path, fix: bool, api: Option<&str>, config: Option<&Path>) -> Out
         None => command.arg("--offline"),
     };
     command.arg(path).output().unwrap()
+}
+
+#[test]
+fn remote_workflows_use_one_revision_and_skip_non_workflows() {
+    let (api, requests) = logged_github();
+    let output = bin()
+        .args([
+            "--no-config",
+            "--no-online-audits",
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+        ])
+        .args([
+            "--gh-token",
+            TOKEN,
+            "--gh-hostname",
+            &api,
+            "example/remote@v1",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["summary"]["files"], 2, "{report}");
+    assert!(report["findings"].as_array().unwrap().iter().any(|finding| {
+        finding["rule"] == "persist-credentials"
+            && finding["path"].as_str().unwrap().contains("example/remote@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:.github/workflows/bad.yml")
+    }), "{report}");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 4, "{requests:?}");
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.contains("README") && !request.contains("nested"))
+    );
+}
+
+#[test]
+fn remote_default_branch_and_url_scan_a_clean_repository() {
+    let (api, requests) = logged_github();
+    for input in [
+        "example/clean".to_owned(),
+        format!(
+            "https://{}/example/clean",
+            api.trim_start_matches("http://")
+        ),
+    ] {
+        let output = bin()
+            .args(["--no-config", "--no-online-audits", "--fail-on", "none"])
+            .args(["--gh-token", TOKEN, "--gh-hostname", &api, &input])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("no findings"));
+    }
+    assert_eq!(requests.lock().unwrap().len(), 6);
+}
+
+#[test]
+fn local_and_remote_inputs_share_one_report() {
+    let api = fake_github();
+    let local = fixture("workflows/ci.yml");
+    let output = bin()
+        .args([
+            "--no-config",
+            "--no-online-audits",
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+        ])
+        .args(["--gh-token", TOKEN, "--gh-hostname", &api])
+        .arg(&local)
+        .arg("example/remote@v1")
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["summary"]["files"], 3, "{report}");
+}
+
+#[test]
+fn remote_input_rejects_write_and_offline_before_network() {
+    let (api, requests) = logged_github();
+    for flag in ["--fix", "--offline"] {
+        let output = bin()
+            .args([
+                "--gh-token",
+                TOKEN,
+                "--gh-hostname",
+                &api,
+                flag,
+                "example/remote@v1",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(flag));
+    }
+    assert!(requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn missing_local_paths_are_not_read_as_repositories() {
+    let (api, requests) = logged_github();
+    let empty = TempDir::new("missing-local-path");
+    let inputs: [&[&str]; 7] = [
+        &[],
+        &[".github/workflows"],
+        &["../missing"],
+        &["./missing"],
+        &["my.dir/ci.yml"],
+        &["owner/."],
+        &["owner/.."],
+    ];
+    for input in inputs {
+        for args in [
+            vec!["--gh-token", TOKEN, "--gh-hostname", &api],
+            vec!["--offline"],
+            vec![],
+        ] {
+            let output = bin()
+                .current_dir(&*empty)
+                .args(&args)
+                .args(input)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{input:?} {args:?}: {stderr}"
+            );
+            assert!(
+                !stderr.contains("remote") && !stderr.contains("GitHub"),
+                "{input:?} {args:?}: {stderr}"
+            );
+        }
+    }
+    assert_eq!(*requests.lock().unwrap(), Vec::<String>::new());
+
+    // Repository names may hold dots, and `org/.github` is GitHub's own convention.
+    let output = bin()
+        .args(["--no-config", "--no-online-audits"])
+        .args(["--gh-token", TOKEN, "--gh-hostname", &api, "org/.github"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        *requests.lock().unwrap(),
+        ["/repos/org/.github/commits/HEAD"]
+    );
+}
+
+#[test]
+fn remote_input_reports_missing_resources_and_rate_limits() {
+    let (api, requests) = logged_github();
+    let missing = bin()
+        .args([
+            "--no-config",
+            "--gh-token",
+            TOKEN,
+            "--gh-hostname",
+            &api,
+            "example/missing@v1",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("repository or ref not found"));
+    let missing_dir = bin()
+        .args([
+            "--no-config",
+            "--gh-token",
+            TOKEN,
+            "--gh-hostname",
+            &api,
+            "example/empty@v1",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(missing_dir.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&missing_dir.stderr).contains(".github/workflows does not exist")
+    );
+    assert_eq!(requests.lock().unwrap().len(), 3);
+
+    const LISTING: &str = "/repos/example/remote/contents/.github/workflows?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let (api, requests) = failing_github(&[(
+        LISTING,
+        "403 Forbidden",
+        "x-ratelimit-remaining: 0\r\nx-ratelimit-reset: 9999999999\r\n",
+        "API rate limit exceeded",
+    )]);
+    let limited = bin()
+        .args([
+            "--no-config",
+            "--gh-token",
+            TOKEN,
+            "--gh-hostname",
+            &api,
+            "example/remote@v1",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(limited.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&limited.stderr).contains("rate limit"));
+    assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
 /// Line → number of findings of `rule` on it. A rule listed twice (`# expect: a, a`) must be
