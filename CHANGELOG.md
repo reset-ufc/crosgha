@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.1](https://github.com/reset-ufc/crosgha/compare/v0.15.0...v0.15.1) (2026-11-02)
+
+
+### Changed
+
+* follow the rust style guide in existing code ([19783f1](https://github.com/reset-ufc/crosgha/commit/19783f1adb677bde3740f35172e0093587bb4fb9))
+* import items per module ([963ea38](https://github.com/reset-ufc/crosgha/commit/963ea38e611c125cc19bdcfa7e20cd0a27db8e13))
+
+
+### Documentation
+
+* adopt the google rust style guide ([a8aa832](https://github.com/reset-ufc/crosgha/commit/a8aa832c75b87a3b90e6fde3deea560bfcf00afa))
+* require the rust style guide for every rust change ([a3ce42b](https://github.com/reset-ufc/crosgha/commit/a3ce42b9c234abc1d94be91f18ac3d9359e2e641))
+
 ## [0.15.0](https://github.com/reset-ufc/crosgha/compare/v0.14.1...v0.15.0) (2026-11-02)
 
 
