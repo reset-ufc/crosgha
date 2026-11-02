@@ -49,6 +49,7 @@ pub struct GitHub {
     token: String,
     agent: ureq::Agent,
     cache: Mutex<HashMap<String, Slot>>,
+    raw_cache: Mutex<HashMap<String, Result<Option<String>, ApiError>>>,
     /// The rate-limit or rejected-token (401) failure that stops every later request: retrying
     /// before the reset only spends more of the limit, and a bad token fails every path alike.
     halted: Mutex<Option<ApiError>>,
@@ -66,6 +67,7 @@ impl GitHub {
             token,
             agent,
             cache: Mutex::default(),
+            raw_cache: Mutex::default(),
             halted: Mutex::default(),
         }
     }
@@ -125,6 +127,57 @@ impl GitHub {
 
     /// GETs `path` without the cache, for a path read once per run.
     pub fn request(&self, path: &str) -> Answer {
+        let Some(mut response) = self.response(path, "application/vnd.github+json")? else {
+            return Ok(None);
+        };
+        response
+            .body_mut()
+            .read_json::<Value>()
+            .map(Some)
+            .map_err(|error| ApiError {
+                status: Some(200),
+                rate_limited: false,
+                message: format!("GitHub API {path}: {error}"),
+            })
+    }
+
+    /// Reads a raw API response, cached separately from JSON answers at the same path.
+    pub fn get_raw(&self, path: &str, accept: &str) -> Result<Option<String>, ApiError> {
+        let key = format!("{accept} {path}");
+        if let Some(answer) = self
+            .raw_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+        {
+            return answer.clone();
+        }
+        let answer = self.response(path, accept).and_then(|response| {
+            response
+                .map(|mut response| {
+                    response
+                        .body_mut()
+                        .read_to_string()
+                        .map_err(|error| ApiError {
+                            status: Some(200),
+                            rate_limited: false,
+                            message: format!("GitHub API {path}: {error}"),
+                        })
+                })
+                .transpose()
+        });
+        self.raw_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, answer.clone());
+        answer
+    }
+
+    fn response(
+        &self,
+        path: &str,
+        accept: &str,
+    ) -> Result<Option<ureq::http::Response<ureq::Body>>, ApiError> {
         if let Some(halted) = &*self.halted.lock().unwrap_or_else(PoisonError::into_inner) {
             return Err(halted.clone());
         }
@@ -137,19 +190,13 @@ impl GitHub {
             .agent
             .get(format!("{}{path}", self.api))
             .header("Authorization", format!("Bearer {}", self.token))
-            .header("Accept", "application/vnd.github+json")
+            .header("Accept", accept)
             .header("User-Agent", concat!("crosgha/", env!("CARGO_PKG_VERSION")))
             .call()
             .map_err(|error| failed(None, false, error.to_string()))?;
         let status = response.status().as_u16();
         match status {
-            200 => {
-                return response
-                    .body_mut()
-                    .read_json::<Value>()
-                    .map(Some)
-                    .map_err(|error| failed(Some(status), false, error.to_string()));
-            }
+            200 => return Ok(Some(response)),
             404 => return Ok(None),
             _ => {}
         }
