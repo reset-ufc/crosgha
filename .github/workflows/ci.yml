@@ -9,6 +9,7 @@ on:
       - "tests/**"
       - "action/**"
       - ".github/workflows/**"
+      - ".cargo/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "mise.toml"
@@ -25,6 +26,7 @@ on:
       - "tests/**"
       - "action/**"
       - ".github/workflows/**"
+      - ".cargo/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "mise.toml"
@@ -86,7 +88,7 @@ jobs:
           key: cargo-target-${{ runner.os }}-${{ hashFiles('mise.toml', 'Cargo.lock') }}
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt-style --check
 
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings

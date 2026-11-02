@@ -15,6 +15,18 @@ path = "src/main.rs"
 [lints.rust]
 unsafe_code = "forbid"
 
+# The rules of docs/rust-style.md that clippy can check beyond its defaults.
+[lints.clippy]
+fn_params_excessive_bools = "warn"
+format_push_string = "warn"
+implicit_clone = "warn"
+missing_assert_message = "warn"
+missing_panics_doc = "warn"
+needless_for_each = "warn"
+ref_option = "warn"
+string_add = "warn"
+wildcard_imports = "warn"
+
 [dependencies]
 anstream = "1.0.0"
 anstyle = "1.0.14"
