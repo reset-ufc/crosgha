@@ -432,11 +432,13 @@ const REPOSITORY_EXAMPLES: &[(&str, &[&str], &[&str])] = &[
 /// `docs/rule-examples.md`: each rule's fixtures, verbatim, so the examples cannot drift from what
 /// the tests run.
 fn rule_examples(rules: &[serde_json::Value]) -> String {
+    use std::fmt::Write as _;
+
     let block = |label: &str, paths: &[String]| {
         let mut text = format!("**{label}**\n");
         for path in paths {
             let yaml = fs::read_to_string(fixture(path)).unwrap_or_else(|_| panic!("no {path}"));
-            text += &format!("\n`tests/fixtures/{path}`\n\n```yaml\n{yaml}```\n");
+            let _ = write!(text, "\n`tests/fixtures/{path}`\n\n```yaml\n{yaml}```\n");
         }
         text
     };
@@ -448,7 +450,11 @@ fn rule_examples(rules: &[serde_json::Value]) -> String {
     );
     for rule in rules {
         let id = rule["id"].as_str().unwrap();
-        out += &format!("\n## `{id}`\n\n{}\n\n", rule["summary"].as_str().unwrap());
+        let _ = write!(
+            out,
+            "\n## `{id}`\n\n{}\n\n",
+            rule["summary"].as_str().unwrap()
+        );
         if id == "repo-org-settings" {
             out += "This rule reads the repository's Actions settings through the GitHub API, so no \
                     YAML shows it.\nIts test responses are in `tests/fixtures/online/api.json`.\n";

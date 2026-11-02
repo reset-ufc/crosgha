@@ -3,7 +3,6 @@
 
 use std::ops::ControlFlow;
 use std::path::Path;
-use std::sync::PoisonError;
 
 use yamlpath::Route;
 
@@ -139,7 +138,7 @@ fn comment_version(workflow: &Workflow, route: &Route) -> Option<String> {
     let mut known = workflow
         .comment_versions
         .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+        .expect("a worker thread panicked while holding this lock");
     known
         .entry(key)
         .or_insert_with(|| {

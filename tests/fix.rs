@@ -236,6 +236,8 @@ fn rejected_fix_keeps_its_finding_and_the_other_fixes() {
 /// newline.
 #[test]
 fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
+    use std::fmt::Write as _;
+
     let temp = TempDir::new("layout");
     let dir = temp.join("work");
     fs::create_dir(&dir).unwrap();
@@ -254,13 +256,14 @@ fn fixes_workflows_with_trailing_comments_crlf_and_no_final_newline() {
     let mut fixed_mixed_expected = String::new();
     for (index, line) in source.lines().enumerate() {
         let end = ending(index);
-        mixed.push_str(&format!("{line}{end}"));
-        fixed_mixed_expected.push_str(&format!("{line}{end}"));
+        let _ = write!(mixed, "{line}{end}");
+        let _ = write!(fixed_mixed_expected, "{line}{end}");
         // Each inserted line takes the line break of the line it follows.
         if line.ends_with("# v5.1.0") {
-            fixed_mixed_expected.push_str(&format!(
+            let _ = write!(
+                fixed_mixed_expected,
                 "        with:{end}          persist-credentials: false{end}"
-            ));
+            );
         }
     }
     fs::write(dir.join("unterminated.yml"), unterminated).unwrap();

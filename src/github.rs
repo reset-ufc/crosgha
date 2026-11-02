@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+
+const POISONED: &str = "a worker thread panicked while holding this lock";
 
 type Answer = Result<Option<Value>, ApiError>;
 type Slot = Arc<Mutex<Option<Answer>>>;
@@ -75,11 +77,11 @@ impl GitHub {
         let slot = Arc::clone(
             self.cache
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner)
+                .expect(POISONED)
                 .entry(path.to_owned())
                 .or_default(),
         );
-        let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut slot = slot.lock().expect(POISONED);
         if let Some(cached) = &*slot {
             return cached.clone();
         }
@@ -99,22 +101,22 @@ impl GitHub {
         let slot = Arc::clone(
             self.cache
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner)
+                .expect(POISONED)
                 .entry(path.to_owned())
                 .or_default(),
         );
-        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(Err(error.clone()));
+        *slot.lock().expect(POISONED) = Some(Err(error.clone()));
         error
     }
 
     /// Distinct failures of cached requests, in path order.
     pub fn failures(&self) -> Vec<ApiError> {
-        let cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        let cache = self.cache.lock().expect(POISONED);
         let mut paths: Vec<&String> = cache.keys().collect();
         paths.sort();
         let mut failures: Vec<ApiError> = Vec::new();
         for path in paths {
-            if let Some(Err(error)) = &*cache[path].lock().unwrap_or_else(PoisonError::into_inner)
+            if let Some(Err(error)) = &*cache[path].lock().expect(POISONED)
                 && !failures.iter().any(|seen| seen.message == error.message)
             {
                 failures.push(error.clone());
@@ -142,12 +144,7 @@ impl GitHub {
     /// Reads a raw API response, cached separately from JSON answers at the same path.
     pub fn get_raw(&self, path: &str, accept: &str) -> Result<Option<String>, ApiError> {
         let key = format!("{accept} {path}");
-        if let Some(answer) = self
-            .raw_cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&key)
-        {
+        if let Some(answer) = self.raw_cache.lock().expect(POISONED).get(&key) {
             return answer.clone();
         }
         let answer = self.response(path, accept).and_then(|response| {
@@ -166,7 +163,7 @@ impl GitHub {
         });
         self.raw_cache
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .expect(POISONED)
             .insert(key, answer.clone());
         answer
     }
@@ -176,7 +173,9 @@ impl GitHub {
         path: &str,
         accept: &str,
     ) -> Result<Option<ureq::http::Response<ureq::Body>>, ApiError> {
-        if let Some(halted) = &*self.halted.lock().unwrap_or_else(PoisonError::into_inner) {
+        use std::fmt::Write as _;
+
+        if let Some(halted) = &*self.halted.lock().expect(POISONED) {
             return Err(halted.clone());
         }
         let failed = |status, rate_limited, detail: String| ApiError {
@@ -223,23 +222,24 @@ impl GitHub {
                         .is_some_and(|reason| reason.to_ascii_lowercase().contains("rate limit"))));
         let mut detail = format!("HTTP {status}");
         if let Some(reason) = reason {
-            detail.push_str(&format!(" ({reason})"));
+            let _ = write!(detail, " ({reason})");
         }
         if let Some(seconds) = retry_after {
-            detail.push_str(&format!("; retry after {seconds} s"));
+            let _ = write!(detail, "; retry after {seconds} s");
         } else if let Some(reset) = reset {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |now| now.as_secs());
-            detail.push_str(&format!(
+            let _ = write!(
+                detail,
                 "; the rate limit resets in {} s",
                 reset.saturating_sub(now)
-            ));
+            );
         }
         let error = failed(Some(status), rate_limited, detail);
         if rate_limited || status == 401 {
             // Requests already in flight report the first failure, so it is named once.
-            let mut halted = self.halted.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut halted = self.halted.lock().expect(POISONED);
             return Err(halted.get_or_insert(error).clone());
         }
         Err(error)

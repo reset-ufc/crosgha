@@ -497,6 +497,8 @@ fn shell_to_action(
     replacement: &str,
     inputs: &[(&'static str, String)],
 ) -> Result<Vec<Edit>, String> {
+    use std::fmt::Write as _;
+
     let run = workflow
         .document
         .query_pretty(&step.key("run"))
@@ -505,9 +507,9 @@ fn shell_to_action(
     let indent = " ".repeat(run.location.point_span.0.1);
     let mut text = format!("uses: {replacement}");
     if !inputs.is_empty() {
-        text.push_str(&format!("\n{indent}with:"));
+        let _ = write!(text, "\n{indent}with:");
         for (key, value) in inputs {
-            text.push_str(&format!("\n{indent}  {key}: {}", scalar(value)));
+            let _ = write!(text, "\n{indent}  {key}: {}", scalar(value));
         }
     }
     let source = workflow.document.source();
@@ -615,6 +617,8 @@ fn actionlint_config(
     github: &Path,
     notes: &mut Vec<String>,
 ) -> Result<Option<(PathBuf, String)>, String> {
+    use std::fmt::Write as _;
+
     let Some((name, source_path)) = ["actionlint.yaml", "actionlint.yml"]
         .into_iter()
         .map(|name| (name, github.join(name)))
@@ -660,7 +664,7 @@ fn actionlint_config(
     );
     for label in labels {
         // A JSON string is a valid YAML double-quoted scalar.
-        text.push_str(&format!("        - {}\n", serde_json::Value::from(label)));
+        let _ = writeln!(text, "        - {}", serde_json::Value::from(label));
     }
     Ok(Some((target, text)))
 }

@@ -365,7 +365,12 @@ fn action_keeps_scanned_file_names_from_forging_commands_or_breaking_the_summary
         line.len() >= fence.len() && line.chars().all(|c| c == '`')
     };
     let body: Vec<&str> = lines.by_ref().take_while(|line| !closes(line)).collect();
-    assert_eq!(body.join("\n") + "\n", report, "{}", plain.summary);
+    assert_eq!(
+        format!("{}\n", body.join("\n")),
+        report,
+        "{}",
+        plain.summary
+    );
     assert_eq!(lines.next(), None, "{}", plain.summary);
 
     // Annotation mode keeps crosgha's own escaped commands live, and only those.
