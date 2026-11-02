@@ -126,7 +126,10 @@ fn package(version: &str, binary: &[u8], tamper: bool) -> PathBuf {
         .arg("crosgha-x86_64-unknown-linux-musl")
         .status()
         .unwrap();
-    assert!(status.success());
+    assert!(
+        status.success(),
+        "tar could not build the release archive: {status}"
+    );
     let digest = Command::new("sha256sum")
         .arg(tag.join(ASSET))
         .output()

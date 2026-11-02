@@ -914,7 +914,11 @@ fn repo_org_settings_are_read_for_the_named_repository() {
 /// `(rule, scope)` for every rule in the catalog.
 fn catalog() -> Vec<(String, String)> {
     let output = bin().arg("--list-rules").output().unwrap();
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "--list-rules failed: {}",
+        output.status
+    );
     String::from_utf8(output.stdout)
         .unwrap()
         .lines()

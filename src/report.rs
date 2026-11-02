@@ -1,18 +1,14 @@
-use std::{
-    fmt::{Display, Write},
-    path::{Path, PathBuf},
-};
+use std::fmt::{Display, Write};
+use std::path::{Path, PathBuf};
 
 use anstyle::{AnsiColor, Style};
 use clap::ValueEnum;
 
 use serde_json::{Value, json};
 
-use crate::{
-    engine::Inspection,
-    policy::Severity,
-    rules::{self, Finding, Located, Place, Rule},
-};
+use crate::engine::Inspection;
+use crate::policy::Severity;
+use crate::rules::{self, Finding, Located, Place, Rule};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Format {
@@ -148,17 +144,19 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: 
     };
     if fixed > 0 {
         let changed = files.iter().filter(|file| file.fixed() > 0).count();
-        output.push_str(&format!(
-            "{SUCCESS}Fixed{SUCCESS:#} {} in {}{failed}.\n",
+        let _ = writeln!(
+            output,
+            "{SUCCESS}Fixed{SUCCESS:#} {} in {}{failed}.",
             count(fixed, "finding"),
             count(changed, "workflow file")
-        ));
+        );
         if !shown.is_empty() {
-            output.push_str(&format!(
-                "Remaining: {}{}.\n",
+            let _ = writeln!(
+                output,
+                "Remaining: {}{}.",
                 count(shown.len(), "finding"),
                 breakdown(&shown)
-            ));
+            );
         }
     } else if shown.is_empty() {
         let mark = match failures.is_empty() {
@@ -166,23 +164,25 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: 
             false => String::new(),
         };
         let checked = count(files.len(), "workflow file");
-        output.push_str(&format!("{mark}Checked {checked}{failed}: no findings.\n"));
+        let _ = writeln!(output, "{mark}Checked {checked}{failed}: no findings.");
     } else {
-        output.push_str(&format!(
-            "Checked {}{failed}: {}{}.\n",
+        let _ = writeln!(
+            output,
+            "Checked {}{failed}: {}{}.",
             count(files.len(), "workflow file"),
             count(shown.len(), "finding"),
             breakdown(&shown)
-        ));
+        );
         let fixable = shown.iter().filter(|finding| finding.fix.is_some()).count();
         if fixable > 0 && !fix {
-            output.push_str(&format!(
-                "{} a fix: rerun with {BOLD}--fix{BOLD:#}.\n",
+            let _ = writeln!(
+                output,
+                "{} a fix: rerun with {BOLD}--fix{BOLD:#}.",
                 match fixable {
                     1 => "1 finding has".to_owned(),
                     _ => format!("{fixable} findings have"),
                 }
-            ));
+            );
         }
     }
     if errors
@@ -190,10 +190,11 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: 
         .any(|error| matches!(error, RunError::Skipped(_)))
     {
         let level = style(Severity::Error);
-        output.push_str(&format!(
+        let _ = writeln!(
+            output,
             "{level}The scan is incomplete:{level:#} online checks that needed a failed GitHub \
-             API request did not run.\n"
-        ));
+             API request did not run."
+        );
     }
     output
 }
@@ -779,7 +780,7 @@ fn agent(files: &[FileReport], repository: &[Located]) -> String {
                 finding.rule.equivalents_suffix(),
                 finding.rule.summary
             );
-            line.replace(['\r', '\n'], " ") + "\n"
+            format!("{}\n", line.replace(['\r', '\n'], " "))
         })
         .collect()
 }

@@ -1,13 +1,9 @@
 use yaml_serde::Value;
 
-use super::{
-    Finding, Options, Rule, common,
-    shell::{self, Arg, Program, Spec},
-};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use super::shell::{self, Arg, Program, Spec};
+use super::{Finding, Options, Rule, common};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // Khatami et al. (SCAM 2024), KZ-20 "Specify package versions", and zizmor's
 // `adhoc-packages`/`unpinned-tools` audits: https://docs.zizmor.sh/audits/

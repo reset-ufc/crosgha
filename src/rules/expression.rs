@@ -166,7 +166,9 @@ pub fn untrusted_contexts(expression: &str) -> Vec<String> {
         let untrusted = segments.as_slice() == ["github", "head_ref"]
             || (segments.len() > 2
                 && segments[1] == "event"
-                && (UNTRUSTED_SUFFIXES.contains(segments.last().unwrap())
+                && (segments
+                    .last()
+                    .is_some_and(|last| UNTRUSTED_SUFFIXES.contains(last))
                     || previous_untrusted_text(&segments)))
             || whole_object;
         if untrusted {

@@ -3,15 +3,10 @@
 
 use yaml_serde::Value;
 
-use super::{
-    Finding, Rule,
-    common::{self, PRIVILEGED_TRIGGERS},
-    expression,
-};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use super::common::{self, PRIVILEGED_TRIGGERS};
+use super::{Finding, Rule, expression};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // zizmor `github-env` and CodeQL `actions/envvar-injection`: environment files written in
 // privileged runs, or with untrusted values, change later steps.

@@ -16,7 +16,7 @@ echo "pre-push: git diff --check"
 git diff --check "$(git hash-object -t tree /dev/null)" HEAD
 
 # What the cargo checks below read; keep in sync with `paths` in .github/workflows/ci.yml.
-rust_paths='^(src/|tests/|action/|\.github/workflows/|Cargo\.(toml|lock)$|(mise|clippy|deny)\.toml$|install\.sh$|action\.yml$|docs/rules\.md$)'
+rust_paths='^(src/|tests/|action/|\.github/workflows/|\.cargo/|Cargo\.(toml|lock)$|(mise|clippy|deny)\.toml$|install\.sh$|action\.yml$|docs/rules\.md$)'
 
 # git passes the remote as arguments and one "<local ref> <local sha> <remote ref> <remote sha>" line per
 # pushed ref. Without arguments (`make check`), everything is checked.
@@ -43,8 +43,8 @@ if [[ $# -gt 0 ]]; then
   fi
 fi
 
-echo "pre-push: cargo fmt --check"
-cargo fmt --check
+echo "pre-push: cargo fmt-style --check"
+cargo fmt-style --check
 
 echo "pre-push: cargo clippy --locked --all-targets -- -D warnings"
 cargo clippy --locked --all-targets -- -D warnings

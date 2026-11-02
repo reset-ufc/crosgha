@@ -2,6 +2,8 @@
 
 use super::expression;
 
+const NOT_EMPTY: &str = "`commands` starts with one command and only grows while splitting";
+
 /// A simple command; `piped` when it reads the previous command's output through `|`.
 pub struct Command<'a> {
     pub words: Vec<&'a str>,
@@ -63,7 +65,7 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
 
 /// Starts the next command at the separator `bytes[index]`; a single `|` pipes into it.
 fn separate(commands: &mut Vec<Command<'_>>, bytes: &[u8], index: usize) {
-    if !commands.last().unwrap().words.is_empty() {
+    if !commands.last().expect(NOT_EMPTY).words.is_empty() {
         commands.push(Command {
             words: Vec::new(),
             piped: false,
@@ -71,7 +73,7 @@ fn separate(commands: &mut Vec<Command<'_>>, bytes: &[u8], index: usize) {
     }
     let or = bytes.get(index + 1) == Some(&b'|') || index > 0 && bytes[index - 1] == b'|';
     if bytes[index] == b'|' && !or {
-        commands.last_mut().unwrap().piped = true;
+        commands.last_mut().expect(NOT_EMPTY).piped = true;
     }
 }
 
@@ -84,7 +86,7 @@ fn end_word<'a>(
     if let Some(begin) = start.take() {
         let word = script[begin..end].trim_matches(['"', '\'']);
         if !word.is_empty() {
-            commands.last_mut().unwrap().words.push(word);
+            commands.last_mut().expect(NOT_EMPTY).words.push(word);
         }
     }
 }

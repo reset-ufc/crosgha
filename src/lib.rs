@@ -1,3 +1,6 @@
+// Here and not in Cargo.toml: the style guide allows panics in tests, which are separate crates.
+#![warn(clippy::unwrap_used)]
+
 pub mod cli;
 
 mod config;

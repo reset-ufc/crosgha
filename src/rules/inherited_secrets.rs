@@ -1,10 +1,8 @@
 use yaml_serde::Value;
 
 use super::{Finding, Rule, common};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub defines `secrets: inherit` as passing every available secret to the called workflow:
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idsecretsinherit

@@ -2,4 +2,8 @@ disallowed-methods = [
     { path = "std::process::Command::new", reason = "AGENTS.md rule 1: crosgha never shells out to another detector; only src/hook.rs runs git" },
     { path = "std::fs::write", reason = "AGENTS.md rule 2: workflows are written only through filesystem::replace, the verified write" },
     { path = "std::fs::rename", reason = "AGENTS.md rule 2: workflows are written only through filesystem::replace, the verified write" },
+    { path = "std::panic::catch_unwind", reason = "AGENTS.md rule 6: catch_unwind is prohibited; accept the defense-in-depth exception with #[expect]" },
+    { path = "std::sync::PoisonError::into_inner", reason = "AGENTS.md rule 6: never reach inside a poisoned mutex" },
+    { path = "std::sync::PoisonError::get_ref", reason = "AGENTS.md rule 6: never reach inside a poisoned mutex" },
+    { path = "std::sync::PoisonError::get_mut", reason = "AGENTS.md rule 6: never reach inside a poisoned mutex" },
 ]

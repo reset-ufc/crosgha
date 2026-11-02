@@ -1,17 +1,13 @@
-use std::{
-    num::NonZero,
-    path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
-    thread,
-};
+use std::num::NonZero;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
-use crate::{
-    filesystem::{self, Source},
-    fix::{self, FixOutcome},
-    policy::Settings,
-    rules::{self, Finding},
-    workflow::Workflow,
-};
+use crate::filesystem::{self, Source};
+use crate::fix::{self, FixOutcome};
+use crate::policy::Settings;
+use crate::rules::{self, Finding};
+use crate::workflow::Workflow;
 
 pub struct Inspection {
     /// The source the findings' lines point into.

@@ -2,10 +2,8 @@ use yaml_serde::Value;
 use yamlpath::Route;
 
 use super::{Finding, Options, Rule, common};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub recommends full-length commit SHAs for remote actions and reusable workflows:
 // https://docs.github.com/en/actions/reference/security/secure-use#using-third-party-actions

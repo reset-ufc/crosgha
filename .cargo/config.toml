@@ -1,0 +1,3 @@
+[alias]
+# rustfmt.toml rejects these options on stable Rust; the command line accepts them. See docs/rust-style.md.
+fmt-style = "fmt -- --config imports_granularity=Module,hex_literal_case=Lower,format_macro_matchers=true"

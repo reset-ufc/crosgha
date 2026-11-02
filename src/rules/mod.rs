@@ -22,11 +22,9 @@ use std::path::Path;
 use yamlpatch::Patch;
 use yamlpath::Route;
 
-use crate::{
-    github::GitHub,
-    policy::{Persona, Settings, Severity},
-    workflow::Workflow,
-};
+use crate::github::GitHub;
+use crate::policy::{Persona, Settings, Severity};
+use crate::workflow::Workflow;
 
 pub struct Rule {
     pub id: &'static str,

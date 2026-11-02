@@ -1,20 +1,15 @@
-use std::{
-    collections::HashSet,
-    fmt::Display,
-    io::Write,
-    path::{Path, PathBuf},
-    process::ExitCode,
-};
+use std::collections::HashSet;
+use std::fmt::Display;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use clap::{ColorChoice, Parser, Subcommand};
 
-use crate::{
-    config, engine, filesystem,
-    github::GitHub,
-    hook, migrate, policy,
-    report::{self, FileReport, RunError, Unwritten},
-    rules::{self, Located, Place},
-};
+use crate::github::GitHub;
+use crate::report::{self, FileReport, RunError, Unwritten};
+use crate::rules::{self, Located, Place};
+use crate::{config, engine, filesystem, hook, migrate, policy};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -174,6 +169,9 @@ enum HookAction {
     Uninstall,
 }
 
+/// # Panics
+///
+/// Only on a bug: an input classified as remote that no longer parses as one.
 pub fn run() -> ExitCode {
     let args = Args::parse();
     match args.color {
@@ -289,11 +287,13 @@ fn remote_input(path: &Path, host: &str) -> Option<(String, String)> {
 }
 
 fn url_segment(segment: &str) -> String {
+    use std::fmt::Write as _;
+
     segment.bytes().fold(String::new(), |mut encoded, byte| {
         if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
             encoded.push(char::from(byte));
         } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+            let _ = write!(encoded, "%{byte:02X}");
         }
         encoded
     })
@@ -867,6 +867,8 @@ fn run_migrate(
     action: Option<(String, String)>,
     path: &std::path::Path,
 ) -> ExitCode {
+    use std::fmt::Write as _;
+
     let resolved = match action {
         Some(action) => Ok(action),
         None => latest_release(),
@@ -883,7 +885,7 @@ fn run_migrate(
                 summary.steps, summary.files
             );
             if let Some(config) = &summary.config {
-                text.push_str(&format!("Wrote {}.\n", config.display()));
+                let _ = writeln!(text, "Wrote {}.", config.display());
             }
             emit(&text, ExitCode::SUCCESS)
         }

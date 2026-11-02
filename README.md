@@ -65,12 +65,14 @@ goes: [docs/action.md](docs/action.md).
 | [docs/fixes.md](docs/fixes.md) | When `--fix` applies a fix, and which rules have one |
 | [docs/rules.md](docs/rules.md) | The rule catalog: tag, severity, persona, scope, equivalents, examples |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module interfaces, the rule contract, and fix safety |
+| [docs/rust-style.md](docs/rust-style.md) | The Rust style guide for contributors |
 
 ## Development
 
 ```sh
 make setup   # enables the versioned git hooks in .githooks/; trusts mise.toml only if mise is installed
 cargo test   # end-to-end and fixture-driven rule tests
+cargo fmt-style   # format Rust per docs/rust-style.md; plain cargo fmt skips its import rules
 make check   # the pre-push checks: fmt, clippy -D warnings, tests, dogfood scan
 ```
 

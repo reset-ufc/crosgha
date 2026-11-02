@@ -1,15 +1,10 @@
 use yaml_serde::{Mapping, Value};
 use yamlpath::Route;
 
-use super::{
-    Finding, Rule, common, correctness,
-    expression::{self, Operator},
-    shell,
-};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use super::expression::{self, Operator};
+use super::{Finding, Rule, common, correctness, shell};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GASH (Freitas & Rocha, VEM 2024) "Lack of Error Handling: continue-on-error".
 pub const ERROR_SUPPRESSION: Rule = Rule {
