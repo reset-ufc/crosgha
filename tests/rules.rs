@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{bin, fixture};
+use common::{TempDir, bin, fixture};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -244,6 +244,58 @@ fn remote_input_rejects_write_and_offline_before_network() {
         assert!(String::from_utf8_lossy(&output.stderr).contains(flag));
     }
     assert!(requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn missing_local_paths_are_not_read_as_repositories() {
+    let (api, requests) = logged_github();
+    let empty = TempDir::new("missing-local-path");
+    let inputs: [&[&str]; 7] = [
+        &[],
+        &[".github/workflows"],
+        &["../missing"],
+        &["./missing"],
+        &["my.dir/ci.yml"],
+        &["owner/."],
+        &["owner/.."],
+    ];
+    for input in inputs {
+        for args in [
+            vec!["--gh-token", TOKEN, "--gh-hostname", &api],
+            vec!["--offline"],
+            vec![],
+        ] {
+            let output = bin()
+                .current_dir(&*empty)
+                .args(&args)
+                .args(input)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{input:?} {args:?}: {stderr}"
+            );
+            assert!(
+                !stderr.contains("remote") && !stderr.contains("GitHub"),
+                "{input:?} {args:?}: {stderr}"
+            );
+        }
+    }
+    assert_eq!(*requests.lock().unwrap(), Vec::<String>::new());
+
+    // Repository names may hold dots, and `org/.github` is GitHub's own convention.
+    let output = bin()
+        .args(["--no-config", "--no-online-audits"])
+        .args(["--gh-token", TOKEN, "--gh-hostname", &api, "org/.github"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        *requests.lock().unwrap(),
+        ["/repos/org/.github/commits/HEAD"]
+    );
 }
 
 #[test]

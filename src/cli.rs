@@ -271,8 +271,12 @@ fn remote_input(path: &Path, host: &str) -> Option<(String, String)> {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
     };
+    // Owners never hold dots, which keeps the default `.github/workflows` and `../x` local paths:
+    // https://docs.github.com/en/enterprise-cloud@latest/admin/managing-iam/iam-configuration-reference/username-considerations-for-external-authentication
     if !segment(owner)
+        || owner.contains('.')
         || !segment(repo)
+        || matches!(repo, "." | "..")
         || reference.is_empty()
         || !reference
             .bytes()
