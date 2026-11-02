@@ -1,8 +1,6 @@
 use super::{Finding, Rule, common};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub documents workflow-level and job-level GITHUB_TOKEN permissions:
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions

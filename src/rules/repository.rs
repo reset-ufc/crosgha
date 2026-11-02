@@ -1,20 +1,16 @@
 //! Rules that read repository files next to the workflows, not a single workflow.
 
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use yaml_serde::Value;
 use yamlpath::Route;
 
 use super::{Finding, Options, Rule, common};
-use crate::{
-    filesystem,
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::filesystem;
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // zizmor `dependabot-cooldown` and Dependabot's `cooldown` option:
 // https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#cooldown-

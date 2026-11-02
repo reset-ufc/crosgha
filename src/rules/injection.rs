@@ -3,16 +3,11 @@ use std::collections::BTreeSet;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{
-    Finding, Rule,
-    common::{self, EXTERNAL_TRIGGERS, PRIVILEGED_TRIGGERS},
-    expression::{self, Operator},
-    shell,
-};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use super::common::{self, EXTERNAL_TRIGGERS, PRIVILEGED_TRIGGERS};
+use super::expression::{self, Operator};
+use super::{Finding, Rule, shell};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub: untrusted context values expanded into scripts are a script injection risk.
 // https://docs.github.com/en/actions/concepts/security/script-injections

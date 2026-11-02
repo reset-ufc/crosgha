@@ -1,18 +1,14 @@
-use std::{
-    fmt::{Display, Write},
-    path::{Path, PathBuf},
-};
+use std::fmt::{Display, Write};
+use std::path::{Path, PathBuf};
 
 use anstyle::{AnsiColor, Style};
 use clap::ValueEnum;
 
 use serde_json::{Value, json};
 
-use crate::{
-    engine::Inspection,
-    policy::Severity,
-    rules::{self, Finding, Located, Place, Rule},
-};
+use crate::engine::Inspection;
+use crate::policy::Severity;
+use crate::rules::{self, Finding, Located, Place, Rule};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Format {

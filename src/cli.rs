@@ -1,20 +1,15 @@
-use std::{
-    collections::HashSet,
-    fmt::Display,
-    io::Write,
-    path::{Path, PathBuf},
-    process::ExitCode,
-};
+use std::collections::HashSet;
+use std::fmt::Display;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use clap::{ColorChoice, Parser, Subcommand};
 
-use crate::{
-    config, engine, filesystem,
-    github::GitHub,
-    hook, migrate, policy,
-    report::{self, FileReport, RunError, Unwritten},
-    rules::{self, Located, Place},
-};
+use crate::github::GitHub;
+use crate::report::{self, FileReport, RunError, Unwritten};
+use crate::rules::{self, Located, Place};
+use crate::{config, engine, filesystem, hook, migrate, policy};
 
 #[derive(Debug, Parser)]
 #[command(

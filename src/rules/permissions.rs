@@ -3,15 +3,10 @@ use std::collections::BTreeSet;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{
-    Finding, Rule,
-    common::{self, EXTERNAL_TRIGGERS},
-    expression,
-};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use super::common::{self, EXTERNAL_TRIGGERS};
+use super::{Finding, Rule, expression};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub recommends granting GITHUB_TOKEN the least access each job needs:
 // https://docs.github.com/en/actions/reference/security/secure-use#using-secrets

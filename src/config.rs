@@ -2,21 +2,15 @@
 //! project can switch tools without rewriting its configuration:
 //! https://docs.zizmor.sh/configuration/
 
-use std::{
-    fmt, fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+use std::{fmt, fs};
 
-use serde::{
-    Deserialize, Deserializer,
-    de::{MapAccess, Visitor},
-};
+use serde::de::{MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use yaml_serde::Value;
 
-use crate::{
-    policy::Severity,
-    rules::{Finding, Rule},
-};
+use crate::policy::Severity;
+use crate::rules::{Finding, Rule};
 
 #[derive(Default)]
 pub struct Config {

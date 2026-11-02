@@ -2,10 +2,8 @@ use yaml_serde::{Mapping, Value};
 use yamlpatch::{Op, Patch};
 
 use super::{ChangeKind, Finding, ProposedFix, Rule, common, shell};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // actions/checkout documents the true default and the false opt-out, and that the persisted token
 // "enables your scripts to run authenticated git commands":

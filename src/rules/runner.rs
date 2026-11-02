@@ -1,10 +1,8 @@
 use yaml_serde::Value;
 
 use super::{Finding, Options, Rule, common};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub: self-hosted runners should not serve public pull requests.
 // https://docs.github.com/en/actions/reference/security/secure-use#hardening-for-self-hosted-runners

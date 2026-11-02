@@ -1,9 +1,7 @@
-use std::{
-    collections::HashMap,
-    fmt,
-    sync::{Arc, Mutex, PoisonError},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 

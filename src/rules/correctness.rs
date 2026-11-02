@@ -4,10 +4,8 @@ use yaml_serde::Value;
 use yamlpath::Route;
 
 use super::{Finding, Rule, common, expression, runner, shell};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // Key sets from GitHub's workflow syntax reference:
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax

@@ -1,8 +1,6 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const MARKER: &str =
     "# Installed by `crosgha hook install`; remove it with `crosgha hook uninstall`.";

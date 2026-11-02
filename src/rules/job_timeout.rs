@@ -1,8 +1,6 @@
 use super::{Finding, Rule, common};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub documents job timeouts and the platform default here:
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idtimeout-minutes

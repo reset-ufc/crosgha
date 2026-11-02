@@ -1,4 +1,5 @@
-use std::{collections::HashMap, sync::Mutex};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 use yaml_serde::Value;
 use yamlpath::{Document, FeatureKind, Route};

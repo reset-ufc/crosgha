@@ -1,9 +1,7 @@
-use std::{
-    fs,
-    io::{self, Write},
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::fs;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const BOM: &str = "\u{feff}";
 

@@ -1,11 +1,9 @@
 use yaml_serde::Value;
 use yamlpatch::{Op, apply_yaml_patches};
 
-use crate::{
-    policy::Settings,
-    rules::{self, ChangeKind, Finding, ProposedFix},
-    workflow::Workflow,
-};
+use crate::policy::Settings;
+use crate::rules::{self, ChangeKind, Finding, ProposedFix};
+use crate::workflow::Workflow;
 
 pub struct FixOutcome {
     pub source: String,

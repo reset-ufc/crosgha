@@ -1,16 +1,16 @@
 //! Rules that need the GitHub API. They run only when a token is available and `--offline`
 //! is not set, like zizmor's online audits: https://docs.zizmor.sh/usage/#operating-modes
 
-use std::{ops::ControlFlow, path::Path, sync::PoisonError};
+use std::ops::ControlFlow;
+use std::path::Path;
+use std::sync::PoisonError;
 
 use yamlpath::Route;
 
 use super::{Finding, Located, Options, Place, Rule, common};
-use crate::{
-    github::{ApiError, GitHub},
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::github::{ApiError, GitHub};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub Advisory Database, `actions` ecosystem:
 // https://docs.github.com/en/rest/security-advisories/global-advisories

@@ -3,21 +3,17 @@
 //! crosgha Action steps, and writes a `crosgha.yml` from the tool's config. The tool's own config
 //! file is left in place.
 
-use std::{
-    fs,
-    ops::Range,
-    path::{Path, PathBuf},
-};
+use std::fs;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use crate::{
-    filesystem, rules,
-    rules::{common, expression},
-    workflow::Workflow,
-};
+use crate::rules::{common, expression};
+use crate::workflow::Workflow;
+use crate::{filesystem, rules};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Tool {

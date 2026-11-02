@@ -6,10 +6,8 @@ use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
 use super::{ChangeKind, Finding, ProposedFix, Rule, common, repository, runner, shell};
-use crate::{
-    policy::{Persona, Severity},
-    workflow::Workflow,
-};
+use crate::policy::{Persona, Severity};
+use crate::workflow::Workflow;
 
 // GitHub disabled `set-env`/`add-path` and deprecated `set-output`/`save-state`:
 // https://github.blog/changelog/2020-10-01-github-actions-deprecating-set-env-and-add-path-commands/
