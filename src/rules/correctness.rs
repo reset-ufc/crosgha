@@ -15,7 +15,11 @@ pub const SCHEMA: Rule = Rule {
     tag: "syntax/schema-validity",
     severity: Severity::Error,
     persona: Persona::Regular,
-    equivalents: &[("actionlint", "syntax-check"), ("actionlint", "expression")],
+    equivalents: &[
+        ("actionlint", "syntax-check"),
+        ("actionlint", "expression"),
+        ("ghlint", "JsonSchemaValidation"),
+    ],
     configurable: false,
     relational: false,
 };
@@ -28,7 +32,10 @@ pub const SCRIPT_LINT: Rule = Rule {
     tag: "embedded-script-lint",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    equivalents: &[("actionlint", "shellcheck")],
+    equivalents: &[
+        ("actionlint", "shellcheck"),
+        ("ghlint", "SafeEnvironmentFileRedirect"),
+    ],
     configurable: false,
     relational: false,
 };
@@ -589,13 +596,15 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 .unwrap_or("bash");
             let posix = matches!(shell_program(shell), Some("bash" | "sh"));
             if posix && script.lines().any(unquoted_env_file) {
-                findings.push(common::finding(
+                let mut finding = common::finding(
                     workflow,
                     &SCRIPT_LINT,
                     step.key("run"),
                     step.location.clone(),
                     "quote environment file paths to prevent word splitting (SC2086)",
-                )?);
+                )?;
+                finding.concepts = &["SafeEnvironmentFileRedirect"];
+                findings.push(finding);
             }
         }
     }

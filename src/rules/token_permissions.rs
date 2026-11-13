@@ -10,7 +10,7 @@ pub const RULE: Rule = Rule {
     tag: "missing-permissions-block",
     severity: Severity::Warning,
     persona: Persona::Pedantic,
-    equivalents: &[],
+    equivalents: &[("ghlint", "MissingJobPermissions")],
     configurable: false,
     relational: false,
 };

@@ -237,7 +237,7 @@ pub fn tooling(
                 end_column: 1,
                 route: Route::default(),
                 fix: None,
-                concept: None,
+                concepts: &[],
             },
         })
         .collect())

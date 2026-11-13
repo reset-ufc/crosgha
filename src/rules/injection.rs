@@ -20,6 +20,8 @@ pub const SCRIPT_INJECTION: Rule = Rule {
     equivalents: &[
         ("zizmor", "template-injection"),
         ("actionlint", "expression"),
+        ("ghlint", "ShellScriptInjection"),
+        ("ghlint", "JSScriptInjection"),
     ],
     configurable: false,
     relational: false,
@@ -75,6 +77,7 @@ pub const UNSAFE_IF: Rule = Rule {
         ("zizmor", "bot-conditions"),
         ("zizmor", "unsound-condition"),
         ("actionlint", "if-cond"),
+        ("ghlint", "DoubleCurlyIf"),
     ],
     configurable: false,
     relational: false,
@@ -122,24 +125,30 @@ pub fn script_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
-            let mut sinks = Vec::new();
+            let mut sinks: Vec<(Route<'static>, &str, &[&str])> = Vec::new();
             if let Some(script) = step.run() {
-                sinks.push((step.key("run"), script));
+                sinks.push((step.key("run"), script, &["ShellScriptInjection"]));
             }
             if step.uses_action("actions/github-script")
                 && let Some(script) = step.input_str("script")
             {
-                sinks.push((step.key("with").with_key("script"), script));
+                sinks.push((
+                    step.key("with").with_key("script"),
+                    script,
+                    &["JSScriptInjection"],
+                ));
             }
-            for (route, script) in sinks {
+            for (route, script, concepts) in sinks {
                 if let Some(context) = expression::untrusted_in_text(script).first() {
-                    findings.push(common::finding(
+                    let mut finding = common::finding(
                         workflow,
                         &SCRIPT_INJECTION,
                         route,
                         step.location.clone(),
                         format!("untrusted `{context}` expands into a script"),
-                    )?);
+                    )?;
+                    finding.concepts = concepts;
+                    findings.push(finding);
                 }
             }
         }
@@ -283,21 +292,21 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     }
     let mut findings = Vec::new();
     for (route, location, condition) in conditions {
-        let problem = match condition {
-            Value::Bool(value) => Some((format!("condition is always {value}"), None)),
+        let problem: Option<(String, &[&str])> = match condition {
+            Value::Bool(value) => Some((format!("condition is always {value}"), &["if-cond"])),
             Value::String(text) if text.contains("${{") && !single_expression(text) => Some((
                 "text around `${{ }}` makes the condition always true".to_owned(),
-                Some("unsound-condition"),
+                &["unsound-condition", "DoubleCurlyIf"],
             )),
             Value::String(text) if trusts_bot_actor(text) => Some((
                 "actor name checks can be spoofed by a bot-triggered event".to_owned(),
-                Some("bot-conditions"),
+                &["bot-conditions"],
             )),
             _ => None,
         };
-        if let Some((message, concept)) = problem {
+        if let Some((message, concepts)) = problem {
             let mut finding = common::finding(workflow, &UNSAFE_IF, route, location, message)?;
-            finding.concept = concept;
+            finding.concepts = concepts;
             findings.push(finding);
         }
     }

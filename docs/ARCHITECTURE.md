@@ -58,7 +58,7 @@ Each rule lives in `src/rules/` and declares:
 - `summary`: one sentence, used as SARIF's descriptions and help.
 - `severity`: a SARIF level.
 - `persona`: the lowest persona that runs it.
-- `equivalents`: `(tool, id)` pairs for the same concept in zizmor or actionlint.
+- `equivalents`: `(tool, id)` pairs for the same concept in zizmor, actionlint, or ghlint.
 - `configurable`: whether it reads `rules.<id>.config`.
 - `relational`: whether its findings compare steps with each other, so fixing one step may clear
   or restore them; fix validation tolerates that change.

@@ -97,7 +97,7 @@ pub const COMPLEXITY: Rule = Rule {
     tag: "long-job/complexity",
     severity: Severity::Note,
     persona: Persona::Auditor,
-    equivalents: &[],
+    equivalents: &[("ghlint", "TooManySteps")],
     configurable: false,
     relational: false,
 };
@@ -109,7 +109,11 @@ pub const READABILITY: Rule = Rule {
     tag: "readability",
     severity: Severity::Note,
     persona: Persona::Auditor,
-    equivalents: &[("zizmor", "anonymous-definition")],
+    equivalents: &[
+        ("zizmor", "anonymous-definition"),
+        ("ghlint", "MissingWorkflowName"),
+        ("ghlint", "MissingStepName"),
+    ],
     configurable: false,
     relational: false,
 };
@@ -579,24 +583,28 @@ pub fn complexity(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 pub fn readability(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     if workflow.value.get("name").is_none() {
-        findings.push(common::finding(
+        let mut finding = common::finding(
             workflow,
             &READABILITY,
             Route::default().with_key("on"),
             "workflow",
             "workflow has no `name`",
-        )?);
+        )?;
+        finding.concepts = &["MissingWorkflowName"];
+        findings.push(finding);
     }
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
             if step.run().is_some() && step.value.get("name").is_none() {
-                findings.push(common::finding(
+                let mut finding = common::finding(
                     workflow,
                     &READABILITY,
                     step.key("run"),
                     step.location.clone(),
                     "`run` step has no `name`",
-                )?);
+                )?;
+                finding.concepts = &["MissingStepName"];
+                findings.push(finding);
             }
         }
     }

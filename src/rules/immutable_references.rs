@@ -208,11 +208,11 @@ fn push_finding(
     message: &'static str,
 ) -> Result<(), String> {
     let mut finding = common::finding(workflow, &RULE, route, location, message)?;
-    finding.concept = Some(if message.starts_with("container image") {
-        "unpinned-images"
+    finding.concepts = if message.starts_with("container image") {
+        &["unpinned-images"]
     } else {
-        "unpinned-uses"
-    });
+        &["unpinned-uses"]
+    };
     findings.push(finding);
     Ok(())
 }
