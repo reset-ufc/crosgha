@@ -25,10 +25,10 @@ fn report_names_the_equivalent_rule_in_other_tools() {
             .unwrap_or_else(|| panic!("no {rule}: {stdout}"));
         stdout[start..].split("\n\n").next().unwrap().to_owned()
     };
-    assert!(
-        diagnostic("script-injection")
-            .contains("= note: same as zizmor: template-injection; actionlint: expression")
-    );
+    assert!(diagnostic("script-injection").contains(
+        "= note: same as zizmor: template-injection; actionlint: expression; \
+             ghlint: ShellScriptInjection, JSScriptInjection"
+    ));
     assert!(
         diagnostic("unpinned-action")
             .contains("= note: same as zizmor: unpinned-uses, unpinned-images")
@@ -380,26 +380,47 @@ fn rule_catalog_as_json_matches_the_text_catalog() {
         .find(|rule| rule["id"] == "script-injection")
         .unwrap();
     assert_eq!(injection["equivalents"][0]["rule"], "template-injection");
-    // The documented catalog marks the rules that read `rules.<id>.config` in its last column.
+    assert_eq!(injection["equivalents"][2]["tool"], "ghlint");
+    assert_eq!(injection["equivalents"][2]["rule"], "ShellScriptInjection");
+    assert_eq!(injection["equivalents"][3]["rule"], "JSScriptInjection");
+    // The documented catalog matches the equivalents and `rules.<id>.config` flags in the code.
     let catalog =
         fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/rules.md"))
             .unwrap();
-    let documented: Vec<(String, bool)> = catalog
+    let documented: Vec<(String, String, bool)> = catalog
         .lines()
         .filter_map(|line| {
             let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
             (cells.len() == 8 && cells[0].starts_with('`')).then(|| {
                 let id = cells[0].trim_matches('`');
                 assert_eq!(cells[7], format!("[examples](rule-examples.md#{id})"));
-                (id.to_owned(), !cells[6].is_empty())
+                (id.to_owned(), cells[5].to_owned(), !cells[6].is_empty())
             })
         })
         .collect();
-    let listed: Vec<(String, bool)> = rules
+    let listed: Vec<(String, String, bool)> = rules
         .iter()
         .map(|rule| {
+            let mut tools: Vec<(&str, Vec<String>)> = Vec::new();
+            for item in rule["equivalents"].as_array().unwrap() {
+                let tool = item["tool"].as_str().unwrap();
+                let id = format!("`{}`", item["rule"].as_str().unwrap());
+                match tools.iter_mut().find(|(name, _)| *name == tool) {
+                    Some((_, ids)) => ids.push(id),
+                    None => tools.push((tool, vec![id])),
+                }
+            }
+            let equivalents = tools
+                .into_iter()
+                .map(|(tool, ids)| format!("{tool}: {}", ids.join(", ")))
+                .collect::<Vec<_>>()
+                .join("; ");
             let configurable = rule["configurable"].as_bool().expect("configurable");
-            (rule["id"].as_str().unwrap().to_owned(), configurable)
+            (
+                rule["id"].as_str().unwrap().to_owned(),
+                equivalents,
+                configurable,
+            )
         })
         .collect();
     assert_eq!(documented, listed);
@@ -576,7 +597,10 @@ fn github_annotations_and_a_sarif_file_come_from_one_run() {
         "{injection}"
     );
     assert!(
-        injection.ends_with("(zizmor: template-injection; actionlint: expression)"),
+        injection.ends_with(
+            "(zizmor: template-injection; actionlint: expression; \
+             ghlint: ShellScriptInjection, JSScriptInjection)"
+        ),
         "{injection}"
     );
 }

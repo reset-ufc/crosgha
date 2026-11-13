@@ -302,7 +302,7 @@ pub fn finding(
         end_column,
         route,
         fix: None,
-        concept: None,
+        concepts: &[],
     })
 }
 

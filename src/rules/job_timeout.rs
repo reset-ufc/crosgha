@@ -10,7 +10,7 @@ pub const RULE: Rule = Rule {
     tag: "missing-timeout",
     severity: Severity::Note,
     persona: Persona::Pedantic,
-    equivalents: &[],
+    equivalents: &[("ghlint", "MissingJobTimeout")],
     configurable: false,
     relational: false,
 };

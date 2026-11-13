@@ -259,6 +259,39 @@ fn zizmor_ids_for_part_of_a_rule_only_touch_that_part() {
     assert_eq!(lines("unpinned-action"), ["13"], "{stdout}");
     // `unsound-condition` covers text around `${{ }}`, not spoofable bot names.
     assert_eq!(lines("unsafe-if-condition"), ["14"], "{stdout}");
+
+    let temp = TempDir::new("partial-ghlint");
+    let config = temp.join("crosgha.yml");
+    fs::write(&config, "rules:\n  DoubleCurlyIf:\n    disable: true\n").unwrap();
+    let output = bin()
+        .args([
+            "--persona",
+            "pedantic",
+            "--offline",
+            "--no-ignores",
+            "--fail-on",
+            "none",
+            "--config",
+        ])
+        .arg(&config)
+        .arg(fixture("repos/partial/.github/workflows"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let lines: Vec<String> = diagnostics(&stdout, "unsafe-if-condition")
+        .into_iter()
+        .map(|(_, at)| {
+            at.split("ci.yml:")
+                .nth(1)
+                .unwrap()
+                .split(':')
+                .next()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    // `DoubleCurlyIf` disables only the mixed-form branch on line 16, leaving line 14 reported.
+    assert_eq!(lines, ["14"], "{stdout}");
 }
 
 #[test]

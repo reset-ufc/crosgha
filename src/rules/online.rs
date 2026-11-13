@@ -556,7 +556,7 @@ pub fn settings(github: &GitHub, repository: &str, path: &Path) -> Result<Vec<Lo
                 end_column: 1,
                 route: Route::default(),
                 fix: None,
-                concept: None,
+                concepts: &[],
             },
         })
         .collect())

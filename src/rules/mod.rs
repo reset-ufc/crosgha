@@ -35,7 +35,7 @@ pub struct Rule {
     pub severity: Severity,
     /// Lowest persona that runs the rule.
     pub persona: Persona,
-    /// `(tool, rule)` pairs for the same concept in zizmor or actionlint. Their IDs are
+    /// `(tool, rule)` pairs for the same concept in zizmor, actionlint, or ghlint. Their IDs are
     /// accepted in ignore comments and config, and the report names them.
     pub equivalents: &'static [(&'static str, &'static str)],
     /// Reads `rules.<id>.config`.
@@ -45,24 +45,30 @@ pub struct Rule {
     pub relational: bool,
 }
 
+/// Equivalent IDs that cover only one branch of their rule even when their tool lists no second ID.
+const PARTIAL_EQUIVALENTS: &[&str] = &["DoubleCurlyIf", "SafeEnvironmentFileRedirect"];
+
 impl Rule {
     pub fn answers_to(&self, id: &str) -> bool {
         self.id == id || self.equivalents.iter().any(|(_, other)| *other == id)
     }
 
-    /// Whether `id` names this whole rule: its own ID, or the only equivalent from that tool.
-    /// zizmor's `unpinned-images` names only the image half of `unpinned-action`.
+    /// Whether `id` names this whole rule: its own ID, or the only equivalent from that tool when
+    /// that ID is not partial. zizmor's `unpinned-images` names only the image half of
+    /// `unpinned-action`, and ghlint's `DoubleCurlyIf` only the mixed-form branch of
+    /// `unsafe-if-condition`.
     pub fn whole(&self, id: &str) -> bool {
         self.id == id
-            || self.equivalents.iter().any(|(tool, other)| {
-                *other == id
-                    && self
-                        .equivalents
-                        .iter()
-                        .filter(|(same, _)| same == tool)
-                        .count()
-                        == 1
-            })
+            || (!PARTIAL_EQUIVALENTS.contains(&id)
+                && self.equivalents.iter().any(|(tool, other)| {
+                    *other == id
+                        && self
+                            .equivalents
+                            .iter()
+                            .filter(|(same, _)| same == tool)
+                            .count()
+                            == 1
+                }))
     }
 
     /// ` (zizmor: a, b; actionlint: c)`, or nothing when no tool has an equivalent.
@@ -99,16 +105,17 @@ pub struct Finding {
     pub end_column: usize,
     pub route: Route<'static>,
     pub fix: Option<ProposedFix>,
-    /// The equivalent ID this finding belongs to when an other tool splits the rule, such as
+    /// The equivalent IDs this finding belongs to when another tool splits the rule, such as
     /// `unpinned-images` for an image in `unpinned-action`.
-    pub concept: Option<&'static str>,
+    pub concepts: &'static [&'static str],
 }
 
 impl Finding {
-    /// Whether an ignore or config key names this finding: the whole rule, or its concept.
+    /// Whether an ignore or config key names this finding: the whole rule, or one of its concepts.
     pub fn answers_to(&self, id: &str) -> bool {
         self.rule.whole(id)
-            || (self.rule.answers_to(id) && self.concept.is_none_or(|concept| concept == id))
+            || (self.rule.answers_to(id)
+                && (self.concepts.is_empty() || self.concepts.contains(&id)))
     }
 }
 
