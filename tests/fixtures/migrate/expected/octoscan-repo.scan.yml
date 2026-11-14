@@ -1,0 +1,38 @@
+name: Scan
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Analyze
+        uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          advanced-security: 'false'
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          inputs: .github/workflows
+          advanced-security: 'false'
+  docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: docker pull ghcr.io/synacktiv/octoscan:latest
+      - run: docker run --rm -v "$PWD:/repo" ghcr.io/synacktiv/octoscan:latest scan /repo
+  unsupported:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: octoscan dl --org apache --repo incubator-answer
+      - run: octoscan scan . --format sarif
+      - run: octoscan scan . --ignore shellcheck
+      - run: octoscan scan . --disable-rules shellcheck,local-action
+      - run: octoscan scan . --enable-rules dangerous-checkout
+      - run: octoscan scan . --config-file octoscan.yml
+      - run: octoscan scan --list-rules

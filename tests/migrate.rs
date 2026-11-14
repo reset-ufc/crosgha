@@ -3,7 +3,7 @@
     reason = "tests stage files and run the binary"
 )]
 
-//! `crosgha migrate --from zizmor|actionlint|poutine|ghalint` on workflows and repositories.
+//! `crosgha migrate --from zizmor|actionlint|poutine|ghalint|octoscan` on workflows and repositories.
 
 mod common;
 
@@ -13,7 +13,7 @@ use std::fs;
 #[test]
 fn migrate_replaces_other_scanners_with_the_crosgha_action() {
     let action = format!("reset-ufc/crosgha@{}", "c".repeat(40));
-    for tool in ["zizmor", "actionlint", "poutine"] {
+    for tool in ["zizmor", "actionlint", "poutine", "octoscan"] {
         let temp = TempDir::new("migrate");
         let path = temp.join("workflow.yml");
         fs::copy(fixture(&format!("migrate/{tool}.before.yml")), &path).unwrap();
@@ -62,6 +62,27 @@ fn migrate_replaces_other_scanners_with_the_crosgha_action() {
             migrated, unchanged,
             "{tool}: a second migration must be a no-op"
         );
+        if tool == "octoscan" {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            for (line, reason) in [
+                ("workflow.yml:48", "`disable_rules` names octoscan rules"),
+                (
+                    "workflow.yml:51",
+                    "`config_file` points to octoscan's config",
+                ),
+                (
+                    "workflow.yml:61",
+                    "reads `steps.scan.outputs.sarif_output`, which octoscan wrote",
+                ),
+            ] {
+                assert!(
+                    stderr
+                        .lines()
+                        .any(|note| note.contains(line) && note.contains(reason)),
+                    "{line} {reason}: {stderr}"
+                );
+            }
+        }
     }
 }
 
@@ -69,10 +90,12 @@ fn migrate_replaces_other_scanners_with_the_crosgha_action() {
 fn migrate_converts_configs_and_shell_steps() {
     let action = format!("reset-ufc/crosgha@{}", "c".repeat(40));
     for (tool, workflow, config) in [
-        ("zizmor", "ci.yml", "zizmor.yml"),
-        ("actionlint", "lint.yml", "actionlint.yaml"),
-        ("poutine", "scan.yml", "poutine.yml"),
-        ("ghalint", "ghalint.yml", "ghalint.yaml"),
+        ("zizmor", "ci.yml", Some("zizmor.yml")),
+        ("actionlint", "lint.yml", Some("actionlint.yaml")),
+        ("poutine", "scan.yml", Some("poutine.yml")),
+        ("ghalint", "ghalint.yml", Some("ghalint.yaml")),
+        // octoscan reads a config only from `--config-file`.
+        ("octoscan", "scan.yml", None),
     ] {
         let temp = TempDir::new("migrate");
         let repo = temp.join("work");
@@ -93,7 +116,8 @@ fn migrate_converts_configs_and_shell_steps() {
             .unwrap();
         let migrated = fs::read_to_string(repo.join(".github/workflows").join(workflow)).unwrap();
         let crosgha = fs::read_to_string(repo.join(".github/crosgha.yml")).unwrap_or_default();
-        let original = fs::read_to_string(repo.join(".github").join(config)).unwrap();
+        let original =
+            config.map(|config| fs::read_to_string(repo.join(".github").join(config)).unwrap());
         let scan = bin()
             .args(["--offline", "--fail-on", "none"])
             .arg(repo.join(".github/workflows"))
@@ -111,7 +135,10 @@ fn migrate_converts_configs_and_shell_steps() {
         assert_eq!(crosgha, expected("crosgha.yml"), "{tool}");
         assert_eq!(
             original,
-            fs::read_to_string(fixture(&format!("migrate/{tool}-repo/.github/{config}"))).unwrap(),
+            config.map(|config| {
+                fs::read_to_string(fixture(&format!("migrate/{tool}-repo/.github/{config}")))
+                    .unwrap()
+            }),
             "{tool}: the original config stays for as long as {tool} runs"
         );
         assert!(
@@ -182,6 +209,34 @@ fn migrate_converts_configs_and_shell_steps() {
                         "ghalint.yml:41",
                         "`GHALINT_CONFIG` has no crosgha Action input",
                     ),
+                ] {
+                    assert!(
+                        stderr
+                            .lines()
+                            .any(|note| note.contains(line) && note.contains(reason)),
+                        "{line} {reason}: {stderr}"
+                    );
+                }
+            }
+            "octoscan" => {
+                assert!(!repo.join(".github/crosgha.yml").exists());
+                for (line, reason) in [
+                    // The image runs octoscan with other words than its own CLI.
+                    ("scan.yml:22", "next to other commands"),
+                    ("scan.yml:21", "was kept"),
+                    (
+                        "scan.yml:27",
+                        "`octoscan dl` downloads workflows through the GitHub API",
+                    ),
+                    (
+                        "scan.yml:28",
+                        "`--format sarif` has no crosgha Action input",
+                    ),
+                    ("scan.yml:29", "`--ignore` has no crosgha Action input"),
+                    ("scan.yml:30", "`--disable-rules`"),
+                    ("scan.yml:31", "`--enable-rules`"),
+                    ("scan.yml:32", "`--config-file`"),
+                    ("scan.yml:33", "`--list-rules`"),
                 ] {
                     assert!(
                         stderr
