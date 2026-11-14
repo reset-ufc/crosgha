@@ -6,6 +6,9 @@
 2. the targeted finding disappears and no new finding appears;
 3. only the intended YAML node changed.
 
+A value shared through a YAML anchor (`&name`) and its aliases (`*name`) is never fixed: rewriting it would also
+change every alias, so check 3 rejects it.
+
 A fix that fails a check is skipped: its finding stays in the report with the reason ("Not fixed" in text, `fixes` in
 JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
 workflow, or one reached through a symlinked directory below the scanned path, is never rewritten; its fixes are
