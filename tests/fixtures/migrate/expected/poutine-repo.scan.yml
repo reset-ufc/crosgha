@@ -1,0 +1,46 @@
+name: Scan
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  local:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Analyze
+        uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          fail-on: none
+          advanced-security: 'false'
+  strict:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          inputs: .github/workflows
+          token: ${{ github.token }}
+          advanced-security: 'false'
+  remote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: brew install poutine
+      - run: poutine analyze_repo org/repo --token "$GH_TOKEN"
+      - run: poutine analyze_org org --token "$GH_TOKEN"
+  unsupported:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: poutine analyze_local . --format sarif
+      - run: poutine analyze_local . --skip unpinnable_action
+      - run: poutine analyze_local . --config my-config.yml
+      - run: poutine analyze_local . --scm gitlab --scm-base-url https://gitlab.example.com
+      - run: poutine analyze_local . --format json > poutine.json

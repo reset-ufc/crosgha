@@ -1,4 +1,5 @@
-//! `crosgha migrate --from <tool>`: moves a repository from zizmor or actionlint to crosgha.
+//! `crosgha migrate --from <tool>`: moves a repository from zizmor, actionlint, or poutine to
+//! crosgha.
 //! It rewrites the tool's Action steps, turns shell steps that only install and run the tool into
 //! crosgha Action steps, and writes a `crosgha.yml` from the tool's config. The tool's own config
 //! file is left in place.
@@ -19,13 +20,19 @@ use crate::{filesystem, rules};
 pub enum Tool {
     Zizmor,
     Actionlint,
+    Poutine,
 }
+
+/// poutine's documented Action step is followed by this upload of the SARIF file it writes
+/// (https://github.com/boostsecurityio/poutine/blob/2ad918cfe37a6889f05602264a03256eef149bdc/README.md#github-actions).
+const UPLOAD_SARIF: &str = "github/codeql-action/upload-sarif@";
 
 impl Tool {
     fn name(self) -> &'static str {
         match self {
             Self::Zizmor => "zizmor",
             Self::Actionlint => "actionlint",
+            Self::Poutine => "poutine",
         }
     }
 
@@ -39,6 +46,7 @@ impl Tool {
                 "rhysd/actionlint@",
                 "docker://rhysd/actionlint",
             ],
+            Self::Poutine => &["boostsecurityio/poutine-action@"],
         }
     }
 
@@ -90,14 +98,61 @@ pub fn run(
             let mut installs = Vec::new();
             let mut kept = false;
             let steps_before = steps;
-            for step in common::steps(&job) {
+            let job_steps = common::steps(&job);
+            // poutine Action steps with the SARIF file each writes, and the SARIF uploads of the job.
+            let mut poutine_steps = Vec::new();
+            let mut uploads = Vec::new();
+            for step in &job_steps {
                 let place = || -> Result<String, String> {
                     let line = common::line(&workflow, &step.anchor())?;
                     Ok(format!("{}:{line}: {}", file.display(), step.location))
                 };
-                if step.uses().is_some_and(|uses| {
+                let action = step.uses().is_some_and(|uses| {
                     tool.actions().iter().any(|prefix| uses.starts_with(prefix))
-                }) {
+                });
+                // Replacing `uses` up to the end of its line would cut a flow mapping's `}`.
+                if action && step_source(&workflow, step)?.starts_with('{') {
+                    kept = true;
+                    summary.notes.push(format!(
+                        "{}: written as a flow mapping; replace this step with the crosgha Action \
+                         by hand",
+                        place()?
+                    ));
+                    continue;
+                }
+                if tool == Tool::Poutine
+                    && let Some(uses) = step.uses()
+                {
+                    let with = |key: &str, default: &str| {
+                        step.value
+                            .get("with")
+                            .and_then(|with| with.get(key))
+                            .and_then(Value::as_str)
+                            .unwrap_or(default)
+                            .to_owned()
+                    };
+                    if uses.starts_with(UPLOAD_SARIF) {
+                        uploads.push((step, with("sarif_file", "")));
+                        continue;
+                    }
+                    if action {
+                        // https://github.com/boostsecurityio/poutine-action/blob/badd750a259150be3b8b00823ad60849d539b96d/action.yml
+                        let (format, output) =
+                            (with("format", "sarif"), with("output", "results.sarif"));
+                        if format == "sarif" {
+                            poutine_steps.push((step, output));
+                        } else {
+                            kept = true;
+                            summary.notes.push(format!(
+                                "{}: writes poutine's `{format}` report to `{output}`, which the \
+                                 crosgha Action does not produce; replace this step by hand",
+                                place()?
+                            ));
+                        }
+                        continue;
+                    }
+                }
+                if action {
                     edits.push((
                         value_to_line_end(&workflow, &step.key("uses"))?,
                         replacement.clone(),
@@ -115,7 +170,7 @@ pub fn run(
                         installs.push((removal(&workflow, &step.route)?, place()?));
                     }
                     Shell::Invoke(Ok(inputs)) if step.value.get("working-directory").is_none() => {
-                        edits.extend(shell_to_action(&workflow, &step, &replacement, &inputs)?);
+                        edits.extend(shell_to_action(&workflow, step, &replacement, &inputs)?);
                         steps += 1;
                     }
                     Shell::Invoke(Err(reason)) => {
@@ -141,6 +196,63 @@ pub fn run(
                             place()?,
                             tool.name()
                         ));
+                    }
+                }
+            }
+            // The crosgha Action uploads SARIF itself, so an upload of poutine's file goes; with no
+            // such upload, poutine's report never reached the Security tab, and crosgha's does not
+            // either. poutine fails only with `--fail-on-violation`, which its Action never passes.
+            let mut removed_uploads = Vec::new();
+            for (step, output) in poutine_steps {
+                let uploaded: Vec<&common::Step> = uploads
+                    .iter()
+                    .filter(|(_, file)| *file == output)
+                    .map(|(upload, _)| *upload)
+                    .collect();
+                // The crosgha Action keeps its SARIF in its own file, so a step that reads
+                // poutine's would find nothing.
+                let mut readers = Vec::new();
+                for other in &job_steps {
+                    let own = std::ptr::eq(other, step)
+                        || uploaded.iter().any(|upload| std::ptr::eq(*upload, other));
+                    if !own && step_source(&workflow, other)?.contains(output.as_str()) {
+                        readers.push(other);
+                    }
+                }
+                if let Some(reader) = readers.first() {
+                    kept = true;
+                    let line = common::line(&workflow, &reader.anchor())?;
+                    summary.notes.push(format!(
+                        "{}:{}: {}: reads `{output}`, which poutine wrote and the crosgha Action \
+                         does not; the poutine step was kept, migrate it by hand",
+                        file.display(),
+                        line,
+                        reader.location
+                    ));
+                    continue;
+                }
+                steps += 1;
+                let mut inputs = vec![("fail-on", "none".to_owned())];
+                if uploaded.is_empty() {
+                    inputs.push(("advanced-security", "false".to_owned()));
+                }
+                let key = workflow
+                    .document
+                    .query_key_only(&step.key("uses"))
+                    .map_err(|error| error.to_string())?;
+                let indent = " ".repeat(key.location.point_span.0.1);
+                edits.push((
+                    value_to_line_end(&workflow, &step.key("uses"))?,
+                    format!("{replacement}{}", with_block(&indent, &inputs)),
+                ));
+                if step.value.get("with").is_some() {
+                    edits.push((removal(&workflow, &step.key("with"))?, String::new()));
+                }
+                for upload in uploaded {
+                    let range = removal(&workflow, &upload.route)?;
+                    if !removed_uploads.contains(&range) {
+                        removed_uploads.push(range.clone());
+                        edits.push((range, String::new()));
                     }
                 }
             }
@@ -176,6 +288,10 @@ pub fn run(
         Some(github) => match tool {
             Tool::Zizmor => zizmor_config(&github, &mut summary.notes)?,
             Tool::Actionlint => actionlint_config(&github, &mut summary.notes)?,
+            Tool::Poutine => {
+                poutine_config(&github, &mut summary.notes)?;
+                None
+            }
         },
         None => None,
     };
@@ -205,11 +321,32 @@ fn apply(source: &str, mut edits: Vec<Edit>) -> String {
     output
 }
 
+/// The lines of the node at `route`. The parser counts comment lines after a block's last node
+/// as part of it, though they belong to what follows (a comment over the next job), so they stay.
 fn removal(workflow: &Workflow, route: &Route) -> Result<Range<usize>, String> {
-    workflow
+    let span = workflow
         .document
         .removal_span(route)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let source = workflow.document.source();
+    let mut lines: Vec<&str> = source[span.clone()].split_inclusive('\n').collect();
+    while lines.len() > 1
+        && lines.last().is_some_and(|line| {
+            let line = line.trim();
+            line.is_empty() || line.starts_with('#')
+        })
+    {
+        lines.pop();
+    }
+    Ok(span.start..span.start + lines.concat().len())
+}
+
+fn step_source<'w>(workflow: &'w Workflow, step: &common::Step) -> Result<&'w str, String> {
+    let feature = workflow
+        .document
+        .query_pretty(&step.route)
+        .map_err(|error| error.to_string())?;
+    Ok(workflow.document.extract(&feature))
 }
 
 /// The `uses` value through the end of its line, so the old `# vX.Y.Z` comment goes with it.
@@ -301,6 +438,7 @@ fn installs(line: &str, tool: Tool) -> bool {
                 | ["python" | "python3", "-m", "pip"]
         ),
         Tool::Actionlint => matches!(words[..install], ["go" | "brew"]),
+        Tool::Poutine => matches!(words[..install], ["brew"]),
     };
     let mut packages = words[install + 1..]
         .iter()
@@ -315,6 +453,7 @@ fn installs(line: &str, tool: Tool) -> bool {
             Tool::Actionlint => {
                 *package == "actionlint" || package.starts_with("github.com/rhysd/actionlint/")
             }
+            Tool::Poutine => *package == "poutine",
         })
 }
 
@@ -369,6 +508,7 @@ fn invocation_args(words: &[String], tool: Tool) -> Option<&[String]> {
         {
             1
         }
+        (Tool::Poutine, [first, ..]) if *first == "poutine" || first.ends_with("/poutine") => 1,
         _ => return None,
     };
     Some(&words[skip..])
@@ -377,6 +517,20 @@ fn invocation_args(words: &[String], tool: Tool) -> Option<&[String]> {
 /// Action inputs for the tool's CLI arguments, in the order they are written. A CLI run never
 /// uploaded SARIF, so `advanced-security` is turned off to keep behavior the same.
 fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>, String> {
+    // Only `analyze_local` scans the checkout, as the crosgha Action does; the other commands read
+    // repositories through an SCM API.
+    let args = match (tool, args.split_first()) {
+        (Tool::Poutine, Some((command, rest))) if command == "analyze_local" => rest,
+        (Tool::Poutine, Some((command, _))) => {
+            return Err(format!(
+                "`poutine {command}` has no crosgha Action equivalent; the Action scans the \
+                 checkout, as `poutine analyze_local` does"
+            ));
+        }
+        (Tool::Poutine, None) => return Err("`poutine` runs no command".to_owned()),
+        _ => args,
+    };
+    let mut fail_on_violation = false;
     let mut inputs: Vec<String> = Vec::new();
     let mut settings: Vec<(&'static str, String)> = Vec::new();
     let mut index = 0;
@@ -415,9 +569,10 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             (Tool::Zizmor, "--gh-token") => Some(("token", value())),
             // The Action prints text (zizmor's `plain`) or annotations, and keeps SARIF in a file;
             // a step whose log carries JSON or SARIF would lose it.
-            (Tool::Zizmor, "--format") => match value() {
-                Some(format) if format == "plain" => None,
-                Some(format) if format == "github" => {
+            (Tool::Zizmor | Tool::Poutine, "--format") => match value() {
+                Some(format) if format == "plain" && tool == Tool::Zizmor => None,
+                Some(format) if format == "pretty" && tool == Tool::Poutine => None,
+                Some(format) if format == "github" && tool == Tool::Zizmor => {
                     Some(("annotations", Some("true".to_owned())))
                 }
                 Some(format) => {
@@ -447,6 +602,28 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
                 value();
                 None
             }
+            // https://github.com/boostsecurityio/poutine/blob/2ad918cfe37a6889f05602264a03256eef149bdc/README.md#configuration-options
+            (Tool::Poutine, "--token") => Some(("token", value())),
+            (Tool::Poutine, "--fail-on-violation") => {
+                fail_on_violation = true;
+                None
+            }
+            (Tool::Poutine, "--verbose" | "--disable-version-check" | "--ignore-forks") => None,
+            (Tool::Poutine, "--threads" | "--scm-base-url") => {
+                if inline.is_none() {
+                    value();
+                }
+                None
+            }
+            (Tool::Poutine, "--scm") => match value() {
+                Some(scm) if scm == "github" => None,
+                scm => {
+                    return Err(format!(
+                        "`--scm {}` has no crosgha Action input; crosgha checks GitHub Actions only",
+                        scm.unwrap_or_default()
+                    ));
+                }
+            },
             _ => return Err(format!("`{flag}` has no crosgha Action input")),
         };
         if let Some((key, value)) = setting {
@@ -454,6 +631,9 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             settings.retain(|(existing, _)| *existing != key);
             settings.push((key, value));
         }
+    }
+    if tool == Tool::Poutine && !fail_on_violation {
+        settings.push(("fail-on", "none".to_owned()));
     }
     let mut ordered = Vec::new();
     if !inputs.is_empty() && inputs != ["."] {
@@ -466,6 +646,7 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
         "online-audits",
         "config",
         "token",
+        "fail-on",
     ] {
         if let Some((_, value)) = settings.iter().find(|(existing, _)| *existing == key) {
             ordered.push((key, value.clone()));
@@ -498,21 +679,13 @@ fn shell_to_action(
     replacement: &str,
     inputs: &[(&'static str, String)],
 ) -> Result<Vec<Edit>, String> {
-    use std::fmt::Write as _;
-
     let run = workflow
         .document
         .query_pretty(&step.key("run"))
         .map_err(|error| error.to_string())?;
     let (start, end) = run.location.byte_span;
     let indent = " ".repeat(run.location.point_span.0.1);
-    let mut text = format!("uses: {replacement}");
-    if !inputs.is_empty() {
-        let _ = write!(text, "\n{indent}with:");
-        for (key, value) in inputs {
-            let _ = write!(text, "\n{indent}  {key}: {}", scalar(value));
-        }
-    }
+    let mut text = format!("uses: {replacement}{}", with_block(&indent, inputs));
     let source = workflow.document.source();
     if source[start..end].ends_with('\n') {
         text.push('\n');
@@ -522,6 +695,21 @@ fn shell_to_action(
         edits.push((removal(workflow, &step.key("shell"))?, String::new()));
     }
     Ok(edits)
+}
+
+/// A `with:` block of `inputs` for a step whose keys start at `indent`, on the lines after its
+/// `uses:`.
+fn with_block(indent: &str, inputs: &[(&'static str, String)]) -> String {
+    use std::fmt::Write as _;
+
+    let mut text = String::new();
+    if !inputs.is_empty() {
+        let _ = write!(text, "\n{indent}with:");
+        for (key, value) in inputs {
+            let _ = write!(text, "\n{indent}  {key}: {}", scalar(value));
+        }
+    }
+    text
 }
 
 /// A YAML scalar for an Action input: booleans are quoted strings, as Action inputs are.
@@ -668,4 +856,35 @@ fn actionlint_config(
         let _ = writeln!(text, "        - {}", serde_json::Value::from(label));
     }
     Ok(Some((target, text)))
+}
+
+/// poutine's config (`.poutine.yml` at the root wins over `.github/poutine.yml`) holds `skip`
+/// entries for poutine's own rules and `include` paths of Rego rules, neither of which crosgha can
+/// read, so no `crosgha.yml` is written.
+/// https://github.com/boostsecurityio/poutine/blob/2ad918cfe37a6889f05602264a03256eef149bdc/README.md#configuration
+fn poutine_config(github: &Path, notes: &mut Vec<String>) -> Result<(), String> {
+    let root = github.parent().unwrap_or(github);
+    let Some(source_path) = [root.join(".poutine.yml"), github.join("poutine.yml")]
+        .into_iter()
+        .find(|path| path.is_file())
+    else {
+        return Ok(());
+    };
+    let located = |error: String| format!("{}: {error}", source_path.display());
+    let source = fs::read_to_string(&source_path).map_err(|error| located(error.to_string()))?;
+    let config: Value =
+        yaml_serde::from_str(&source).map_err(|error| located(error.to_string()))?;
+    if config.get("skip").is_some() {
+        notes.push(located(
+            "`skip` names poutine rules; ignore crosgha findings with `# crosgha: ignore[rule]` \
+             or `rules.<id>.ignore`"
+                .to_owned(),
+        ));
+    }
+    if config.get("include").is_some() {
+        notes.push(located(
+            "`include` adds Rego rules, which crosgha does not run".to_owned(),
+        ));
+    }
+    Ok(())
 }

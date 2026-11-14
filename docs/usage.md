@@ -159,13 +159,22 @@ push from every repository.
 - **Safety:** both commands refuse to touch a `pre-push` hook that crosgha did not write. A hook counts as crosgha's
   only if it matches the generated script exactly, so an edited copy is yours.
 
-## Migrating from zizmor or actionlint
+## Migrating from zizmor, actionlint, or poutine
 
-`crosgha migrate --from zizmor|actionlint [PATH]` moves a repository over:
+`crosgha migrate --from zizmor|actionlint|poutine [PATH]` moves a repository over:
 
 - **Action steps:** `zizmorcore/zizmor-action`, `raven-actions/actionlint`, `reviewdog/action-actionlint`, and
   `rhysd/actionlint` steps become crosgha Action steps. zizmor steps keep their `with:` block (the crosgha Action
-  accepts zizmor-action's inputs); actionlint steps lose theirs.
+  accepts zizmor-action's inputs); actionlint steps lose theirs. A step written as a flow mapping (`- { uses: ... }`)
+  stays, with a note.
+- **poutine:** `boostsecurityio/poutine-action` steps become crosgha Action steps with `fail-on: none`, since poutine
+  fails only with `--fail-on-violation`. A `github/codeql-action/upload-sarif` step of the same job that uploads the
+  poutine step's SARIF file is removed, because the crosgha Action uploads its own; without one, the step gets
+  `advanced-security: 'false'`. A poutine step that writes another `format`, or whose report file a later step of the job reads, stays, with a note. In shell steps,
+  `brew install poutine` installs it and only `poutine analyze_local` translates, since the other commands read
+  repositories through an SCM API. `--token` becomes `token`; `--format pretty`, `--verbose`, `--threads`,
+  `--disable-version-check`, `--ignore-forks`, `--scm github`, and `--scm-base-url` are dropped; any other flag keeps
+  the step, with a note.
 - **Shell steps:** steps that only install the tool are removed only when a crosgha step replaced the tool in the same
   job and no step of that job still runs it; otherwise they stay with a note. Steps that only run it become crosgha
   Action steps, with CLI flags translated to inputs. Steps that install or run the tool next to other commands, with
@@ -173,8 +182,9 @@ push from every repository.
   for (such as `--format json`), stay in place and are listed for a manual change.
 - **Config:** `zizmor.yml` becomes `crosgha.yml` next to it, with rule keys renamed where the match is one to one and
   keys without a crosgha rule dropped. A key whose new name is already set keeps its zizmor name, with a note.
-  `actionlint.yaml` self-hosted runner labels become `rules.self-hosted-runner.config.labels`. The original config
-  stays in place.
+  `actionlint.yaml` self-hosted runner labels become `rules.self-hosted-runner.config.labels`. poutine's config
+  (`.poutine.yml` or `.github/poutine.yml`) has no crosgha meaning: its `skip` and `include` entries are listed in
+  notes, and no `crosgha.yml` is written. The original config stays in place.
 
 The command writes the latest crosgha release, pinned by SHA with a version comment. Without a token, pass the
 reference yourself with `--action owner/repo@<sha> --action-version vX.Y.Z`. A symlinked workflow that needs an edit

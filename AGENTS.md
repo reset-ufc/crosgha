@@ -114,7 +114,7 @@ src/config.rs               crosgha.yml / zizmor.yml discovery and rule settings
 src/github.rs               Cached read-only GitHub REST client for online rules and remote inputs
 src/tree.rs                 Repository read interface (local directory or GitHub commit) and action discovery
 src/follow.rs               `--follow-actions`: actions of other repositories, read at their commit and followed
-src/migrate.rs              `migrate --from zizmor|actionlint` step rewrites
+src/migrate.rs              `migrate --from zizmor|actionlint|poutine` step rewrites
 src/hook.rs                 `hook install|uninstall`: the git pre-push hook
 action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs

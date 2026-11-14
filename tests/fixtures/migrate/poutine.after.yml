@@ -1,0 +1,72 @@
+name: poutine
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  # The README's job: the Action writes results.sarif and the next step uploads it.
+  sast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: poutine - GitHub Actions SAST
+        uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          fail-on: none
+  # SARIF in a file that nothing uploads.
+  file:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          fail-on: none
+          advanced-security: 'false'
+      - name: Upload another tool's SARIF
+        uses: github/codeql-action/upload-sarif@dddddddddddddddddddddddddddddddddddddddd # v3.24.10
+        with:
+          sarif_file: other.sarif
+  # Another format feeds a later step, which crosgha's Action cannot.
+  json:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: boostsecurityio/poutine-action@main
+        with:
+          format: json
+          output: poutine.json
+      - run: jq . poutine.json
+  # A later step reads the report file, which crosgha's Action does not write.
+  consumed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: boostsecurityio/poutine-action@main
+        with:
+          output: custom.sarif
+      - run: cat custom.sarif
+  # Steps written as flow mappings are left for a manual change.
+  flow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - { uses: boostsecurityio/poutine-action@main }
+  # Two poutine steps whose SARIF one upload sends.
+  twice:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          fail-on: none
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          fail-on: none

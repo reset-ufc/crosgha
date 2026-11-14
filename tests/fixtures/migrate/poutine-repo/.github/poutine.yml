@@ -1,0 +1,8 @@
+skip:
+  - level: note
+  - rule: pr_runs_on_self_hosted
+    path:
+      - .github/workflows/pr.yml
+include:
+  - path: ./custom_rules
+disableVersionCheck: true
