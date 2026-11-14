@@ -663,52 +663,69 @@ Conditions must not be constant, always true, or based on spoofable bot names.
 `tests/fixtures/rules/unsafe-if-condition.before.yml`
 
 ```yaml
-name: Conditions
-on: [pull_request]
+name: Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
 permissions: {}
 jobs:
-  test:
-    if: true # expect: unsafe-if-condition
+  build:
+    # GitHub substitutes each `${{ }}` into one string, and a non-empty string is true.
+    if: ${{ github.event_name == 'push' }} || ${{ github.event.pull_request.draft == false }} # expect: unsafe-if-condition
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - if: ${{ github.event_name == 'push' }} && ${{ github.ref == 'refs/heads/main' }} # expect: unsafe-if-condition
-        run: echo a
+      - id: changes
+        run: echo "lines=$(git diff --stat HEAD~1 | wc -l)" >> "${GITHUB_OUTPUT}"
+      - if: ${{ steps.changes.outputs.lines }} == '0' # expect: unsafe-if-condition
+        run: echo "nothing changed"
+      - if: ${{ github.event.pull_request.additions > 10 }} && ${{ github.event.pull_request.draft }} # expect: unsafe-if-condition
+        run: echo "large draft"
+      # `&&` binds tighter than the `||` inside the first segment, so that segment is grouped.
+      - if: ${{ github.ref_type == 'tag' || github.ref == 'refs/heads/main' }} && ${{ !github.event.repository.fork }} # expect: unsafe-if-condition
+        run: echo "publish"
+      - if: (${{ github.event_name == 'push' }} || ${{ github.event_name == 'release' }}) && ${{ github.ref_type == 'tag' }} # expect: unsafe-if-condition
+        run: echo "tagged"
+      - if: ${{ github.run_attempt }} > 1 && ${{ github.event_name == 'push' }} != false # expect: unsafe-if-condition
+        run: echo "retry"
+      # A block scalar keeps its last line break, which ends up after `}}`.
       - if: | # expect: unsafe-if-condition
           ${{ github.event_name == 'push' }}
-        run: echo b
-      - if: github.actor == 'dependabot[bot]' # expect: unsafe-if-condition
-        run: echo c
-      - if: github.event_name == 'push'
-        run: echo d
+        run: echo "block"
+      - if: |+ # expect: unsafe-if-condition
+          ${{ github.event_name == 'push' &&
+              github.ref == 'refs/heads/main' }}
+
+        run: echo "kept"
+      - if: > # expect: unsafe-if-condition
+          ${{ github.event_name == 'push' }} &&
+          ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: echo "folded"
+      - if: # expect: unsafe-if-condition
+          ${{ github.event_name == 'push' }} &&
+          ${{ github.ref == 'refs/heads/main' }}
+        run: echo "plain over two lines"
+      - if: '${{ github.ref }} == ''refs/heads/main''' # expect: unsafe-if-condition
+        run: echo "single-quoted"
+      - if: "!${{ cancelled() }}" # expect: unsafe-if-condition
+        run: echo "double-quoted"
+      - {if: '${{ github.event_name }} == ''push''', run: echo "flow"} # expect: unsafe-if-condition
+      # `}}` and `${{` inside a string literal neither end nor start a segment.
+      - if: ${{ contains(github.event.head_commit.message, '}} ${{') }} && ${{ github.event_name == 'push' }} # expect: unsafe-if-condition
+        run: echo "literal braces"
+      # One expression already.
       - if: ${{ github.event_name == 'push' }}
-        run: echo e
-      - if: github.event.pull_request.user.login == 'dependabot[bot]'
-        run: echo f
-      - if: ${{ 'Dependabot[bot]' == GitHub.Actor }} # expect: unsafe-if-condition
-        run: echo g
-      - if: contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.triggering_actor) # expect: unsafe-if-condition
-        run: echo h
-      - if: github.event_name == 'pull_request' && endsWith(github.actor, '[bot]') # expect: unsafe-if-condition
-        run: echo i
-      # A spoofed bot name fails these checks, so it can only skip the step.
-      - if: github.actor != 'dependabot[bot]'
-        run: echo j
-      - if: ${{ !contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.actor) }}
-        run: echo k
-      - if: github.actor == 'octocat' && github.event.pull_request.user.login == 'dependabot[bot]'
-        run: echo l
-      - if: ${{ !(github.actor == 'dependabot[bot]' || github.actor == 'renovate[bot]') }}
-        run: echo m
-      - if: "!(contains(fromJSON('[\"dependabot[bot]\"]'), github.actor))"
-        run: echo n
-      - if: contains(github.actor, '[bot]') == false
-        run: echo o
-      # The negation covers another check, or a second one undoes it.
-      - if: ${{ !(github.event_name == 'push') && github.actor == 'dependabot[bot]' }} # expect: unsafe-if-condition
-        run: echo p
-      - if: ${{ !(endsWith(github.actor, '[bot]') == false) }} # expect: unsafe-if-condition
-        run: echo q
+        run: echo "single"
+      - if: >-
+          ${{ github.event_name == 'push' &&
+              github.ref == 'refs/heads/main' }}
+        run: echo "stripped"
+      - if: ${{ contains(github.event.head_commit.message, '${{') }}
+        run: echo "literal"
+      - if: "${{ github.event_name == 'push' }}"
+        run: echo "quoted"
 ```
 
 **Compliant**
@@ -716,24 +733,35 @@ jobs:
 `tests/fixtures/rules/unsafe-if-condition.clean.yml`
 
 ```yaml
-name: Conditions
-on: [pull_request]
+name: Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
 permissions: {}
 jobs:
-  test:
+  build:
+    if: ${{ github.event_name == 'push' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: echo a
-      - if: ${{ github.event_name == 'push' }}
-        run: echo b
-      - if: github.event.pull_request.user.login == 'dependabot[bot]'
-        run: echo c
-      - if: github.event_name == 'push'
-        run: echo d
-      - if: github.actor != 'dependabot[bot]'
-        run: echo e
+      - id: changes
+        run: echo "lines=$(git diff --stat HEAD~1 | wc -l)" >> "${GITHUB_OUTPUT}"
+      - if: ${{ steps.changes.outputs.lines == '0' }}
+        run: echo "nothing changed"
+      - if: ${{ github.event.pull_request.additions > 10 && github.event.pull_request.draft }}
+        run: echo "large draft"
+      - if: ${{ (github.ref_type == 'tag' || github.ref == 'refs/heads/main') && !github.event.repository.fork }}
+        run: echo "publish"
+      - if: |-
+          ${{ github.event_name == 'push' &&
+              github.ref == 'refs/heads/main' }}
+        run: echo "stripped"
+      - if: '${{ github.ref == ''refs/heads/main'' }}'
+        run: echo "single-quoted"
+      - if: ${{ contains(github.event.head_commit.message, '}} ${{') && github.event_name == 'push' }}
+        run: echo "literal braces"
 ```
 
 ## `artifact-poisoning`
@@ -2150,7 +2178,7 @@ jobs:
 
 ## `readability`
 
-Workflows and run steps should have names.
+Workflows and run steps should have names, and conditions should state their intent.
 
 **Non-compliant**
 
@@ -2161,6 +2189,7 @@ on: [push] # expect: readability
 permissions: {}
 jobs:
   test:
+    if: github.repository == 'octo-org/octo-repo' # expect: readability
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2169,6 +2198,53 @@ jobs:
       - run: make test # expect: readability
       - name: Lint
         run: make lint
+      # `always()` also runs after a cancel, and a negation hides which statuses run the step.
+      - name: Upload report
+        if: ${{ always() }} # expect: readability
+        run: make upload
+      - name: Upload bare
+        if: always() # expect: readability, readability
+        run: make upload
+      - name: Notify
+        if: ${{ !cancelled() }} # expect: readability
+        run: make notify
+      - name: Notify quoted
+        if: "! failure() && github.event_name == 'push'" # expect: readability, readability
+        run: make notify
+      - name: Cleanup
+        if: ${{ !Always() }} # expect: readability, readability
+        run: make clean
+      - name: Block
+        if: | # expect: readability
+          github.event_name == 'push' &&
+          success()
+        run: make block
+      # A leading `!` starts a YAML tag.
+      - name: Tag
+        if: ! startsWith(github.ref, 'refs/tags/') # expect: readability
+        run: make tag
+      - name: Tag name
+        if: !cancelled() # expect: readability
+        run: make tag
+      # Positive status checks, negations of other functions, and text in string literals.
+      - name: Report
+        if: ${{ success() || failure() }}
+        run: make report
+      - name: Any status
+        if: ${{ success() || failure() || cancelled() }}
+        run: make report
+      - name: Branch
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && github.event_name != 'schedule' }}
+        run: make branch
+      - name: Message
+        if: ${{ contains(github.event.head_commit.message, '!cancelled()') }}
+        run: make message
+      - name: Output
+        if: ${{ steps.always.outputs.failure == 'true' }}
+        run: make output
+      - name: Constant
+        if: true
+        run: make constant
 ```
 
 **Compliant**
@@ -2181,12 +2257,19 @@ on: [push]
 permissions: {}
 jobs:
   test:
+    if: ${{ github.repository == 'octo-org/octo-repo' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       - name: Test
         run: make test
+      - name: Upload report
+        if: ${{ success() || failure() }}
+        run: make upload
+      - name: Notify
+        if: ${{ (success() || cancelled()) && github.event_name == 'push' }}
+        run: make notify
 ```
 
 ## `deprecated-command`

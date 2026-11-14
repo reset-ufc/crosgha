@@ -5,7 +5,7 @@ use yamlpath::Route;
 
 use super::common::{self, EXTERNAL_TRIGGERS, PRIVILEGED_TRIGGERS};
 use super::expression::{self, Operator};
-use super::{Finding, Rule, shell};
+use super::{ChangeKind, Edit, Finding, ProposedFix, Rule, shell};
 use crate::policy::{Persona, Severity};
 use crate::workflow::Workflow;
 
@@ -279,25 +279,18 @@ pub fn dangerous_trigger(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 }
 
 pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let mut conditions = Vec::new();
-    for job in common::jobs(workflow) {
-        if let Some(condition) = job.get("if") {
-            conditions.push((job.route.with_key("if"), job.location(), condition));
-        }
-        for step in common::steps(&job) {
-            if let Some(condition) = step.value.get("if") {
-                conditions.push((step.key("if"), step.location.clone(), condition));
-            }
-        }
-    }
     let mut findings = Vec::new();
-    for (route, location, condition) in conditions {
-        let problem: Option<(String, &[&str])> = match condition {
+    for condition in common::conditions(workflow) {
+        let mut fix = None;
+        let problem: Option<(String, &[&str])> = match condition.value {
             Value::Bool(value) => Some((format!("condition is always {value}"), &["if-cond"])),
-            Value::String(text) if text.contains("${{") && !single_expression(text) => Some((
-                "text around `${{ }}` makes the condition always true".to_owned(),
-                &["unsound-condition", "DoubleCurlyIf"],
-            )),
+            Value::String(text) if text.contains("${{") && !expression::single(text) => {
+                fix = merge_fix(workflow, &condition.route, text);
+                Some((
+                    "text around `${{ }}` makes the condition always true".to_owned(),
+                    &["unsound-condition", "DoubleCurlyIf"],
+                ))
+            }
             Value::String(text) if trusts_bot_actor(text) => Some((
                 "actor name checks can be spoofed by a bot-triggered event".to_owned(),
                 &["bot-conditions"],
@@ -305,12 +298,82 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             _ => None,
         };
         if let Some((message, concepts)) = problem {
-            let mut finding = common::finding(workflow, &UNSAFE_IF, route, location, message)?;
+            let mut finding = common::finding(
+                workflow,
+                &UNSAFE_IF,
+                condition.route,
+                condition.location,
+                message,
+            )?;
             finding.concepts = concepts;
+            finding.fix = fix;
             findings.push(finding);
         }
     }
     Ok(findings)
+}
+
+/// Rewrites the mixed condition `value` at `route` into one `${{ }}`
+/// (`expression::merge_segments`), keeping the scalar's style and its header comment. A block scalar gets the strip indicator
+/// (`|-`, `>-`), since the line break that YAML keeps at its end is text after `}}`. A quoted
+/// scalar is written again from its value, so only one that fits on one line is fixed.
+fn merge_fix(workflow: &Workflow, route: &Route<'static>, value: &str) -> Option<ProposedFix> {
+    let document = &workflow.document;
+    let key = document.query_key_only(route).ok()?;
+    let node = document.query_exact(route).ok()??;
+    // Only the colon and comments may stand between the key and the scalar. An alias resolves to
+    // its anchor elsewhere in the file, and an anchor or a tag sits in between; a rewrite of such
+    // a scalar would change every alias of it.
+    let between: String = document
+        .source()
+        .get(key.location.byte_span.1..node.location.byte_span.0)?
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default())
+        .collect();
+    if between.trim() != ":" {
+        return None;
+    }
+    let source = document.extract(&node);
+    // A plain or block scalar holds `value` as written, up to indentation and line folding.
+    let same_words = |text: &str| text.split_whitespace().eq(value.split_whitespace());
+    let text = match source.chars().next()? {
+        style @ ('|' | '>') => {
+            let (header, content) = source.split_once('\n')?;
+            let comment = header[1..].trim_start_matches(['+', '-']);
+            // An indentation indicator would also set the indentation of the rewritten lines.
+            if (!comment.trim().is_empty() && !comment.starts_with([' ', '\t']))
+                || !same_words(content)
+            {
+                return None;
+            }
+            format!(
+                "{style}-{comment}\n{}",
+                expression::merge_segments(content)?
+            )
+        }
+        quote @ ('\'' | '"') if !source.contains('\n') => {
+            let unwrapped = expression::merge_segments(value)?;
+            let unwrapped = unwrapped.trim();
+            if unwrapped.contains(char::is_control) {
+                return None;
+            }
+            match quote {
+                '\'' => format!("'{}'", unwrapped.replace('\'', "''")),
+                _ => format!(
+                    "\"{}\"",
+                    unwrapped.replace('\\', "\\\\").replace('"', "\\\"")
+                ),
+            }
+        }
+        '\'' | '"' => return None,
+        _ if same_words(source) => expression::merge_segments(source)?,
+        _ => return None,
+    };
+    Some(ProposedFix {
+        edit: Edit::Scalar(text),
+        changed_route: route.clone(),
+        change: ChangeKind::Replace,
+    })
 }
 
 /// Whether `condition` runs something because the actor is a bot: `==`, `contains`,
@@ -340,10 +403,6 @@ fn trusts_bot_actor(condition: &str) -> bool {
                     }
                 }
         })
-}
-
-fn single_expression(text: &str) -> bool {
-    text.starts_with("${{") && text.ends_with("}}") && text.matches("${{").count() == 1
 }
 
 pub fn artifact_poisoning(workflow: &Workflow) -> Result<Vec<Finding>, String> {

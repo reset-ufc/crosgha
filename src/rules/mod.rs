@@ -131,6 +131,9 @@ pub enum Edit {
     /// re-indents a block scalar and drops its header comment, and its `RewriteFragment` needs a
     /// crate outside the allowed dependencies.
     Lines(Vec<LineRewrite>),
+    /// The new source of the scalar at `changed_route`, from its block header or quote to its last
+    /// character. The caller keeps the header's comment and the scalar's style.
+    Scalar(String),
 }
 
 /// Replaces the next line whose text, without its indentation and trailing spaces, is `from`.

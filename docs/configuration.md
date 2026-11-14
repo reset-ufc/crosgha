@@ -55,9 +55,10 @@ a warning on stderr that names it, so a file written for zizmor keeps working.
 
 - **Inline:** `# crosgha: ignore[rule]` anywhere in the finding's YAML span. `# zizmor: ignore[...]` works too, with
   zizmor's rule names.
-- **Partial zizmor IDs:** some zizmor IDs name part of a crosgha rule. `unpinned-uses` and `unpinned-images` split
-  `unpinned-action`; `bot-conditions` and `unsound-condition` split `unsafe-if-condition`. Ignoring or disabling such
-  an ID affects only that part.
+- **Partial IDs:** some zizmor and ghlint IDs name part of a crosgha rule. `unpinned-uses` and `unpinned-images`
+  split `unpinned-action`; `bot-conditions` and `unsound-condition` split `unsafe-if-condition`. ghlint's
+  `DoubleCurlyIf` names two parts: the condition mixed with text in `unsafe-if-condition` and the bare condition in
+  `readability`. Ignoring or disabling such an ID affects only those parts.
 - **Override:** `--no-ignores` reports everything, including findings that comments or the config ignore.
 
 ## Severity

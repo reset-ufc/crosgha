@@ -1,18 +1,29 @@
-name: Conditions
-on: [pull_request]
+name: Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
 permissions: {}
 jobs:
-  test:
+  build:
+    if: ${{ github.event_name == 'push' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: echo a
-      - if: ${{ github.event_name == 'push' }}
-        run: echo b
-      - if: github.event.pull_request.user.login == 'dependabot[bot]'
-        run: echo c
-      - if: github.event_name == 'push'
-        run: echo d
-      - if: github.actor != 'dependabot[bot]'
-        run: echo e
+      - id: changes
+        run: echo "lines=$(git diff --stat HEAD~1 | wc -l)" >> "${GITHUB_OUTPUT}"
+      - if: ${{ steps.changes.outputs.lines == '0' }}
+        run: echo "nothing changed"
+      - if: ${{ github.event.pull_request.additions > 10 && github.event.pull_request.draft }}
+        run: echo "large draft"
+      - if: ${{ (github.ref_type == 'tag' || github.ref == 'refs/heads/main') && !github.event.repository.fork }}
+        run: echo "publish"
+      - if: |-
+          ${{ github.event_name == 'push' &&
+              github.ref == 'refs/heads/main' }}
+        run: echo "stripped"
+      - if: '${{ github.ref == ''refs/heads/main'' }}'
+        run: echo "single-quoted"
+      - if: ${{ contains(github.event.head_commit.message, '}} ${{') && github.event_name == 'push' }}
+        run: echo "literal braces"

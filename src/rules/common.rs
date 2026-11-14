@@ -111,6 +111,37 @@ pub fn steps<'a>(job: &Job<'a>) -> Vec<Step<'a>> {
     found
 }
 
+/// The `if` of a job or step.
+pub struct Condition<'a> {
+    pub value: &'a Value,
+    pub route: Route<'static>,
+    pub location: String,
+}
+
+/// Every job and step condition, each job's before those of its steps.
+pub fn conditions(workflow: &Workflow) -> Vec<Condition<'_>> {
+    let mut found = Vec::new();
+    for job in jobs(workflow) {
+        if let Some(value) = job.get("if") {
+            found.push(Condition {
+                value,
+                route: job.route.with_key("if"),
+                location: job.location(),
+            });
+        }
+        for step in steps(&job) {
+            if let Some(value) = step.value.get("if") {
+                found.push(Condition {
+                    value,
+                    route: step.key("if"),
+                    location: step.location,
+                });
+            }
+        }
+    }
+    found
+}
+
 pub struct Trigger<'a> {
     pub name: &'a str,
     pub config: Option<&'a Value>,

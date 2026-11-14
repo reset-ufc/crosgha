@@ -3,9 +3,16 @@ on: [push]
 permissions: {}
 jobs:
   test:
+    if: ${{ github.repository == 'octo-org/octo-repo' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       - name: Test
         run: make test
+      - name: Upload report
+        if: ${{ success() || failure() }}
+        run: make upload
+      - name: Notify
+        if: ${{ (success() || cancelled()) && github.event_name == 'push' }}
+        run: make notify

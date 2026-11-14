@@ -2,6 +2,7 @@ on: [push] # expect: readability
 permissions: {}
 jobs:
   test:
+    if: github.repository == 'octo-org/octo-repo' # expect: readability
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -10,3 +11,50 @@ jobs:
       - run: make test # expect: readability
       - name: Lint
         run: make lint
+      # `always()` also runs after a cancel, and a negation hides which statuses run the step.
+      - name: Upload report
+        if: ${{ always() }} # expect: readability
+        run: make upload
+      - name: Upload bare
+        if: always() # expect: readability, readability
+        run: make upload
+      - name: Notify
+        if: ${{ !cancelled() }} # expect: readability
+        run: make notify
+      - name: Notify quoted
+        if: "! failure() && github.event_name == 'push'" # expect: readability, readability
+        run: make notify
+      - name: Cleanup
+        if: ${{ !Always() }} # expect: readability, readability
+        run: make clean
+      - name: Block
+        if: | # expect: readability
+          github.event_name == 'push' &&
+          success()
+        run: make block
+      # A leading `!` starts a YAML tag.
+      - name: Tag
+        if: ! startsWith(github.ref, 'refs/tags/') # expect: readability
+        run: make tag
+      - name: Tag name
+        if: !cancelled() # expect: readability
+        run: make tag
+      # Positive status checks, negations of other functions, and text in string literals.
+      - name: Report
+        if: ${{ success() || failure() }}
+        run: make report
+      - name: Any status
+        if: ${{ success() || failure() || cancelled() }}
+        run: make report
+      - name: Branch
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && github.event_name != 'schedule' }}
+        run: make branch
+      - name: Message
+        if: ${{ contains(github.event.head_commit.message, '!cancelled()') }}
+        run: make message
+      - name: Output
+        if: ${{ steps.always.outputs.failure == 'true' }}
+        run: make output
+      - name: Constant
+        if: true
+        run: make constant

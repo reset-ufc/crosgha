@@ -266,7 +266,7 @@ fn zizmor_ids_for_part_of_a_rule_only_touch_that_part() {
     let output = bin()
         .args([
             "--persona",
-            "pedantic",
+            "auditor",
             "--offline",
             "--no-ignores",
             "--fail-on",
@@ -278,20 +278,27 @@ fn zizmor_ids_for_part_of_a_rule_only_touch_that_part() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let lines: Vec<String> = diagnostics(&stdout, "unsafe-if-condition")
+    let lines = |rule: &str| -> Vec<(String, &str)> {
+        diagnostics(&stdout, rule)
+            .into_iter()
+            .map(|(header, at)| {
+                let line = at.split("ci.yml:").nth(1).unwrap().split(':').next();
+                (line.unwrap().to_owned(), header)
+            })
+            .collect()
+    };
+    let unsafe_if: Vec<String> = lines("unsafe-if-condition")
         .into_iter()
-        .map(|(_, at)| {
-            at.split("ci.yml:")
-                .nth(1)
-                .unwrap()
-                .split(':')
-                .next()
-                .unwrap()
-                .to_owned()
-        })
+        .map(|(line, _)| line)
         .collect();
     // `DoubleCurlyIf` disables only the mixed-form branch on line 16, leaving line 14 reported.
-    assert_eq!(lines, ["14"], "{stdout}");
+    assert_eq!(unsafe_if, ["14"], "{stdout}");
+    // In `readability` it disables the bare conditions on lines 14 and 19; the `always()` on line
+    // 19 and the unnamed `run` steps stay.
+    let readability = lines("readability");
+    let numbers: Vec<&str> = readability.iter().map(|(line, _)| line.as_str()).collect();
+    assert_eq!(numbers, ["15", "17", "19"], "{stdout}");
+    assert!(readability[2].1.contains("`always()`"), "{stdout}");
 }
 
 #[test]

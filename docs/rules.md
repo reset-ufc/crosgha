@@ -38,7 +38,7 @@ non-compliant and compliant YAML, generated from its test fixtures.
 | `cache-misuse` | `cache-misuse` | note | pedantic | workflow |  |  | [examples](rule-examples.md#cache-misuse) |
 | `duplicated-steps` | `redundant/duplicated-steps` | note | pedantic | workflow |  |  | [examples](rule-examples.md#duplicated-steps) |
 | `complex-job` | `long-job/complexity` | note | auditor | workflow | ghlint: `TooManySteps` |  | [examples](rule-examples.md#complex-job) |
-| `readability` | `readability` | note | auditor | workflow | zizmor: `anonymous-definition`; ghlint: `MissingWorkflowName`, `MissingStepName` |  | [examples](rule-examples.md#readability) |
+| `readability` | `readability` | note | auditor | workflow | zizmor: `anonymous-definition`; ghlint: `MissingWorkflowName`, `MissingStepName`, `DoubleCurlyIf`, `NeverUseAlways`, `NegativeStatusCheck` |  | [examples](rule-examples.md#readability) |
 | `deprecated-command` | `deprecated-command/feature` | warning | regular | workflow | zizmor: `insecure-commands`; actionlint: `deprecated-commands` |  | [examples](rule-examples.md#deprecated-command) |
 | `removed-feature` | `deprecated-command/feature` | error | regular | workflow | actionlint: `runner-label`, `action`, `deprecated-inputs` |  | [examples](rule-examples.md#removed-feature) |
 | `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check`, `expression`; ghlint: `JsonSchemaValidation` |  | [examples](rule-examples.md#schema-validity) |
