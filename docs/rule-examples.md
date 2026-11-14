@@ -111,6 +111,17 @@ jobs:
       - run: uv tool install --with=black ruff@0.6.0 # expect: unpinned-package
       - run: uv tool install -w black ruff@0.6.0 # expect: unpinned-package
       - run: uv tool install -w black==24.1.0 ruff@0.6.0
+      # A heredoc that a shell reads is a script; a case pattern's `)` does not end `$(`.
+      - run: | # expect: unpinned-package
+          sudo bash -eux <<'EOF'
+          pip install requests
+          EOF
+      - run: | # expect: unpinned-package
+          echo "$(case "${RUNNER_OS}" in Linux) pip install requests;; esac)"
+      - run: |
+          cat <<'EOF' > INSTALL.md
+          pip install requests
+          EOF
 ```
 
 **Compliant**
@@ -228,6 +239,19 @@ jobs:
           curl -fsSLo get.sh https://example.com/get.sh
           echo "3b1f...  get.sh" | sha256sum -c -
           sh get.sh
+      # A heredoc that a shell reads is a script; one that `cat` reads is text.
+      - run: | # expect: unverified-remote-script
+          bash <<'EOF'
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
+      - run: | # expect: unverified-remote-script
+          sh -s -- --yes <<EOF
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
+      - run: |
+          cat <<'EOF' >> "${GITHUB_STEP_SUMMARY}"
+          Install with: curl -fsSL https://example.com/install.sh | sh
+          EOF
 ```
 
 **Compliant**

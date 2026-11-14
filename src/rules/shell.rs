@@ -19,20 +19,20 @@ pub struct Command<'a> {
 
 /// The simple commands of `script`, split on newlines, `;`, `|`, `&`, `(`, `)`, and backticks
 /// in shell code. Text in quotes is data that stays inside one word, while `$(...)` and backticks
-/// in double quotes still run commands. A heredoc body is data too: its blank-separated words end
-/// the command that reads it, so text it prints is still seen. Quotes around a word
-/// are dropped, a `${{ }}` expression stays inside one word, a `\` line continuation is a space,
-/// and a `#` that starts a word in shell code ends the line.
-// ponytail: a `case` pattern's `)` inside `$(` closes it early; parse the shell grammar if that
-// misreads real scripts.
+/// in double quotes still run commands, and a `case` pattern's `)` does not close a `$(`. A
+/// heredoc body read by a shell (`bash <<EOF`) is commands; any other body is data, whose
+/// blank-separated words end the command that reads it, so text it prints is still seen. Quotes
+/// around a word are dropped, a `${{ }}` expression stays inside one word, a `\` line
+/// continuation is a space, and a `#` that starts a word in shell code ends the line.
 pub fn commands(script: &str) -> Vec<Command<'_>> {
     let bytes = script.as_bytes();
     let mut commands = vec![Command {
         words: Vec::new(),
         piped: false,
     }];
-    let mut nesting = vec![Nesting::Code(0)];
-    let mut heredocs: Vec<Heredoc> = Vec::new();
+    let mut nesting = vec![Nesting::Code { open: 0, from: 0 }];
+    // Each pending heredoc, and whether its reader runs it as a script.
+    let mut heredocs: Vec<(Heredoc, bool)> = Vec::new();
     let mut start = None;
     let mut index = 0;
     while index < bytes.len() {
@@ -48,9 +48,12 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
             match rest {
                 [b'$', b'(', ..] => {
                     end_word(&mut commands, script, &mut start, index);
-                    nesting.push(Nesting::Code(1));
                     index += 1;
                     separate(&mut commands, bytes, index);
+                    nesting.push(Nesting::Code {
+                        open: 1,
+                        from: commands.len() - 1,
+                    });
                 }
                 [b'`', ..] => {
                     end_word(&mut commands, script, &mut start, index);
@@ -102,39 +105,58 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
             }
             [b'<', b'<', ..] if let Some((heredoc, end)) = heredoc(script, index + 2) => {
                 end_word(&mut commands, script, &mut start, index);
-                heredocs.push(heredoc);
+                let runs = reads_script(&commands.last().expect(NOT_EMPTY).words);
+                heredocs.push((heredoc, runs));
                 index = end;
                 continue;
             }
             [b'\n', ..] if !heredocs.is_empty() => {
                 end_word(&mut commands, script, &mut start, index);
-                let end = heredoc_bodies_end(script, index + 1, &heredocs).unwrap_or(bytes.len());
-                let body = script[index + 1..end]
-                    .split_whitespace()
-                    .map(|word| word.trim_matches(['"', '\'']))
-                    .filter(|word| !word.is_empty());
-                commands.last_mut().expect(NOT_EMPTY).words.extend(body);
-                separate(&mut commands, bytes, index);
-                heredocs.clear();
-                index = end;
+                let mut scripts = Vec::new();
+                index += 1;
+                for (heredoc, runs) in heredocs.drain(..) {
+                    let (body, end) = heredoc_body(script, index, &heredoc);
+                    index = end;
+                    if runs {
+                        scripts.push(body);
+                        continue;
+                    }
+                    let words = body
+                        .split_whitespace()
+                        .map(|word| word.trim_matches(['"', '\'']))
+                        .filter(|word| !word.is_empty());
+                    commands.last_mut().expect(NOT_EMPTY).words.extend(words);
+                }
+                for body in scripts {
+                    commands.extend(self::commands(body));
+                }
+                commands.push(Command {
+                    words: Vec::new(),
+                    piped: false,
+                });
                 continue;
             }
             [b'(', ..] => {
                 end_word(&mut commands, script, &mut start, index);
+                separate(&mut commands, bytes, index);
                 match nesting.last_mut().expect(OPEN) {
-                    _ if index > 0 && bytes[index - 1] == b'$' => nesting.push(Nesting::Code(1)),
-                    Nesting::Code(depth) if inner => *depth += 1,
+                    _ if index > 0 && bytes[index - 1] == b'$' => nesting.push(Nesting::Code {
+                        open: 1,
+                        from: commands.len() - 1,
+                    }),
+                    Nesting::Code { open, .. } if inner => *open += 1,
                     _ => {}
                 }
-                separate(&mut commands, bytes, index);
             }
             [b')', ..] => {
                 end_word(&mut commands, script, &mut start, index);
                 match nesting.last_mut().expect(OPEN) {
-                    Nesting::Code(1) if inner => {
+                    // A pattern's `)` closes nothing; `(pattern)` opened its own parenthesis.
+                    Nesting::Code { open: 1, from } if inner && open_case(&commands[*from..]) => {}
+                    Nesting::Code { open: 1, .. } if inner => {
                         nesting.pop();
                     }
-                    Nesting::Code(depth) if inner => *depth -= 1,
+                    Nesting::Code { open, .. } if inner => *open -= 1,
                     _ => {}
                 }
                 separate(&mut commands, bytes, index);
@@ -166,11 +188,67 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
 
 /// Where `commands` reads, the innermost last.
 enum Nesting {
-    /// Shell code with the parentheses still open in it; `$(` opens one.
-    Code(usize),
+    /// Shell code with the parentheses still open in it (`$(` opens one), whose commands start at
+    /// index `from`.
+    Code {
+        open: usize,
+        from: usize,
+    },
     /// Shell code that the next backtick ends.
     Backtick,
     Double,
+}
+
+/// Whether `commands` open a `case` that no `esac` closes yet.
+fn open_case(commands: &[Command<'_>]) -> bool {
+    let mut open = 0usize;
+    for command in commands {
+        match command.words.iter().find(|word| !KEYWORDS.contains(word)) {
+            Some(&"case") => open += 1,
+            Some(&"esac") => open = open.saturating_sub(1),
+            _ => {}
+        }
+    }
+    open > 0
+}
+
+/// Shells that run a script read from standard input.
+const SHELLS: &[&str] = &["bash", "dash", "ksh", "sh", "zsh"];
+
+/// The options of those shells that take a value: `-o name`, `-O name` (bash), and bash's
+/// `--rcfile` and `--init-file`.
+const SHELL_OPTIONS: Spec = Spec {
+    short: &['o', 'O'],
+    long: &["rcfile", "init-file"],
+};
+
+/// Whether the command `words` runs a heredoc it reads as a script: a shell given no `-c` string
+/// and no script file, or `-s` before the script's arguments.
+fn reads_script(words: &[&str]) -> bool {
+    let Some(program) = program(words) else {
+        return false;
+    };
+    let (options, operands) = leading_options(program.args, &SHELL_OPTIONS);
+    let given = |letter: char| {
+        options
+            .iter()
+            .any(|option| matches!(option, Arg::Short(short, _) if *short == letter))
+    };
+    SHELLS.contains(&program.name) && !given('c') && (operands.is_empty() || given('s'))
+}
+
+/// The body of `heredoc`, which starts at `start`, without its delimiter line, and the index after
+/// that line; the rest of the script when the delimiter line is missing.
+fn heredoc_body<'a>(script: &'a str, start: usize, heredoc: &Heredoc) -> (&'a str, usize) {
+    let start = start.min(script.len());
+    match heredoc_bodies_end(script, start, std::slice::from_ref(heredoc)) {
+        Some(end) => {
+            let text = &script[start..end];
+            let text = text.strip_suffix('\n').unwrap_or(text);
+            (text.rsplit_once('\n').map_or("", |(body, _)| body), end)
+        }
+        None => (&script[start..], script.len()),
+    }
 }
 
 /// Starts the next command at the separator `bytes[index]`; a single `|` pipes into it.
