@@ -111,6 +111,20 @@ jobs:
       - run: uv tool install --with=black ruff@0.6.0 # expect: unpinned-package
       - run: uv tool install -w black ruff@0.6.0 # expect: unpinned-package
       - run: uv tool install -w black==24.1.0 ruff@0.6.0
+      # A heredoc that a shell reads is a script; a case pattern's `)` does not end `$(`.
+      - run: | # expect: unpinned-package
+          sudo bash -eux <<'EOF'
+          pip install requests
+          EOF
+      - run: | # expect: unpinned-package
+          echo "$(case "${RUNNER_OS}" in Linux) pip install requests;; esac)"
+      # Only an unquoted `esac` of the same substitution closes its `case`.
+      - run: | # expect: unpinned-package
+          echo "$(case "${RUNNER_OS}" in Windows) echo $('esac');; Linux) pip install requests;; esac)"
+      - run: |
+          cat <<'EOF' > INSTALL.md
+          pip install requests
+          EOF
 ```
 
 **Compliant**
@@ -228,6 +242,23 @@ jobs:
           curl -fsSLo get.sh https://example.com/get.sh
           echo "3b1f...  get.sh" | sha256sum -c -
           sh get.sh
+      # A heredoc that a shell reads is a script; one that `cat` reads is text.
+      - run: | # expect: unverified-remote-script
+          bash <<'EOF'
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
+      - run: | # expect: unverified-remote-script
+          sh -s -- --yes <<EOF
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
+      - run: | # expect: unverified-remote-script
+          cat <<'EOF' | sudo bash -s -- --yes
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
+      - run: |
+          cat <<'EOF' >> "${GITHUB_STEP_SUMMARY}"
+          Install with: curl -fsSL https://example.com/install.sh | sh
+          EOF
 ```
 
 **Compliant**
@@ -2815,6 +2846,245 @@ jobs:
         with:
           registry: https://registry.example.com
       - run: git clone https://example.com/repo.git
+```
+
+## `gh-cli-environment`
+
+Steps that run `gh` must set its token, and a repository for commands that read one.
+
+**Non-compliant**
+
+`tests/fixtures/rules/gh-cli-environment.before.yml`
+
+```yaml
+name: Pull request housekeeping
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  # No checkout, no GH_TOKEN, and no GH_REPO: ghlint's non-compliant examples and their variants.
+  triage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: gh pr edit 1 --add-label triage # expect: gh-cli-environment, gh-cli-environment
+      # An operand known only at run time may be a pull request URL, which names the repository.
+      - run: gh pr edit "$NUMBER" --add-label triage # expect: gh-cli-environment
+        env:
+          NUMBER: ${{ github.event.pull_request.number }}
+      - name: Comment through a pipe
+        run: echo "Thanks!" | gh pr comment 1 --body-file - # expect: gh-cli-environment, gh-cli-environment
+      - name: Read through command substitution
+        run: | # expect: gh-cli-environment, gh-cli-environment
+          title="$(gh release view --json name --jq .name)"
+          echo "Latest release: ${title}"
+      - run: sudo gh run list --limit 5 # expect: gh-cli-environment, gh-cli-environment
+      # A token for this command alone; the repository is still missing.
+      - run: env GH_TOKEN="${TOKEN}" gh workflow list # expect: gh-cli-environment
+        env:
+          TOKEN: ${{ github.token }}
+      - run: GH_TOKEN="${TOKEN}" gh release download v1.2.0 # expect: gh-cli-environment
+        env:
+          TOKEN: ${{ github.token }}
+      # `gh api` needs a repository only for its placeholders.
+      - run: gh api repos/{owner}/{repo}/pulls --jq length # expect: gh-cli-environment, gh-cli-environment
+      - run: gh api /user --jq .login # expect: gh-cli-environment
+      - shell: pwsh
+        run: gh issue list --state open # expect: gh-cli-environment, gh-cli-environment
+      # The first command that lacks each part is reported once per step.
+      - run: | # expect: gh-cli-environment, gh-cli-environment
+          if ! gh label list --search triage | grep -q triage; then
+            gh label create triage --color FBCA04
+          fi
+      # A plain assignment makes a shell variable, which gh does not inherit.
+      - run: | # expect: gh-cli-environment
+          GH_REPO="${GITHUB_REPOSITORY}"
+          gh pr list --state open
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # Text in quotes and heredoc bodies is printed, not run.
+      - run: |
+          echo 'Usage: gh pr list; gh issue list'
+          echo "Run gh release view && gh run list to check"
+          cat <<'EOF'
+          gh pr list --state merged
+          EOF
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # Commands that need neither a token nor a repository.
+      - run: gh --version && gh help environment
+      - run: gh auth status || true
+      - run: gh release download v1.2.0 --repo cli/cli --pattern '*.deb'
+      - run: command -v gh
+      - shell: python
+        run: print("gh pr list")
+  # ghlint's MissingGhHost: an Enterprise Server token without its host.
+  enterprise:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_ENTERPRISE_TOKEN: ${{ secrets.GHES_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: gh pr list # expect: gh-cli-environment
+      - run: gh api /meta --hostname ghes.example.com
+  # A host without its Enterprise Server token, set on the job's container.
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      image: ghcr.io/octo-org/ci-tools:2026.11
+      env:
+        GH_HOST: ghes.example.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: gh issue list # expect: gh-cli-environment
+  # The token and repository arrive from earlier steps and earlier in the script.
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: gh release list # expect: gh-cli-environment, gh-cli-environment
+      - run: |
+          echo "GH_TOKEN=${{ github.token }}" >> "${GITHUB_ENV}"
+          echo "GH_REPO=${{ github.repository }}" >> "${GITHUB_ENV}"
+      - run: gh release create "v${VERSION}" --generate-notes
+        env:
+          VERSION: 1.2.0
+  login:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "${TOKEN}" | gh auth login --with-token
+        env:
+          TOKEN: ${{ secrets.BOT_TOKEN }}
+      - run: |
+          gh repo clone octo-org/octo-repo
+          cd octo-repo
+          gh pr list --state merged
+      - run: gh secret set DEPLOY_KEY --org octo-org --body "${KEY}"
+        env:
+          KEY: ${{ secrets.DEPLOY_KEY }}
+  scripted:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - run: |
+          $env:GH_TOKEN = "${{ github.token }}"
+          gh api /rate_limit
+      - shell: bash
+        run: |
+          export GH_TOKEN="${{ github.token }}"
+          git clone "https://github.com/${GITHUB_REPOSITORY}" source
+          cd source && gh pr checks 1
+      - shell: bash
+        run: |
+          GH_REPO="${GITHUB_REPOSITORY}"
+          export GH_REPO
+          declare -x GH_TOKEN="${{ github.token }}"
+          gh issue list
+      - shell: cmd
+        run: |
+          set "GH_TOKEN=${{ github.token }}"
+          set GH_REPO=%GITHUB_REPOSITORY%
+          gh run list
+      # Dependabot's auto-merge example: the operand is a pull request URL.
+      - shell: bash
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  dynamic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env: ${{ fromJSON(vars.GH_ENVIRONMENT) }}
+    steps:
+      - run: gh pr list
+```
+
+**Compliant**
+
+`tests/fixtures/rules/gh-cli-environment.clean.yml`
+
+```yaml
+name: Pull request housekeeping
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: write
+# GH_REPO at the workflow level names the repository for jobs without a checkout.
+env:
+  GH_REPO: ${{ github.repository }}
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: gh pr edit 1 --add-label triage
+      - name: Comment through a pipe
+        run: echo "Thanks!" | gh pr comment 1 --body-file -
+      - name: Read through command substitution
+        run: |
+          title="$(gh release view --json name --jq .name)"
+          echo "Latest release: ${title}"
+      - run: sudo gh run list --limit 5
+      - run: gh workflow list
+      - run: gh release download v1.2.0
+      - run: gh api repos/{owner}/{repo}/pulls --jq length
+      - shell: pwsh
+        run: gh issue list --state open
+  # A checkout gives the repository, and each step sets a token.
+  checkout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: |
+          if ! gh label list --search triage | grep -q triage; then
+            gh label create triage --color FBCA04
+          fi
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: gh release list --repo "${GITHUB_REPOSITORY}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+  enterprise:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_ENTERPRISE_TOKEN: ${{ secrets.GHES_TOKEN }}
+      GH_HOST: ghes.example.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: gh pr list
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      image: ghcr.io/octo-org/ci-tools:2026.11
+      env:
+        GH_HOST: ghes.example.com
+        GH_ENTERPRISE_TOKEN: ${{ secrets.GHES_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: gh issue list
 ```
 
 ## `unpinned-action`

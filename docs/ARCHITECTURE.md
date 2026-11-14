@@ -6,7 +6,7 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 | Area | Current state |
 |---|---|
 | CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
-| Rule modules | 48 rules covering every taxonomy tag: 39 per workflow, 4 per repository, 5 online. |
+| Rule modules | 49 rules covering every taxonomy tag: 40 per workflow, 4 per repository, 5 online. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
 | Fix validation | Runnable for add and replace proposals; `persist-credentials` and `error-suppression` propose adds of a step input, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, and `unsafe-if-condition` the new source of an `if` scalar. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
@@ -37,7 +37,7 @@ The stages have these interfaces:
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
 | `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, `uses` refs, action versions, and boolean inputs. |
 | `rules::expression` | Text with `${{ }}` | Expression spans and bodies, context paths, which of them an outsider controls, and how a condition compares or negates a path. |
-| `rules::shell` | `run` script | Simple commands, the program each runs past keywords, assignments, and wrappers such as `sudo`/`env`, getopt-style options, and git subcommands. |
+| `rules::shell` | `run` script | Simple commands (quoted text and heredoc bodies stay data), the program each runs past keywords, assignments, and wrappers such as `sudo`/`env`, getopt-style options, git subcommands, and the shell a step runs in. |
 | `github` | API path | Cached read-only GitHub REST responses for online rules, failures included. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal or a 401 no further request is sent. The tag walk fails when a page repeats the previous one or after 100 pages. |
 | `engine` | Source and scan/fix mode | Findings and a prepared fix result. This is the main in-memory analysis interface. Workflows and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. A rejected proposal keeps its finding, records the reason, and the next proposal still runs. |

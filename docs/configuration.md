@@ -59,7 +59,8 @@ a warning on stderr that names it, so a file written for zizmor keeps working.
   split `unpinned-action`; `bot-conditions` and `unsound-condition` split `unsafe-if-condition`. ghlint's
   `DoubleCurlyIf` names two parts: the condition mixed with text in `unsafe-if-condition` and the bare condition in
   `readability`. Each of ghlint's four `FailFast...` IDs names one action in `error-suppression`, and none names
-  `continue-on-error`. Ignoring or disabling such an ID affects only those parts.
+  `continue-on-error`. `MissingGhToken`, `MissingGhHost`, and `MissingGhRepo` each name one part of
+  `gh-cli-environment`. Ignoring or disabling such an ID affects only those parts.
 - **Override:** `--no-ignores` reports everything, including findings that comments or the config ignore.
 
 ## Severity

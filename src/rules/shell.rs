@@ -17,57 +17,235 @@ pub struct Command<'a> {
     pub piped: bool,
 }
 
-/// The simple commands of `script`, split on newlines, `;`, `|`, `&`, `(`, `)`, and backticks.
-/// Quotes around a word are dropped, a `${{ }}` expression stays inside one word, a `\` line
-/// continuation is a space, and a `#` that starts a word outside quotes ends the line.
-// ponytail: separators are not quote-aware, so `echo "a; b"` splits; parse quoting if that
-// produces false findings in practice.
+/// The simple commands of `script`, split on newlines, `;`, `|`, `&`, `(`, `)`, and backticks
+/// in shell code. Text in quotes is data that stays inside one word, while `$(...)` and backticks
+/// in double quotes still run commands, and a `case` pattern's `)` does not close a `$(`. A
+/// heredoc body read by a shell (`bash <<EOF`, `cat <<EOF | bash`) is commands; any other body is data, whose
+/// blank-separated words end the command that reads it, so text it prints is still seen. Quotes
+/// around a word are dropped, a `${{ }}` expression stays inside one word, a `\` line
+/// continuation is a space, and a `#` that starts a word in shell code ends the line.
 pub fn commands(script: &str) -> Vec<Command<'_>> {
     let bytes = script.as_bytes();
     let mut commands = vec![Command {
         words: Vec::new(),
         piped: false,
     }];
+    let mut nesting = vec![Nesting::Code { open: 0, cases: 0 }];
+    // Each pending heredoc, and the index of the command that reads it.
+    let mut heredocs: Vec<(Heredoc, usize)> = Vec::new();
     let mut start = None;
-    let mut quote = None;
     let mut index = 0;
     while index < bytes.len() {
-        let byte = bytes[index];
-        if bytes[index..].starts_with(b"${{") {
+        let rest = &bytes[index..];
+        if rest.starts_with(b"${{") {
             start.get_or_insert(index);
             index =
                 expression::end(&script[index + 3..]).map_or(bytes.len(), |end| index + end + 5);
             continue;
         }
-        if byte == b'#' && start.is_none() && quote.is_none() {
-            index = script[index..]
-                .find('\n')
-                .map_or(bytes.len(), |end| index + end);
+        let inner = nesting.len() > 1;
+        if let Some(Nesting::Double) = nesting.last() {
+            match rest {
+                [b'$', b'(', ..] => {
+                    end_word(&mut commands, &mut nesting, script, &mut start, index);
+                    index += 1;
+                    separate(&mut commands, bytes, index);
+                    nesting.push(Nesting::Code { open: 1, cases: 0 });
+                }
+                [b'`', ..] => {
+                    end_word(&mut commands, &mut nesting, script, &mut start, index);
+                    nesting.push(Nesting::Backtick);
+                    separate(&mut commands, bytes, index);
+                }
+                [b'\\', ..] => {
+                    start.get_or_insert(index);
+                    index += 1;
+                }
+                [b'"', ..] => {
+                    nesting.pop();
+                }
+                _ => {
+                    start.get_or_insert(index);
+                }
+            }
+            index += 1;
             continue;
         }
-        let continuation = byte == b'\\' && bytes.get(index + 1) == Some(&b'\n');
-        if continuation || matches!(byte, b' ' | b'\t' | b'\r') {
-            end_word(&mut commands, script, &mut start, index);
-            index += 1 + usize::from(continuation);
-            continue;
-        }
-        if matches!(byte, b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'`') {
-            end_word(&mut commands, script, &mut start, index);
-            quote = quote.filter(|_| byte != b'\n');
-            separate(&mut commands, bytes, index);
-        } else {
-            quote = match (quote, byte) {
-                (None, b'\'' | b'"') => Some(byte),
-                (Some(open), _) if open == byte => None,
-                (open, _) => open,
-            };
-            start.get_or_insert(index);
+        match rest {
+            [b'\\', b'\n', ..] | [b' ' | b'\t' | b'\r', ..] => {
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
+                index += usize::from(rest[0] == b'\\');
+            }
+            [b'\\', ..] => {
+                start.get_or_insert(index);
+                index += 1;
+            }
+            [b'\'', ..] => {
+                start.get_or_insert(index);
+                index = script[index + 1..]
+                    .find('\'')
+                    .map_or(bytes.len(), |end| index + 1 + end);
+            }
+            [b'"', ..] => {
+                start.get_or_insert(index);
+                nesting.push(Nesting::Double);
+            }
+            [b'#', ..] if start.is_none() => {
+                index = script[index..]
+                    .find('\n')
+                    .map_or(bytes.len(), |end| index + end);
+                continue;
+            }
+            [b'<', b'<', b'<', ..] => {
+                start.get_or_insert(index);
+                index += 2;
+            }
+            [b'<', b'<', ..] if let Some((heredoc, end)) = heredoc(script, index + 2) => {
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
+                heredocs.push((heredoc, commands.len() - 1));
+                index = end;
+                continue;
+            }
+            [b'\n', ..] if !heredocs.is_empty() => {
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
+                let mut scripts = Vec::new();
+                index += 1;
+                for (heredoc, reader) in heredocs.drain(..) {
+                    let (body, end) = heredoc_body(script, index, &heredoc);
+                    index = end;
+                    if runs_input(&commands[reader..]) {
+                        scripts.push(body);
+                        continue;
+                    }
+                    let words = body
+                        .split_whitespace()
+                        .map(|word| word.trim_matches(['"', '\'']))
+                        .filter(|word| !word.is_empty());
+                    commands.last_mut().expect(NOT_EMPTY).words.extend(words);
+                }
+                for body in scripts {
+                    commands.extend(self::commands(body));
+                }
+                commands.push(Command {
+                    words: Vec::new(),
+                    piped: false,
+                });
+                continue;
+            }
+            [b'(', ..] => {
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
+                separate(&mut commands, bytes, index);
+                match nesting.last_mut().expect(OPEN) {
+                    _ if index > 0 && bytes[index - 1] == b'$' => {
+                        nesting.push(Nesting::Code { open: 1, cases: 0 })
+                    }
+                    Nesting::Code { open, .. } if inner => *open += 1,
+                    _ => {}
+                }
+            }
+            [b')', ..] => {
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
+                match nesting.last_mut().expect(OPEN) {
+                    // A pattern's `)` closes nothing; `(pattern)` opened its own parenthesis.
+                    Nesting::Code { open: 1, cases } if inner && *cases > 0 => {}
+                    Nesting::Code { open: 1, .. } if inner => {
+                        nesting.pop();
+                    }
+                    Nesting::Code { open, .. } if inner => *open -= 1,
+                    _ => {}
+                }
+                separate(&mut commands, bytes, index);
+            }
+            [b'`', ..] => {
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
+                match nesting.last() {
+                    Some(Nesting::Backtick) => {
+                        nesting.pop();
+                    }
+                    _ => nesting.push(Nesting::Backtick),
+                }
+                separate(&mut commands, bytes, index);
+            }
+            [b'\n' | b';' | b'|' | b'&', ..] => {
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
+                separate(&mut commands, bytes, index);
+            }
+            _ => {
+                start.get_or_insert(index);
+            }
         }
         index += 1;
     }
-    end_word(&mut commands, script, &mut start, bytes.len());
+    end_word(&mut commands, &mut nesting, script, &mut start, bytes.len());
     commands.retain(|command| !command.words.is_empty());
     commands
+}
+
+/// Where `commands` reads, the innermost last.
+enum Nesting {
+    /// Shell code with the parentheses still open in it (`$(` opens one) and the `case` commands
+    /// in it that no `esac` closed yet.
+    Code {
+        open: usize,
+        cases: usize,
+    },
+    /// Shell code that the next backtick ends.
+    Backtick,
+    Double,
+}
+
+/// Shells that run a script read from standard input.
+const SHELLS: &[&str] = &["bash", "dash", "ksh", "sh", "zsh"];
+
+/// The options of those shells that take a value: `-o name`, `-O name` (bash), and bash's
+/// `--rcfile` and `--init-file`.
+const SHELL_OPTIONS: Spec = Spec {
+    short: &['o', 'O'],
+    long: &["rcfile", "init-file"],
+};
+
+/// Whether the command `words` runs a heredoc it reads as a script: a shell given no `-c` string
+/// and no script file, or `-s` before the script's arguments.
+fn reads_script(words: &[&str]) -> bool {
+    let Some(program) = program(words) else {
+        return false;
+    };
+    let (options, operands) = leading_options(program.args, &SHELL_OPTIONS);
+    let given = |letter: char| {
+        options
+            .iter()
+            .any(|option| matches!(option, Arg::Short(short, _) if *short == letter))
+    };
+    SHELLS.contains(&program.name) && !given('c') && (operands.is_empty() || given('s'))
+}
+
+/// Whether the first of `commands` reads input that a shell runs as a script: it is that shell, or
+/// pipes into one, as in `cat <<EOF | bash`.
+fn runs_input(commands: &[Command<'_>]) -> bool {
+    let pipeline = commands
+        .iter()
+        .enumerate()
+        .take_while(|(offset, command)| *offset == 0 || command.piped);
+    for (_, command) in pipeline {
+        if reads_script(&command.words) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The body of `heredoc`, which starts at `start`, without its delimiter line, and the index after
+/// that line; the rest of the script when the delimiter line is missing.
+fn heredoc_body<'a>(script: &'a str, start: usize, heredoc: &Heredoc) -> (&'a str, usize) {
+    let start = start.min(script.len());
+    match heredoc_bodies_end(script, start, std::slice::from_ref(heredoc)) {
+        Some(end) => {
+            let text = &script[start..end];
+            let text = text.strip_suffix('\n').unwrap_or(text);
+            (text.rsplit_once('\n').map_or("", |(body, _)| body), end)
+        }
+        None => (&script[start..], script.len()),
+    }
 }
 
 /// Starts the next command at the separator `bytes[index]`; a single `|` pipes into it.
@@ -84,16 +262,29 @@ fn separate(commands: &mut Vec<Command<'_>>, bytes: &[u8], index: usize) {
     }
 }
 
+/// Ends the word that started at `start`. An unquoted `case` or `esac` that starts a command
+/// opens or closes a `case` in the shell code being read.
 fn end_word<'a>(
     commands: &mut [Command<'a>],
+    nesting: &mut [Nesting],
     script: &'a str,
     start: &mut Option<usize>,
     end: usize,
 ) {
-    if let Some(begin) = start.take() {
-        let word = script[begin..end].trim_matches(['"', '\'']);
-        if !word.is_empty() {
-            commands.last_mut().expect(NOT_EMPTY).words.push(word);
+    let Some(begin) = start.take() else { return };
+    let raw = &script[begin..end];
+    let word = raw.trim_matches(['"', '\'']);
+    if word.is_empty() {
+        return;
+    }
+    let words = &mut commands.last_mut().expect(NOT_EMPTY).words;
+    let first = words.iter().all(|word| KEYWORDS.contains(word));
+    words.push(word);
+    if let (true, Some(Nesting::Code { cases, .. })) = (first, nesting.last_mut()) {
+        match raw {
+            "case" => *cases += 1,
+            "esac" => *cases = cases.saturating_sub(1),
+            _ => {}
         }
     }
 }
@@ -175,7 +366,8 @@ pub fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-fn is_assignment(word: &str) -> bool {
+/// Whether `word` assigns a shell variable: `NAME=value`.
+pub fn is_assignment(word: &str) -> bool {
     word.split_once('=').is_some_and(|(name, _)| {
         name.starts_with(|char: char| char.is_ascii_alphabetic() || char == '_')
             && name
@@ -308,10 +500,16 @@ fn default_shell(scope: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-/// Whether bash or sh runs `step`'s script: its `shell`, else the job's or the workflow's
-/// `defaults.run.shell`, else the runner's default. A custom shell such as `/usr/bin/bash -e {0}`
-/// names it by path, and `/usr/bin/env [options] [NAME=value] bash {0}` looks it up.
+/// Whether bash or sh runs `step`'s script.
 pub fn runs_posix(workflow: &Workflow, job: &Job, step: &Step) -> bool {
+    name(workflow, job, step).is_some_and(|name| matches!(name, "bash" | "sh"))
+}
+
+/// The file name of the shell that runs `step`'s script: its `shell`, else the job's or the
+/// workflow's `defaults.run.shell`, else the runner's default. A custom shell such as
+/// `/usr/bin/bash -e {0}` names it by path, and `/usr/bin/env [options] [NAME=value] bash {0}`
+/// looks it up.
+pub fn name<'a>(workflow: &'a Workflow, job: &Job<'a>, step: &Step<'a>) -> Option<&'a str> {
     // `run` defaults to pwsh on Windows and to bash elsewhere, so a matrix over both OSes still
     // runs bash on some entries:
     // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
@@ -334,7 +532,7 @@ pub fn runs_posix(workflow: &Workflow, job: &Job, step: &Step) -> bool {
         .or(windows.then_some("pwsh"))
         .unwrap_or("bash");
     let words: Vec<&str> = shell.split_whitespace().collect();
-    program(&words).is_some_and(|program| matches!(program.name, "bash" | "sh"))
+    program(&words).map(|program| program.name)
 }
 
 /// Whether the step's `run` scalar holds `script` as written, so a line of it can be rewritten in

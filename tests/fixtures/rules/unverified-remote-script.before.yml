@@ -41,3 +41,20 @@ jobs:
           curl -fsSLo get.sh https://example.com/get.sh
           echo "3b1f...  get.sh" | sha256sum -c -
           sh get.sh
+      # A heredoc that a shell reads is a script; one that `cat` reads is text.
+      - run: | # expect: unverified-remote-script
+          bash <<'EOF'
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
+      - run: | # expect: unverified-remote-script
+          sh -s -- --yes <<EOF
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
+      - run: | # expect: unverified-remote-script
+          cat <<'EOF' | sudo bash -s -- --yes
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
+      - run: |
+          cat <<'EOF' >> "${GITHUB_STEP_SUMMARY}"
+          Install with: curl -fsSL https://example.com/install.sh | sh
+          EOF

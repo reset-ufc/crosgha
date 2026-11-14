@@ -4,6 +4,7 @@ mod deprecation;
 mod env_injection;
 mod error_suppression;
 pub(crate) mod expression;
+mod gh_cli_environment;
 mod immutable_references;
 mod inherited_secrets;
 mod injection;
@@ -224,6 +225,7 @@ const REGISTRY: &[(&Rule, Detect)] = &[
         &correctness::INSECURE_PROTOCOL,
         correctness::insecure_protocol,
     ),
+    (&gh_cli_environment::RULE, gh_cli_environment::detect),
 ];
 
 /// Rules that read `rules.<id>.config`, with the option names zizmor documents.

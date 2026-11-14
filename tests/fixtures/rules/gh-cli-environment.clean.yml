@@ -1,0 +1,71 @@
+name: Pull request housekeeping
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: write
+# GH_REPO at the workflow level names the repository for jobs without a checkout.
+env:
+  GH_REPO: ${{ github.repository }}
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: gh pr edit 1 --add-label triage
+      - name: Comment through a pipe
+        run: echo "Thanks!" | gh pr comment 1 --body-file -
+      - name: Read through command substitution
+        run: |
+          title="$(gh release view --json name --jq .name)"
+          echo "Latest release: ${title}"
+      - run: sudo gh run list --limit 5
+      - run: gh workflow list
+      - run: gh release download v1.2.0
+      - run: gh api repos/{owner}/{repo}/pulls --jq length
+      - shell: pwsh
+        run: gh issue list --state open
+  # A checkout gives the repository, and each step sets a token.
+  checkout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: |
+          if ! gh label list --search triage | grep -q triage; then
+            gh label create triage --color FBCA04
+          fi
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: gh release list --repo "${GITHUB_REPOSITORY}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+  enterprise:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_ENTERPRISE_TOKEN: ${{ secrets.GHES_TOKEN }}
+      GH_HOST: ghes.example.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: gh pr list
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      image: ghcr.io/octo-org/ci-tools:2026.11
+      env:
+        GH_HOST: ghes.example.com
+        GH_ENTERPRISE_TOKEN: ${{ secrets.GHES_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: gh issue list

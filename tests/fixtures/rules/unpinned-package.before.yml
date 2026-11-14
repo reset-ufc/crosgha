@@ -96,3 +96,17 @@ jobs:
       - run: uv tool install --with=black ruff@0.6.0 # expect: unpinned-package
       - run: uv tool install -w black ruff@0.6.0 # expect: unpinned-package
       - run: uv tool install -w black==24.1.0 ruff@0.6.0
+      # A heredoc that a shell reads is a script; a case pattern's `)` does not end `$(`.
+      - run: | # expect: unpinned-package
+          sudo bash -eux <<'EOF'
+          pip install requests
+          EOF
+      - run: | # expect: unpinned-package
+          echo "$(case "${RUNNER_OS}" in Linux) pip install requests;; esac)"
+      # Only an unquoted `esac` of the same substitution closes its `case`.
+      - run: | # expect: unpinned-package
+          echo "$(case "${RUNNER_OS}" in Windows) echo $('esac');; Linux) pip install requests;; esac)"
+      - run: |
+          cat <<'EOF' > INSTALL.md
+          pip install requests
+          EOF
