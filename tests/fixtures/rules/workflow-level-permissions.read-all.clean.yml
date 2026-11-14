@@ -1,0 +1,13 @@
+name: Read all
+on: [push]
+# ghlint lets jobs inherit `contents: read` alone, which nearly every job needs.
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        run: make

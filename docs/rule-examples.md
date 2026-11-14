@@ -1030,6 +1030,78 @@ jobs:
       - run: echo b
 ```
 
+## `workflow-level-permissions`
+
+Each job should declare its own `permissions` instead of sharing a workflow-level block.
+
+**Non-compliant**
+
+`tests/fixtures/rules/workflow-level-permissions.before.yml`
+
+```yaml
+name: Release
+on: [push]
+# Jobs without their own block get these scopes, and job blocks make it redundant.
+permissions: # expect: workflow-level-permissions
+  contents: write
+  pull-requests: read
+jobs:
+  build: # expect: workflow-level-permissions
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        run: make
+  call: # expect: workflow-level-permissions
+    name: Call
+    uses: ./.github/workflows/reusable.yml
+  publish:
+    name: Publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish
+        run: make publish
+```
+
+**Compliant**
+
+`tests/fixtures/rules/workflow-level-permissions.clean.yml`
+
+```yaml
+name: Release
+on: [push]
+# An empty block grants nothing, so it only guards jobs added later.
+permissions: {}
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Build
+        run: make
+  call:
+    name: Call
+    uses: ./.github/workflows/reusable.yml
+    permissions:
+      contents: read
+  publish:
+    name: Publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish
+        run: make publish
+```
+
 ## `missing-permissions-block`
 
 Jobs must declare GITHUB_TOKEN permissions instead of relying on defaults.
@@ -2114,9 +2186,131 @@ jobs:
         run: echo "generate moved HEAD"
 ```
 
+## `redundant-setting`
+
+`env` should not be empty, a `shell` should not repeat the default it inherits, and steps that share a shell should set it once in `defaults.run.shell`.
+
+**Non-compliant**
+
+`tests/fixtures/rules/redundant-setting.before.yml`
+
+```yaml
+name: Build
+on: [push]
+permissions: {}
+env: {} # expect: redundant-setting
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env: {} # expect: redundant-setting
+    # The job's default repeats the workflow's.
+    defaults:
+      run:
+        shell: bash # expect: redundant-setting
+    steps:
+      - name: Compile
+        run: make
+        shell: bash # expect: redundant-setting
+        env: {} # expect: redundant-setting
+      - name: Checkout
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        env: {} # expect: redundant-setting
+        with:
+          persist-credentials: false
+      - { name: Flow, run: make test, shell: bash } # expect: redundant-setting
+      # An explicit shell that differs from the default, even in its arguments, is a choice.
+      - name: Strict
+        run: make strict
+        shell: bash -e {0}
+      - name: Python
+        run: print(1)
+        shell: python
+      - name: Variables
+        run: make vars
+        env:
+          # filled in later
+      - name: Dynamic
+        run: make dynamic
+        env: ${{ fromJSON(vars.STEP_ENV) }}
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: src
+    steps:
+      # The nearest default wins: the job's `pwsh` replaces the workflow's `bash`.
+      - name: Bash
+        run: make
+        shell: bash
+      - name: Pwsh
+        run: Get-ChildItem
+        shell: pwsh # expect: redundant-setting
+      - name: Default
+        run: Get-Item .
+  plain:
+    name: Plain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src
+        shell: bash # expect: redundant-setting
+    steps:
+      - name: Make
+        run: make
+```
+
+**Compliant**
+
+`tests/fixtures/rules/redundant-setting.clean.yml`
+
+```yaml
+name: Build
+on: [push]
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Compile
+        run: make
+      - name: Strict
+        run: make strict
+        shell: bash -e {0}
+      - name: Dynamic
+        run: make dynamic
+        env: ${{ fromJSON(vars.STEP_ENV) }}
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Bash
+        run: make
+        shell: bash
+      - name: Pwsh
+        run: Get-ChildItem
+```
+
 ## `complex-job`
 
-Jobs, scripts, and conditions should stay small enough to review.
+Workflows, jobs, scripts, and conditions should stay small enough to review.
 
 **Non-compliant**
 
@@ -2209,7 +2403,7 @@ jobs:
 
 ## `readability`
 
-Workflows and run steps should have names, and conditions should state their intent.
+Workflows, jobs, and run steps should have names, lower-case kebab IDs, and a stated shell; conditions and token references should say what they mean.
 
 **Non-compliant**
 
@@ -2220,9 +2414,13 @@ on: [push] # expect: readability
 permissions: {}
 jobs:
   test:
+    name: Test
     if: github.repository == 'octo-org/octo-repo' # expect: readability
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with: { persist-credentials: false }
@@ -2287,6 +2485,88 @@ jobs:
       - name: Constant
         if: true
         run: make constant
+  # ghlint's ID and name checks: an ID other than lower-case kebab, no name or a blank one.
+  Build_All: # expect: readability, readability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        id: build
+        shell: bash
+        run: make build
+      # Within two edits of an earlier ID, a swap of two letters counting as one.
+      - name: Build again
+        id: build2 # expect: readability
+        shell: bash
+        run: make build
+      - name: Unit
+        id: test-unit
+        shell: bash
+        run: make unit
+      - name: Unit swapped
+        id: test-uint # expect: readability
+        shell: bash
+        run: make unit
+      - name: Mixed case
+        id: Test_Run # expect: readability
+        shell: bash
+        run: make run
+      # A repeated ID is not a similar one, and IDs three edits apart are not reported.
+      - name: Build once more
+        id: build
+        shell: bash
+        run: make build
+      - name: Deploy
+        id: deploy-prod
+        shell: bash
+        run: make deploy
+      - name: Deploy dev
+        id: deploy-dev
+        shell: bash
+        run: make deploy
+      - name: No shell
+        run: make lint # expect: readability
+      # A token that YAML anchors or aliases is reported but not rewritten: the anchor holds it.
+      - name: Anchored
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          token: &token ${{ secrets.GITHUB_TOKEN }} # expect: readability
+          persist-credentials: false
+      - name: Aliased
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          token: *token # expect: readability
+          persist-credentials: false
+  blank: # expect: readability
+    name: " "
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # `github.token` is null outside steps, so job env and reusable workflow inputs keep the secret.
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Literal
+        shell: bash
+        run: echo "${{ 'secrets.GITHUB_TOKEN' }} secrets.GITHUB_TOKEN ${{ secrets.GITHUB_TOKEN_2 }}"
+  reuse: # expect: readability
+    uses: ./.github/workflows/reusable.yml
+    with:
+      token: ${{ secrets.GITHUB_TOKEN }}
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
+  matrix:
+    name: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Default shell
+        run: make
 ```
 
 **Compliant**
@@ -2297,8 +2577,12 @@ jobs:
 name: Tests
 on: [push]
 permissions: {}
+defaults:
+  run:
+    shell: bash
 jobs:
   test:
+    name: Test
     if: ${{ github.repository == 'octo-org/octo-repo' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -2312,6 +2596,28 @@ jobs:
       - name: Notify
         if: ${{ (success() || cancelled()) && github.event_name == 'push' }}
         run: make notify
+  build-all:
+    name: Build all
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        id: build
+        run: make build
+      - name: Build again
+        id: rebuild-docs
+        run: make build
+      - name: Run
+        id: test-run
+        run: make run
+      - name: Token
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          token: ${{ github.token }}
+          persist-credentials: false
+  reuse:
+    name: Reuse
+    uses: ./.github/workflows/reusable.yml
 ```
 
 ## `deprecated-command`
@@ -3000,7 +3306,7 @@ jobs:
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
   dynamic:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

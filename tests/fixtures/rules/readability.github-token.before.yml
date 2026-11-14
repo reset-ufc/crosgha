@@ -1,0 +1,38 @@
+name: Release
+on: [push]
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+          token: ${{ secrets.GITHUB_TOKEN }} # expect: readability
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.github_token }} # expect: readability
+          AUTH: "Bearer ${{ secrets['GITHUB_TOKEN'] }}, ${{ secrets[ 'GITHUB_TOKEN' ] }}" # expect: readability
+          QUOTED: '${{ secrets.GITHUB_TOKEN }}' # expect: readability
+          OTHER: ${{ secrets.GITHUB_TOKEN_2 }}
+        run: gh release create "${GITHUB_REF_NAME}"
+      - name: Script
+        run: | # expect: readability
+          # the comment on the block header stays
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ format('{0}/repos', github.api_url) }}"
+          echo "${{ 'secrets.GITHUB_TOKEN' }}"
+      - name: Flow
+        uses: actions/github-script@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        with: { github-token: "${{ secrets.GITHUB_TOKEN }}", script: "return 1" } # expect: readability
+      - name: Fallback
+        uses: actions/github-script@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        with:
+          github-token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }} # expect: readability
+          script: return 1

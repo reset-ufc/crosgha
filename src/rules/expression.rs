@@ -1,6 +1,8 @@
 //! `${{ }}` expressions: where they are in text, the context paths they read, which of those an
 //! outsider controls, and how a condition compares or negates them.
 
+use std::ops::Range;
+
 /// Byte ranges of every `${{ ... }}` in `text`, from `$` to the closing `}}`. A `}}` inside a
 /// single-quoted string literal (`''` escapes a quote) does not close the expression:
 /// https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#literals
@@ -270,6 +272,60 @@ pub fn reads_named_secret(expression: &str) -> bool {
             !preceded && outside[start + name.len()..].trim_start().starts_with('.')
         })
     })
+}
+
+/// Byte ranges of every `secrets.<name>` and `secrets['<name>']` in the `${{ }}` expressions of
+/// `text`, outside string literals and in any casing, as the runner reads context keys. `name` is
+/// lowercase, and a longer name that starts with it (`<name>_2`) is another secret.
+pub fn secret_references(text: &str, name: &str) -> Vec<Range<usize>> {
+    let lowered = text.to_ascii_lowercase();
+    let bytes = lowered.as_bytes();
+    let mut found = Vec::new();
+    for (start, end) in spans(text) {
+        let mut quoted = false;
+        let mut index = start + 3;
+        while index < end - 2 {
+            let preceded = is_context_char(bytes[index - 1]) || bytes[index - 1] == b'.';
+            let length = match bytes[index] {
+                b'\'' => {
+                    quoted = !quoted;
+                    None
+                }
+                _ if quoted || preceded || !bytes[index..].starts_with(b"secrets") => None,
+                _ => property_length(&bytes[index + "secrets".len()..end - 2], name),
+            };
+            match length {
+                Some(length) => {
+                    let reference = index..index + "secrets".len() + length;
+                    index = reference.end;
+                    found.push(reference);
+                }
+                None => index += 1,
+            }
+        }
+    }
+    found
+}
+
+/// Length of `.<name>` or `['<name>']` (spaces allowed inside the brackets) at the start of `rest`.
+fn property_length(rest: &[u8], name: &str) -> Option<usize> {
+    let name = name.as_bytes();
+    if let Some(after) = rest.strip_prefix(b".") {
+        let ends = after
+            .get(name.len())
+            .is_none_or(|&byte| !is_context_char(byte));
+        return (after.starts_with(name) && ends).then_some(1 + name.len());
+    }
+    let spaces = |text: &[u8]| text.iter().take_while(|byte| **byte == b' ').count();
+    let inside = rest.strip_prefix(b"[")?;
+    let leading = spaces(inside);
+    let closing = inside[leading..]
+        .strip_prefix(b"'")?
+        .strip_prefix(name)?
+        .strip_prefix(b"'")?;
+    let trailing = spaces(closing);
+    (closing.get(trailing) == Some(&b']'))
+        .then_some("[".len() + leading + name.len() + "''".len() + trailing + "]".len())
 }
 
 /// Rewrites index syntax with a literal name (`['body']`, `[ 'body' ]`) to property syntax

@@ -46,7 +46,8 @@ fn fixes_checkout_credentials_without_changing_other_nodes() {
 #[test]
 fn byte_order_mark_is_scanned_like_plain_utf8_and_kept_on_fix() {
     let temp = TempDir::new("bom");
-    let path = temp.join("workflow.yml");
+    // The fixture's own file name, so the two scans differ only in the BOM.
+    let path = temp.join("checkout-credentials.before.yml");
     let plain = fs::read_to_string(fixture("checkout-credentials.before.yml")).unwrap();
     fs::write(&path, format!("\u{feff}{plain}")).unwrap();
     let findings = |path: &std::path::Path| {

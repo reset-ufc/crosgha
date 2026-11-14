@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use yaml_serde::Value;
+use yaml_serde::{Mapping, Value};
 use yamlpath::Route;
 
 use super::common::{self, EXTERNAL_TRIGGERS};
@@ -18,6 +18,22 @@ pub const EXCESSIVE: Rule = Rule {
     severity: Severity::Warning,
     persona: Persona::Regular,
     equivalents: &[("zizmor", "excessive-permissions")],
+    configurable: false,
+    relational: false,
+};
+
+// ghlint `ExplicitJobPermissions` (`ExplicitJobPermissionsRule.kt` at
+// 74115a437cfa161c2fd2d72fc2ebcd83ac514b80): declare `permissions` on each job only, so every job
+// gets the least access it needs.
+// https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/ExplicitJobPermissionsRule.kt
+// GitHub documents workflow-level permissions as valid, so the rule stays at `auditor`.
+pub const WORKFLOW_LEVEL: Rule = Rule {
+    id: "workflow-level-permissions",
+    summary: "Each job should declare its own `permissions` instead of sharing a workflow-level block.",
+    tag: "excessive-permissions",
+    severity: Severity::Note,
+    persona: Persona::Auditor,
+    equivalents: &[("ghlint", "ExplicitJobPermissions")],
     configurable: false,
     relational: false,
 };
@@ -124,6 +140,50 @@ pub fn excessive(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 message,
             )?);
         }
+    }
+    Ok(findings)
+}
+
+pub fn workflow_level(workflow: &Workflow) -> Result<Vec<Finding>, String> {
+    let mut findings = Vec::new();
+    let Some(scopes) = workflow
+        .value
+        .get("permissions")
+        .filter(|scopes| scopes.is_mapping() || scopes.is_string())
+    else {
+        return Ok(findings);
+    };
+    let granted = scopes.as_mapping();
+    // ghlint lets jobs inherit an empty block, and `contents: read` alone, which nearly every job
+    // needs.
+    let narrow = granted.is_some_and(|granted| {
+        granted.is_empty()
+            || (granted.len() == 1
+                && granted.get("contents").and_then(Value::as_str) == Some("read"))
+    });
+    let jobs = common::jobs(workflow);
+    for job in &jobs {
+        if !narrow && job.get("permissions").is_none() {
+            findings.push(common::finding(
+                workflow,
+                &WORKFLOW_LEVEL,
+                job.route.clone(),
+                job.location(),
+                "job inherits the workflow-level `permissions`; declare its own",
+            )?);
+        }
+    }
+    // ghlint also reports an empty block next to job-level ones. It grants nothing, so it neither
+    // reaches a job nor repeats what one declares; it only guards jobs added later.
+    let empty = granted.is_some_and(Mapping::is_empty);
+    if !empty && jobs.iter().any(|job| job.get("permissions").is_some()) {
+        findings.push(common::finding(
+            workflow,
+            &WORKFLOW_LEVEL,
+            permissions_route(),
+            "workflow",
+            "jobs declare their own `permissions`; declare them only per job",
+        )?);
     }
     Ok(findings)
 }

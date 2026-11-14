@@ -1,5 +1,5 @@
-//! Workflow traversal shared by the rules: jobs, steps, triggers, and `uses` refs, plus the fix that
-//! adds a step input.
+//! Workflow traversal shared by the rules: jobs, steps, triggers, and `uses` refs, plus the fixes
+//! that add a step input or remove a key.
 
 use yaml_serde::{Mapping, Value};
 use yamlpatch::{Op, Patch};
@@ -122,6 +122,36 @@ pub fn add_input(step: &Step<'_>, key: &str, value: Value) -> ProposedFix {
         changed_route,
         change: ChangeKind::Add,
     }
+}
+
+/// A fix that removes the key at `route`. yamlpath also removes the block mappings above it that
+/// the removal leaves empty.
+pub fn remove_key(route: Route<'static>) -> ProposedFix {
+    ProposedFix {
+        edit: Edit::Patch(Patch {
+            route: route.clone(),
+            operation: Op::Remove,
+        }),
+        changed_route: route,
+        change: ChangeKind::Remove,
+    }
+}
+
+/// The source of the value at `route`, from its block header or quote to its last character, when
+/// only the colon and comments stand between it and its key. An alias resolves to its anchor
+/// elsewhere in the file, and an anchor or a tag sits in between; a rewrite of such a value would
+/// change every alias of it.
+pub fn own_scalar<'a>(workflow: &'a Workflow, route: &Route) -> Option<&'a str> {
+    let document = &workflow.document;
+    let key = document.query_key_only(route).ok()?;
+    let node = document.query_exact(route).ok()??;
+    let between: String = document
+        .source()
+        .get(key.location.byte_span.1..node.location.byte_span.0)?
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default())
+        .collect();
+    (between.trim() == ":").then(|| document.extract(&node))
 }
 
 /// Every step of a job, including steps nested in `parallel` groups.

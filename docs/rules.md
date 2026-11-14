@@ -21,6 +21,7 @@ non-compliant and compliant YAML, generated from its test fixtures.
 | `cache-poisoning` | `cache-poisoning` | warning | regular | workflow | zizmor: `cache-poisoning` |  | [examples](rule-examples.md#cache-poisoning) |
 | `obfuscation` | `obfuscation` | warning | pedantic | workflow | zizmor: `obfuscation` |  | [examples](rule-examples.md#obfuscation) |
 | `excessive-permissions` | `excessive-permissions` | warning | regular | workflow | zizmor: `excessive-permissions` |  | [examples](rule-examples.md#excessive-permissions) |
+| `workflow-level-permissions` | `excessive-permissions` | note | auditor | workflow | ghlint: `ExplicitJobPermissions` |  | [examples](rule-examples.md#workflow-level-permissions) |
 | `missing-permissions-block` | `missing-permissions-block` | warning | pedantic | workflow | ghlint: `MissingJobPermissions` |  | [examples](rule-examples.md#missing-permissions-block) |
 | `secrets-exposure` | `secrets-exposure` | warning | regular | workflow | zizmor: `overprovisioned-secrets` |  | [examples](rule-examples.md#secrets-exposure) |
 | `secrets-inherit` | `secrets-inherit` | note | pedantic | workflow | zizmor: `secrets-inherit` |  | [examples](rule-examples.md#secrets-inherit) |
@@ -37,8 +38,9 @@ non-compliant and compliant YAML, generated from its test fixtures.
 | `missing-matrix` | `missing-matrix/test-diversity` | note | auditor | workflow |  |  | [examples](rule-examples.md#missing-matrix) |
 | `cache-misuse` | `cache-misuse` | note | pedantic | workflow |  |  | [examples](rule-examples.md#cache-misuse) |
 | `duplicated-steps` | `redundant/duplicated-steps` | note | pedantic | workflow |  |  | [examples](rule-examples.md#duplicated-steps) |
-| `complex-job` | `long-job/complexity` | note | auditor | workflow | ghlint: `TooManySteps` |  | [examples](rule-examples.md#complex-job) |
-| `readability` | `readability` | note | auditor | workflow | zizmor: `anonymous-definition`; ghlint: `MissingWorkflowName`, `MissingStepName`, `DoubleCurlyIf`, `NeverUseAlways`, `NegativeStatusCheck` |  | [examples](rule-examples.md#readability) |
+| `redundant-setting` | `redundant/duplicated-steps` | note | auditor | workflow | ghlint: `EmptyWorkflowEnv`, `EmptyJobEnv`, `EmptyStepEnv`, `RedundantShell`, `RedundantDefaultShell`, `DuplicateShellOnSteps` |  | [examples](rule-examples.md#redundant-setting) |
+| `complex-job` | `long-job/complexity` | note | auditor | workflow | ghlint: `TooManySteps`, `TooManyJobs` |  | [examples](rule-examples.md#complex-job) |
+| `readability` | `readability` | note | auditor | workflow | zizmor: `anonymous-definition`; ghlint: `MissingWorkflowName`, `MissingJobName`, `MissingStepName`, `WorkflowIdNaming`, `JobIdNaming`, `StepIdNaming`, `SimilarStepId`, `MissingShell`, `PreferGitHubToken`, `DoubleCurlyIf`, `NeverUseAlways`, `NegativeStatusCheck` |  | [examples](rule-examples.md#readability) |
 | `deprecated-command` | `deprecated-command/feature` | warning | regular | workflow | zizmor: `insecure-commands`; actionlint: `deprecated-commands` |  | [examples](rule-examples.md#deprecated-command) |
 | `removed-feature` | `deprecated-command/feature` | error | regular | workflow | actionlint: `runner-label`, `action`, `deprecated-inputs` |  | [examples](rule-examples.md#removed-feature) |
 | `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check`, `expression`; ghlint: `JsonSchemaValidation` |  | [examples](rule-examples.md#schema-validity) |

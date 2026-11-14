@@ -1,0 +1,52 @@
+name: Many jobs
+on: [push]
+permissions: {}
+# Ten jobs, the most ghlint allows; a matrix would merge them.
+jobs:
+  job-1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-1
+  job-2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-2
+  job-3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-3
+  job-4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-4
+  job-5:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-5
+  job-6:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-6
+  job-7:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-7
+  job-8:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-8
+  job-9:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make part-9
+  call:
+    uses: ./.github/workflows/reusable.yml

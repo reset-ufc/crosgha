@@ -1,0 +1,21 @@
+name: Defaults
+on: [push]
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: Build
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        run: make
+  test:
+    name: Test
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Test
+        run: make test

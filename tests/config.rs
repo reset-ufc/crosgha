@@ -294,11 +294,15 @@ fn zizmor_ids_for_part_of_a_rule_only_touch_that_part() {
     // `DoubleCurlyIf` disables only the mixed-form branch on line 16, leaving line 14 reported.
     assert_eq!(unsafe_if, ["14"], "{stdout}");
     // In `readability` it disables the bare conditions on lines 14 and 19; the `always()` on line
-    // 19 and the unnamed `run` steps stay.
+    // 19, the unnamed job on line 7, and the `run` steps without a name or shell stay.
     let readability = lines("readability");
     let numbers: Vec<&str> = readability.iter().map(|(line, _)| line.as_str()).collect();
-    assert_eq!(numbers, ["15", "17", "19"], "{stdout}");
-    assert!(readability[2].1.contains("`always()`"), "{stdout}");
+    assert_eq!(
+        numbers,
+        ["7", "15", "15", "17", "17", "19", "20"],
+        "{stdout}"
+    );
+    assert!(readability[5].1.contains("`always()`"), "{stdout}");
 }
 
 #[test]

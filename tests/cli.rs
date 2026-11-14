@@ -400,3 +400,46 @@ fn zizmor_pedantic_flag_and_force_color_work_as_in_zizmor() {
         assert!(!plain.contains('\x1b'), "{env:?}: {plain}");
     }
 }
+
+/// ghlint's `WorkflowIdNaming` reads the file name, which rule fixtures cannot vary: the ID is the
+/// name without `.yml` or `.yaml`, and only lower-case kebab passes (`IdNamingRule.kt` at
+/// 74115a437cfa161c2fd2d72fc2ebcd83ac514b80).
+#[test]
+fn readability_reports_workflow_file_names_that_are_not_lower_case_kebab() {
+    let temp = TempDir::new("workflow-names");
+    let workflows = temp.join(".github/workflows");
+    fs::create_dir_all(&workflows).unwrap();
+    let workflow = fs::read_to_string(fixture("rules/readability.clean.yml")).unwrap();
+    for name in [
+        "CI build.yml",
+        "release_please.yaml",
+        "deploy.v2.yml",
+        "ci-build.yml",
+        "release-2.yaml",
+    ] {
+        fs::write(workflows.join(name), &workflow).unwrap();
+    }
+    let output = bin()
+        .args(["--persona", "auditor", "--offline", "--no-config"])
+        .args(["--format", "json", "--fail-on", "none"])
+        .arg(&workflows)
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let mut named: Vec<&str> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["rule"] == "readability")
+        .map(|finding| {
+            let path = finding["path"].as_str().unwrap();
+            path.rsplit('/').next().unwrap()
+        })
+        .collect();
+    named.sort_unstable();
+    assert_eq!(
+        named,
+        ["CI build.yml", "deploy.v2.yml", "release_please.yaml"],
+        "{report}"
+    );
+}
