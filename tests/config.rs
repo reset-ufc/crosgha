@@ -7,9 +7,10 @@
 
 mod common;
 
-use common::{TempDir, bin, diagnostics, fixture};
+use common::{Api, COMMIT, TOKEN, TempDir, bin, diagnostics, fixture, github_api};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Output;
 
 #[test]
 fn inline_ignores_accept_crosgha_and_zizmor_rule_ids() {
@@ -536,4 +537,165 @@ fn the_config_depends_on_the_repository_not_on_how_inputs_are_spelled() {
             "{inputs:?}: {report}"
         );
     }
+}
+
+/// Every config name crosgha discovers in a repository root, in its order: crosgha's own names
+/// before zizmor's, which follow zizmor's remote discovery, "`.github/zizmor.ya?ml` or
+/// `zizmor.ya?ml` in the root of the repository" (https://docs.zizmor.sh/configuration/#discovery).
+const NAMES: [&str; 8] = [
+    ".github/crosgha.yml",
+    ".github/crosgha.yaml",
+    "crosgha.yml",
+    "crosgha.yaml",
+    ".github/zizmor.yml",
+    ".github/zizmor.yaml",
+    "zizmor.yml",
+    "zizmor.yaml",
+];
+
+/// A repository with one workflow that leaves the checkout credentials in place, and a `.git`
+/// directory so local discovery stops at its root.
+fn credentials_repository(root: &Path, name: &str) -> PathBuf {
+    let repository = root.join(name);
+    fs::create_dir_all(repository.join(".git")).unwrap();
+    fs::create_dir_all(repository.join(".github/workflows")).unwrap();
+    fs::copy(
+        fixture("checkout-credentials.before.yml"),
+        repository.join(".github/workflows/ci.yml"),
+    )
+    .unwrap();
+    repository
+}
+
+/// The config whose marker rule `rules.from-<label>` stderr names: each staged config carries
+/// one, which matches no crosgha rule and is reported with a warning.
+fn loaded(output: &Output) -> Vec<String> {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr
+        .lines()
+        .filter_map(|line| line.split_once("`rules.from-"))
+        .filter_map(|(_, rest)| rest.split_once('`'))
+        .map(|(label, _)| label.to_owned())
+        .collect()
+}
+
+fn marker(label: &str) -> String {
+    format!("rules:\n  from-{label}: {{}}\n")
+}
+
+/// A remote repository (`owner/repo`) discovers its config at its root through the API, in the
+/// order a local copy does; `--config`, `CROSGHA_CONFIG`, and `ZIZMOR_CONFIG` win for every input,
+/// and `--no-config` loads none (https://docs.zizmor.sh/configuration/#discovery).
+#[test]
+fn a_remote_repository_discovers_its_config_in_the_local_order() {
+    let temp = TempDir::new("remote-config");
+    let repository = credentials_repository(&temp, "ordered");
+    let (api, requests) = github_api(Api {
+        repositories: temp.to_path_buf(),
+        ..Api::default()
+    });
+    let scan = |input: &Path, args: &[&str], variable: Option<(&str, &Path)>| {
+        let mut command = bin();
+        command
+            .args(["--fail-on", "none", "--no-online-audits"])
+            .args(["--gh-hostname", &api, "--gh-token", TOKEN])
+            .args(args)
+            .arg(input);
+        if let Some((name, value)) = variable {
+            command.env(name, value);
+        }
+        command.output().unwrap()
+    };
+    let remote = Path::new("fixture/ordered");
+    // Each name is added in turn from the last, so each must win over every name after it.
+    for name in NAMES.iter().rev() {
+        let label = name.replace(['/', '.'], "-");
+        fs::write(repository.join(name), marker(&label)).unwrap();
+        for input in [repository.as_path(), remote] {
+            let output = scan(input, &[], None);
+            assert_eq!(
+                loaded(&output),
+                std::slice::from_ref(&label),
+                "{input:?} with {name}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    // Only the file found is read: the tree says which names exist.
+    let reads: Vec<String> = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|path| path.contains("/contents/") && !path.contains("/workflows/"))
+        .cloned()
+        .collect();
+    assert_eq!(reads.len(), NAMES.len(), "{reads:?}");
+
+    let explicit = temp.join("explicit.yml");
+    fs::write(&explicit, marker("explicit")).unwrap();
+    let flag = scan(remote, &["--config", explicit.to_str().unwrap()], None);
+    assert_eq!(loaded(&flag), ["explicit"]);
+    for variable in ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"] {
+        let output = scan(remote, &[], Some((variable, &explicit)));
+        assert_eq!(loaded(&output), ["explicit"], "{variable}");
+    }
+    let none = scan(remote, &["--no-config"], None);
+    assert!(loaded(&none).is_empty());
+
+    // A config the remote repository holds is checked as strictly as a local one.
+    fs::write(repository.join(".github/crosgha.yml"), "rules: [\n").unwrap();
+    let invalid = scan(remote, &[], None);
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert_eq!(invalid.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "config `fixture/ordered@{COMMIT}:.github/crosgha.yml`"
+        )),
+        "{stderr}"
+    );
+}
+
+/// In one run, each local and each remote input uses the config of its own repository.
+#[test]
+fn local_and_remote_inputs_keep_their_own_configs() {
+    let temp = TempDir::new("mixed-config");
+    let quiet = credentials_repository(&temp, "quiet");
+    fs::write(
+        quiet.join("zizmor.yml"),
+        "rules:\n  artipacked:\n    disable: true\n",
+    )
+    .unwrap();
+    let loud = credentials_repository(&temp, "loud");
+    let (api, _) = github_api(Api {
+        repositories: temp.to_path_buf(),
+        ..Api::default()
+    });
+    let reported = |local: &Path, remote: &str| -> Vec<String> {
+        let output = bin()
+            .args(["--fail-on", "none", "--no-online-audits", "-f", "json"])
+            .args(["--gh-hostname", &api, "--gh-token", TOKEN])
+            .arg(local)
+            .arg(remote)
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&output.stderr)));
+        let mut paths: Vec<String> = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| finding["rule"] == "persist-credentials")
+            .map(|finding| finding["path"].as_str().unwrap().to_owned())
+            .collect();
+        paths.dedup();
+        paths
+    };
+    assert_eq!(
+        reported(&quiet, "fixture/loud"),
+        [format!("fixture/loud@{COMMIT}:.github/workflows/ci.yml")]
+    );
+    assert_eq!(
+        reported(&loud, "fixture/quiet"),
+        [loud.join(".github/workflows/ci.yml").display().to_string()]
+    );
 }

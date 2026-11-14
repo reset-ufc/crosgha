@@ -1,15 +1,13 @@
 //! Rules that read repository files next to the workflows, not a single workflow.
 
-use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use yaml_serde::Value;
 use yamlpath::Route;
 
 use super::{Finding, Options, Rule, common};
-use crate::filesystem;
 use crate::policy::{Persona, Severity};
+use crate::tree::Tree;
 use crate::workflow::Workflow;
 
 // zizmor `dependabot-cooldown` and Dependabot's `cooldown` option:
@@ -54,32 +52,6 @@ pub enum Place {
     Repository { anchor: Option<PathBuf> },
 }
 
-/// The source of each file the scan already read, by `filesystem::identity` of its path, so
-/// repository rules do not read it again.
-pub type Scanned<'a> = HashMap<PathBuf, &'a str>;
-
-/// Every entry of `github/workflows`, with the source the scan read from it. Entries the scan
-/// skipped or failed to parse as a workflow come back as `None`.
-fn workflow_files<'a>(github: &Path, scanned: &'a Scanned) -> Vec<(PathBuf, Option<&'a str>)> {
-    let directory = github.join("workflows");
-    // `filesystem::identity` of each entry, resolving their shared directory once.
-    let resolved = fs::canonicalize(&directory).ok();
-    fs::read_dir(&directory)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| {
-            let path = entry.path();
-            let key = match &resolved {
-                Some(directory) => directory.join(entry.file_name()),
-                None => path.clone(),
-            };
-            let source = scanned.get(&key).copied();
-            (path, source)
-        })
-        .collect()
-}
-
 /// zizmor's default for `rules.dependabot-cooldown.config.days`.
 const DEFAULT_COOLDOWN_DAYS: u64 = 7;
 
@@ -88,21 +60,28 @@ const DEFAULT_COOLDOWN_DAYS: u64 = 7;
 const DEPENDABOT_DEFAULT_DAYS: u64 = 3;
 
 pub fn cooldown(
-    github: &Path,
-    _scanned: &Scanned,
+    tree: &dyn Tree,
     honor_ignores: bool,
     options: Options,
 ) -> Result<Vec<Located>, String> {
     let mut found = Vec::new();
-    for name in ["dependabot.yml", "dependabot.yaml"] {
-        found.extend(cooldown_file(&github.join(name), honor_ignores, options)?);
+    for path in [".github/dependabot.yml", ".github/dependabot.yaml"] {
+        if let Some(source) = tree.read(path)? {
+            found.extend(cooldown_file(
+                &tree.path(path),
+                source,
+                honor_ignores,
+                options,
+            )?);
+        }
     }
     Ok(found)
 }
 
-/// Checks one Dependabot config; a missing file has no findings.
+/// Checks the Dependabot config `source`, read from `path`.
 pub fn cooldown_file(
     path: &Path,
+    source: String,
     honor_ignores: bool,
     options: Options,
 ) -> Result<Vec<Located>, String> {
@@ -111,11 +90,8 @@ pub fn cooldown_file(
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_COOLDOWN_DAYS);
     let mut found = Vec::new();
-    let Ok(source) = filesystem::read(path) else {
-        return Ok(found);
-    };
-    let config = Workflow::parse_yaml(source.text)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let config =
+        Workflow::parse_yaml(source).map_err(|error| format!("{}: {error}", path.display()))?;
     let Some(updates) = config.value.get("updates").and_then(Value::as_sequence) else {
         return Ok(found);
     };
@@ -175,27 +151,33 @@ const SCANNERS: &[(&str, &str)] = &[
 ];
 
 pub fn tooling(
-    github: &Path,
-    scanned: &Scanned,
+    tree: &dyn Tree,
     _honor_ignores: bool,
     _options: Options,
 ) -> Result<Vec<Located>, String> {
-    let root = github.parent().unwrap_or(github);
     let mut workflows = String::new();
-    for (path, source) in workflow_files(github, scanned) {
-        let source = match source {
-            Some(source) => source.to_ascii_lowercase(),
-            None => filesystem::read(&path)
-                .map(|source| source.text.to_ascii_lowercase())
-                .unwrap_or_default(),
-        };
-        workflows.push_str(&source);
+    let names = tree.files(".github/workflows")?;
+    let yaml = names
+        .iter()
+        .filter(|name| name.ends_with(".yml") || name.ends_with(".yaml"));
+    for name in yaml {
+        // A workflow that cannot be read is already an error of the scan, which exits 2.
+        let source = tree
+            .read(&format!(".github/workflows/{name}"))
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        workflows.push_str(&source.to_ascii_lowercase());
     }
     let mut missing = Vec::new();
-    if !UPDATE_CONFIGS
-        .iter()
-        .any(|config| root.join(config).is_file())
-    {
+    let mut updated = false;
+    for config in UPDATE_CONFIGS {
+        if tree.is_file(config)? {
+            updated = true;
+            break;
+        }
+    }
+    if !updated {
         missing.push("automated dependency updates (Dependabot or Renovate)".to_owned());
     }
     for (name, action) in SCANNERS {
@@ -206,7 +188,7 @@ pub fn tooling(
     Ok(missing
         .into_iter()
         .map(|what| Located {
-            path: github.to_path_buf(),
+            path: tree.path(".github"),
             place: Place::Repository { anchor: None },
             finding: Finding {
                 rule: &TOOLING,

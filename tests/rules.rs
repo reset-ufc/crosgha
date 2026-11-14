@@ -11,16 +11,12 @@
 
 mod common;
 
-use common::{TempDir, bin, fixture};
+use common::{Api, Failure, TOKEN, TempDir, bin, fixture, github_api};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::{Arc, Mutex};
-
-const TOKEN: &str = "test-token";
 
 fn fake_github() -> String {
     logged_github().0
@@ -30,86 +26,11 @@ fn logged_github() -> (String, Arc<Mutex<Vec<String>>>) {
     failing_github(&[])
 }
 
-/// An API error the fake server answers instead of the recorded response: the path (`*` for
-/// every path), the status line, extra header lines, and GitHub's `message`.
-type Failure = (&'static str, &'static str, &'static str, &'static str);
-
 fn failing_github(failures: &'static [Failure]) -> (String, Arc<Mutex<Vec<String>>>) {
-    github_server(failures, false)
-}
-
-/// Serves recorded GitHub API responses; unknown paths get 404 and a missing token gets 401.
-/// With `ignore_page`, every `page=` answers like page 1, as a proxy that drops the parameter.
-/// The log holds every requested path in arrival order.
-fn github_server(
-    failures: &'static [Failure],
-    ignore_page: bool,
-) -> (String, Arc<Mutex<Vec<String>>>) {
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let requests = Arc::clone(&log);
-    let routes: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(&fs::read_to_string(fixture("online/api.json")).unwrap()).unwrap();
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let mut stream = stream.unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut request = String::new();
-            reader.read_line(&mut request).unwrap();
-            let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
-            requests.lock().unwrap().push(path.clone());
-            let mut authorized = false;
-            let mut raw = false;
-            loop {
-                let mut header = String::new();
-                reader.read_line(&mut header).unwrap();
-                if header.trim().is_empty() {
-                    break;
-                }
-                authorized |=
-                    header.to_ascii_lowercase().trim() == format!("authorization: bearer {TOKEN}");
-                raw |= header
-                    .to_ascii_lowercase()
-                    .contains("application/vnd.github.raw+json")
-                    || header
-                        .to_ascii_lowercase()
-                        .contains("application/vnd.github.sha");
-            }
-            let failure = failures
-                .iter()
-                .find(|(failing, ..)| *failing == "*" || *failing == path);
-            let route = match path.split_once("&page=") {
-                Some((before, _)) if ignore_page => format!("{before}&page=1"),
-                _ => path.clone(),
-            };
-            let (status, headers, body) = match (failure, routes.get(&route)) {
-                _ if !authorized => (
-                    "401 Unauthorized",
-                    "",
-                    r#"{"message":"Bad credentials"}"#.to_owned(),
-                ),
-                (Some((_, status, headers, message)), _) => (
-                    *status,
-                    *headers,
-                    serde_json::json!({ "message": message }).to_string(),
-                ),
-                (None, Some(body)) if raw => (
-                    "200 OK",
-                    "",
-                    body.as_str().expect("raw fixture must be text").to_owned(),
-                ),
-                (None, Some(body)) => ("200 OK", "", body.to_string()),
-                (None, None) => ("404 Not Found", "", r#"{"message":"Not Found"}"#.to_owned()),
-            };
-            let _ = write!(
-                stream,
-                "HTTP/1.1 {status}\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-        }
-    });
-    (format!("http://{address}"), log)
+    github_api(Api {
+        failures,
+        ..Api::default()
+    })
 }
 
 fn scan(path: &Path, fix: bool, api: Option<&str>, config: Option<&Path>) -> Output {
@@ -331,9 +252,10 @@ fn remote_input_reports_missing_resources_and_rate_limits() {
     );
     assert_eq!(requests.lock().unwrap().len(), 3);
 
-    const LISTING: &str = "/repos/example/remote/contents/.github/workflows?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const TREE: &str =
+        "/repos/example/remote/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1";
     let (api, requests) = failing_github(&[(
-        LISTING,
+        TREE,
         "403 Forbidden",
         "x-ratelimit-remaining: 0\r\nx-ratelimit-reset: 9999999999\r\n",
         "API rate limit exceeded",
@@ -753,7 +675,10 @@ fn a_rejected_token_stops_further_requests() {
 /// instead of requesting forever, and the check that needed the tags is skipped.
 #[test]
 fn a_tag_page_that_repeats_stops_the_walk() {
-    let (api, log) = github_server(&[], true);
+    let (api, log) = github_api(Api {
+        ignore_page: true,
+        ..Api::default()
+    });
     let mut child = bin()
         .args(["--persona", "auditor", "--fail-on", "none", "--no-config"])
         .args(["--gh-token", TOKEN, "--gh-hostname", &api])

@@ -168,6 +168,30 @@ impl GitHub {
         answer
     }
 
+    /// The commit SHA that `reference` names in `slug` (`owner/repo`); `None` when the repository
+    /// or the reference does not exist.
+    pub fn commit(&self, slug: &str, reference: &str) -> Result<Option<String>, String> {
+        // https://docs.github.com/en/rest/commits/commits#get-a-commit
+        let path = format!("/repos/{slug}/commits/{reference}");
+        let Some(answer) = self.get_raw(&path, "application/vnd.github.sha")? else {
+            return Ok(None);
+        };
+        let sha = answer.trim().trim_matches('"');
+        if sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!("GitHub API {path}: expected a commit SHA"));
+        }
+        Ok(Some(sha.to_owned()))
+    }
+
+    /// The raw text of the file at `path` (relative to the root, `/`-separated) in `slug` at the
+    /// commit `sha`; `None` when there is no such file.
+    pub fn contents(&self, slug: &str, sha: &str, path: &str) -> Result<Option<String>, ApiError> {
+        // https://docs.github.com/en/rest/repos/contents#get-repository-content
+        let encoded: Vec<String> = path.split('/').map(url_segment).collect();
+        let api_path = format!("/repos/{slug}/contents/{}?ref={sha}", encoded.join("/"));
+        self.get_raw(&api_path, "application/vnd.github.raw+json")
+    }
+
     fn response(
         &self,
         path: &str,
@@ -244,4 +268,18 @@ impl GitHub {
         }
         Err(error)
     }
+}
+
+/// Percent-encodes one path segment of a URL.
+fn url_segment(segment: &str) -> String {
+    use std::fmt::Write as _;
+
+    segment.bytes().fold(String::new(), |mut encoded, byte| {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+        encoded
+    })
 }

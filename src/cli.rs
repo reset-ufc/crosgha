@@ -7,10 +7,12 @@ use std::process::ExitCode;
 
 use clap::{ColorChoice, Parser, Subcommand};
 
-use crate::github::GitHub;
+use crate::config::Config;
+use crate::filesystem::Source;
+use crate::github::{ApiError, GitHub};
 use crate::report::{self, FileReport, RunError, Unwritten};
 use crate::rules::{self, Located, Place};
-use crate::workflow::Kind;
+use crate::tree::{self, Entry, LocalTree, RemoteTree, Scanned, Tree};
 use crate::{config, engine, filesystem, hook, migrate, policy};
 
 #[derive(Debug, Parser)]
@@ -77,7 +79,8 @@ struct Args {
     #[arg(long, value_parser = ["unknown", "low", "medium", "high"])]
     min_confidence: Option<String>,
 
-    /// `owner/name` whose Actions settings online rules check.
+    /// `owner/name` whose Actions settings online rules check for local inputs; a remote input
+    /// checks its own repository.
     #[arg(long, env = "GITHUB_REPOSITORY")]
     repository: Option<String>,
 
@@ -239,6 +242,7 @@ pub fn run() -> ExitCode {
             scan.repository.extend(added.repository);
             scan.errors.extend(added.errors);
         }
+        anchor(&mut scan.repository, &scan.files);
         Ok::<_, String>(scan)
     })();
     match result {
@@ -288,19 +292,9 @@ fn remote_input(path: &Path, host: &str) -> Option<(String, String)> {
     Some((slug.to_owned(), reference.to_owned()))
 }
 
-fn url_segment(segment: &str) -> String {
-    use std::fmt::Write as _;
-
-    segment.bytes().fold(String::new(), |mut encoded, byte| {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            encoded.push(char::from(byte));
-        } else {
-            let _ = write!(encoded, "%{byte:02X}");
-        }
-        encoded
-    })
-}
-
+/// Scans `slug` at `reference` through the GitHub API: the workflows, the actions the
+/// repository runs or publishes, and the repository rules, all read at one commit, with the
+/// config found in the repository.
 fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String> {
     if args.modes.fix {
         return Err("--fix does not support remote inputs".to_owned());
@@ -315,54 +309,33 @@ fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String>
         .filter(|token| !token.is_empty())
         .ok_or("remote inputs require --gh-token, GH_TOKEN, or GITHUB_TOKEN")?;
     let github = GitHub::new(&api_url(&args.gh_hostname), token.clone());
-    // https://docs.github.com/en/rest/commits/commits#get-a-commit
-    let commit_path = format!("/repos/{slug}/commits/{reference}");
     let sha = github
-        .get_raw(&commit_path, "application/vnd.github.sha")?
+        .commit(slug, reference)?
         .ok_or_else(|| format!("GitHub repository or ref not found: {slug}@{reference}"))?;
-    let sha = sha.trim().trim_matches('"');
-    if sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(format!("GitHub API {commit_path}: expected a commit SHA"));
-    }
-    // https://docs.github.com/en/rest/repos/contents#get-repository-content
-    let directory = format!("/repos/{slug}/contents/.github/workflows?ref={sha}");
-    let listing = github
-        .get(&directory)?
-        .ok_or_else(|| format!("{slug}@{sha}: .github/workflows does not exist"))?;
-    let entries = listing
-        .as_array()
-        .ok_or_else(|| format!("GitHub API {directory}: expected a directory listing"))?;
-    if entries.len() >= 1000 {
-        return Err(format!(
-            "GitHub API {directory}: directory listing reached the 1000-entry limit"
-        ));
-    }
-    let mut names: Vec<&str> = entries
-        .iter()
-        .filter(|entry| entry["type"] == "file")
-        .filter_map(|entry| entry["name"].as_str())
+    let tree = RemoteTree::new(&github, slug, &sha)?;
+    let workflows: Vec<String> = tree
+        .files(".github/workflows")?
+        .into_iter()
         .filter(|name| name.ends_with(".yml") || name.ends_with(".yaml"))
+        .map(|name| format!(".github/workflows/{name}"))
         .collect();
-    names.sort_unstable();
-    if names.is_empty() {
-        return Err(format!(
-            "{slug}@{sha}: no .yml or .yaml workflow files found in .github/workflows"
-        ));
+    // As for a local repository, a root action alone is something to scan.
+    if workflows.is_empty() && tree::action_file(&tree, "")?.is_none() {
+        let missing = if tree.entry(".github/workflows")? == Some(Entry::Directory) {
+            "no .yml or .yaml workflow files found in .github/workflows"
+        } else {
+            ".github/workflows does not exist"
+        };
+        return Err(format!("{slug}@{sha}: {missing}"));
     }
-    let explicit = args.config.clone().or_else(|| {
-        ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"]
-            .iter()
-            .filter_map(std::env::var_os)
-            .find(|value| !value.is_empty())
-            .map(PathBuf::from)
-    });
     let config = if args.no_config {
-        config::Config::default()
-    } else if let Some(path) = explicit {
-        config::Config::load(&path)?
+        Config::default()
+    } else if let Some(path) = explicit_config(args) {
+        Config::load(&path)?
     } else {
-        config::Config::default()
+        Config::discover_in(&tree)?.unwrap_or_default()
     };
+    warn_unused(std::slice::from_ref(&config));
     let settings = policy::Settings {
         persona: if args.pedantic {
             policy::Persona::Pedantic
@@ -377,54 +350,89 @@ fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String>
     };
     let mut files = Vec::new();
     let mut errors = Vec::new();
-    for name in names {
-        let path = PathBuf::from(format!("{slug}@{sha}:.github/workflows/{name}"));
-        let api_path = format!(
-            "/repos/{slug}/contents/.github/workflows/{}?ref={sha}",
-            url_segment(name)
-        );
-        let result = github
-            .get_raw(&api_path, "application/vnd.github.raw+json")
-            .and_then(|answer| {
-                answer.ok_or_else(|| crate::github::ApiError {
-                    status: Some(404),
-                    rate_limited: false,
-                    message: format!("GitHub API {api_path}: workflow disappeared"),
-                })
-            })
-            .map_err(String::from)
-            .and_then(|text| {
-                let bom = text.starts_with('\u{feff}');
-                let source = filesystem::Source {
-                    text: text.trim_start_matches('\u{feff}').to_owned(),
-                    bom,
-                };
-                engine::inspect(source, Kind::Workflow, false, &settings, name)
-            });
-        match result {
-            Ok(inspection) => files.push(FileReport {
-                path,
-                base: None,
-                inspection,
-                unwritten: None,
-            }),
-            Err(message) => {
-                report::error(format_args!("{}: {message}", path.display()));
-                errors.push(RunError::File { path, message });
-            }
-        }
-    }
+    let mut found = Found {
+        files: &mut files,
+        errors: &mut errors,
+    };
+    let mut seen: HashSet<PathBuf> = workflows
+        .iter()
+        .filter_map(|path| tree.identity(path))
+        .collect();
+    let called = inspect_remote(&tree, &workflows, &settings, &mut found).concat();
+    tree::actions(&tree, called, &mut seen, |paths| {
+        inspect_remote(&tree, paths, &settings, &mut found)
+    })?;
+    let mut repository = if tree.entry(".github")? == Some(Entry::Directory) {
+        rules::detect_repository(&tree, &settings)?
+    } else {
+        Vec::new()
+    };
     if let Some(online) = &settings.github {
         for failure in online.failures() {
             let message = format!("{failure}; online checks that needed it were skipped");
             errors.push(RunError::Skipped(message));
         }
     }
+    // A remote input names its repository, so its own Actions settings are checked;
+    // `--repository` (and `GITHUB_REPOSITORY`, the caller's repository in Actions) names the
+    // repository of the local inputs.
+    let checked = rules::detect_settings(slug, &tree.path(""), &settings);
+    add_settings(checked, &mut repository, &mut errors);
     Ok(Scan {
         files,
-        repository: Vec::new(),
+        repository,
         errors,
     })
+}
+
+/// Reads and inspects `paths` of a remote tree in parallel, adds each to `found`, and returns the
+/// local actions each one calls.
+fn inspect_remote(
+    tree: &dyn Tree,
+    paths: &[String],
+    settings: &policy::Settings,
+    found: &mut Found,
+) -> Vec<Vec<String>> {
+    let inspections = engine::parallel_map(paths, |path| {
+        let kind = tree::kind(path);
+        let text = tree
+            .read(path)?
+            .ok_or_else(|| format!("{} is not a file", kind.noun()))?;
+        let file = path.rsplit('/').next().unwrap_or(path);
+        engine::inspect(Source { text, bom: false }, kind, false, settings, file)
+    });
+    let mut called = Vec::with_capacity(paths.len());
+    for (path, inspected) in paths.iter().zip(inspections) {
+        let calls = inspected
+            .as_ref()
+            .map(|inspection| inspection.local_actions.clone())
+            .unwrap_or_default();
+        called.push(calls);
+        found.add(tree.path(path), None, inspected);
+    }
+    called
+}
+
+/// Adds the findings of `repo-org-settings`, or says why it was skipped. Reading Actions settings
+/// needs a permission `GITHUB_TOKEN` cannot be granted, so a denied read only warns; any other
+/// failure makes the scan incomplete.
+fn add_settings(
+    checked: Result<Vec<Located>, ApiError>,
+    repository: &mut Vec<Located>,
+    errors: &mut Vec<RunError>,
+) {
+    match checked {
+        Ok(found) => repository.extend(found),
+        Err(error) => {
+            let message = format!("repo-org-settings was skipped: {error}");
+            if error.denied() {
+                report::warning(&message);
+            } else {
+                report::warning(format_args!("{message}; the scan is incomplete"));
+                errors.push(RunError::Skipped(message));
+            }
+        }
+    }
 }
 
 /// Reports `error` and exits 2.
@@ -454,16 +462,7 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         .or_else(|| std::env::var("GITHUB_TOKEN").ok())
         .filter(|token| !token.is_empty());
     let (mut configs, owners) = load_configs(args, paths)?;
-    for id in configs.iter().flat_map(rules::unknown_ids) {
-        report::warning(format_args!(
-            "`rules.{id}` matches no crosgha rule and is ignored"
-        ));
-    }
-    for id in configs.iter().flat_map(rules::unused_options) {
-        report::warning(format_args!(
-            "`rules.{id}.config` has no crosgha equivalent and is ignored"
-        ));
-    }
+    warn_unused(&configs);
     let owned = |items: Vec<(PathBuf, usize)>| -> Vec<(PathBuf, usize)> {
         items
             .into_iter()
@@ -484,7 +483,7 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         github: token
             .filter(|_| !args.offline && !args.no_online_audits)
             .map(|token| GitHub::new(&api_url(&args.gh_hostname), token)),
-        config: config::Config::default(),
+        config: Config::default(),
         ignores: !args.no_ignores,
         min_severity: args.min_severity.as_deref().and_then(config::severity),
         hosted: api_url(&args.gh_hostname).eq_ignore_ascii_case("https://api.github.com"),
@@ -502,7 +501,7 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         errors: &mut errors,
     };
     for (((path, _), base), inspected) in workflows.into_iter().zip(bases).zip(inspections) {
-        found.add(path, &base, inspected);
+        found.add(path, Some(&base), inspected);
     }
     let roots = owned(repository_roots(paths));
     repository_actions(
@@ -511,11 +510,11 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         &mut configs,
         &mut settings,
         args.modes.fix,
-    );
+    )?;
     let github_dirs = owned(github_dirs(paths));
     let dependabot = outside(owned(dependabot), &github_dirs);
     // Repository rules read the files parsed above instead of reading them again.
-    let parsed: rules::Scanned = files
+    let parsed: Scanned = files
         .iter()
         .map(|file| {
             (
@@ -530,7 +529,8 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         &mut settings,
         |dirs, settings| {
             engine::parallel_map(dirs, |github| {
-                rules::detect_repository(github, &parsed, settings)
+                let root = github.parent().unwrap_or(Path::new("")).to_path_buf();
+                rules::detect_repository(&LocalTree::new(root, &parsed), settings)
             })
         },
     );
@@ -568,21 +568,9 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
             vec![rules::detect_settings(name, &scanned[0], settings)]
         });
         for result in checked {
-            match result {
-                Ok(found) => repository.extend(found),
-                Err(error) => {
-                    let message = format!("repo-org-settings was skipped: {error}");
-                    if error.denied() {
-                        report::warning(&message);
-                    } else {
-                        report::warning(format_args!("{message}; the scan is incomplete"));
-                        errors.push(RunError::Skipped(message));
-                    }
-                }
-            }
+            add_settings(result, &mut repository, &mut errors);
         }
     }
-    anchor(&mut repository, &files);
     Ok(Scan {
         files,
         repository,
@@ -627,11 +615,18 @@ struct Found<'a> {
 }
 
 impl Found<'_> {
-    fn add(&mut self, path: PathBuf, base: &Path, inspected: Result<engine::Inspection, String>) {
+    /// Adds the file at `path`; `base` is where its fix may be written from, and `None` for a
+    /// file that is never written.
+    fn add(
+        &mut self,
+        path: PathBuf,
+        base: Option<&Path>,
+        inspected: Result<engine::Inspection, String>,
+    ) {
         match inspected {
             Ok(inspection) => self.files.push(FileReport {
                 path,
-                base: Some(base.to_path_buf()),
+                base: base.map(Path::to_path_buf),
                 inspection,
                 unwritten: None,
             }),
@@ -643,85 +638,57 @@ impl Found<'_> {
     }
 }
 
-/// Inspects the actions each repository root runs, with the config of the input that owns the
-/// root: the action it publishes (`action.yml` at the root) and every local action (`uses:
-/// ./path`) a scanned file calls, followed through composite actions until none is new. Paths
-/// resolve from the root, the caller's checkout: "an action defined in the same repository as the
-/// workflow" (https://docs.github.com/en/actions/reference/workflows-and-actions/metadata-syntax).
-/// zizmor walks every directory for `action.yml` instead; this finds only actions the repository
-/// runs or publishes, and others are scanned when given as inputs.
+/// Inspects the actions each repository root runs or publishes (`tree::actions`), with the
+/// config of the input that owns the root.
 fn repository_actions(
     roots: &[(PathBuf, usize)],
     found: &mut Found,
-    configs: &mut [config::Config],
+    configs: &mut [Config],
     settings: &mut policy::Settings,
     apply_fixes: bool,
-) {
-    let mut seen: HashSet<PathBuf> = found
-        .files
-        .iter()
-        .map(|file| filesystem::identity(&file.path))
-        .chain(found.errors.iter().filter_map(|error| match error {
-            RunError::File { path, .. } => Some(filesystem::identity(path)),
-            _ => None,
-        }))
+) -> Result<(), String> {
+    let scanned_paths =
+        found
+            .files
+            .iter()
+            .map(|file| &file.path)
+            .chain(found.errors.iter().filter_map(|error| match error {
+                RunError::File { path, .. } => Some(path),
+                _ => None,
+            }));
+    // `LocalTree::identity`: the file every link to it resolves to.
+    let mut seen: HashSet<PathBuf> = scanned_paths
+        .map(|path| fs::canonicalize(path).unwrap_or_else(|_| filesystem::identity(path)))
         .collect();
-    // Directories that may hold an action, with the root they resolve from and its config.
-    let mut pending: Vec<(PathBuf, PathBuf, usize)> = Vec::new();
-    let mut warned = HashSet::new();
+    let unread = Scanned::new();
     for (root, owner) in roots {
-        pending.push((root.clone(), root.clone(), *owner));
         let resolved = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
-        let called = found
+        let called: Vec<String> = found
             .files
             .iter()
             .filter(|file| filesystem::identity(&file.path).starts_with(&resolved))
-            .flat_map(|file| &file.inspection.local_actions);
-        for path in called {
-            pending.push((root.join(path), root.clone(), *owner));
-        }
+            .flat_map(|file| file.inspection.local_actions.iter().cloned())
+            .collect();
+        let tree = LocalTree::new(root.clone(), &unread);
+        tree::actions(&tree, called, &mut seen, |batch| {
+            let paths: Vec<(PathBuf, usize)> =
+                batch.iter().map(|path| (tree.path(path), *owner)).collect();
+            let inspections = per_config(&paths, configs, settings, |paths, settings| {
+                engine::inspect_files(paths, apply_fixes, settings)
+            });
+            let mut called = Vec::with_capacity(paths.len());
+            for ((path, _), inspected) in paths.into_iter().zip(inspections) {
+                let calls = inspected
+                    .as_ref()
+                    .map(|inspection| inspection.local_actions.clone())
+                    .unwrap_or_default();
+                called.push(calls);
+                found.add(path, Some(root), inspected);
+            }
+            called
+        })?;
     }
-    while !pending.is_empty() {
-        let mut batch: Vec<(PathBuf, usize)> = Vec::new();
-        let mut batch_roots: Vec<PathBuf> = Vec::new();
-        for (directory, root, owner) in pending.drain(..) {
-            let Some(path) = filesystem::action_file(&directory) else {
-                continue;
-            };
-            // `..` or a symbolic link may lead out of the repository, to files it does not own.
-            let resolved = fs::canonicalize(&path).ok();
-            let inside = fs::canonicalize(&root).ok().zip(resolved.as_ref());
-            if !inside.is_some_and(|(root, resolved)| resolved.starts_with(root)) {
-                if warned.insert(path.clone()) {
-                    report::warning(format_args!(
-                        "{}: the local action resolves outside its repository and is not scanned",
-                        path.display()
-                    ));
-                }
-                continue;
-            }
-            // A link to an action already scanned is that action.
-            let linked =
-                filesystem::link_target(&path).is_some_and(|target| seen.contains(&target));
-            if !linked && seen.insert(filesystem::identity(&path)) {
-                batch.push((path, owner));
-                batch_roots.push(root);
-            }
-        }
-        let inspections = per_config(&batch, configs, settings, |paths, settings| {
-            engine::inspect_files(paths, apply_fixes, settings)
-        });
-        for (((path, owner), root), inspected) in
-            batch.into_iter().zip(batch_roots).zip(inspections)
-        {
-            if let Ok(inspection) = &inspected {
-                for called in &inspection.local_actions {
-                    pending.push((root.join(called), root.clone(), owner));
-                }
-            }
-            found.add(path, &root, inspected);
-        }
-    }
+    Ok(())
 }
 
 /// The `.github` directory of each input that has one, each once.
@@ -763,10 +730,17 @@ fn outside(
 fn anchor(repository: &mut [Located], files: &[FileReport]) {
     for located in repository {
         if let Place::Repository { anchor } = &mut located.place {
+            // A remote repository is named `owner/repo@sha:` (`Tree::path`), the prefix of every
+            // path in it, and no local directory is spelled that way.
+            let remote = located.path.to_str().filter(|path| path.ends_with(':'));
             let directory = filesystem::identity(&located.path);
+            let inside = |path: &Path| match remote {
+                Some(root) => path.to_str().is_some_and(|path| path.starts_with(root)),
+                None => filesystem::identity(path).starts_with(&directory),
+            };
             *anchor = files
                 .iter()
-                .find(|file| filesystem::identity(&file.path).starts_with(&directory))
+                .find(|file| inside(&file.path))
                 .map(|file| file.path.clone());
         }
     }
@@ -874,21 +848,12 @@ fn emit(text: &str, status: ExitCode) -> ExitCode {
 /// Configs and, for each input path, the index of its config. `--config` (or its environment
 /// variables) applies to every input; otherwise each input discovers its own, so the result never
 /// depends on the order of the inputs. Inputs that find the same file share one entry.
-fn load_configs(
-    args: &Args,
-    paths: &[PathBuf],
-) -> Result<(Vec<config::Config>, Vec<usize>), String> {
-    let explicit = args.config.clone().or_else(|| {
-        ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"]
-            .iter()
-            .filter_map(std::env::var_os)
-            .find(|value| !value.is_empty())
-            .map(PathBuf::from)
-    });
+fn load_configs(args: &Args, paths: &[PathBuf]) -> Result<(Vec<Config>, Vec<usize>), String> {
+    let explicit = explicit_config(args);
     if args.no_config || explicit.is_some() {
         let config = match explicit.filter(|_| !args.no_config) {
-            Some(path) => config::Config::load(&path)?,
-            None => config::Config::default(),
+            Some(path) => Config::load(&path)?,
+            None => Config::default(),
         };
         return Ok((vec![config], vec![0; paths.len()]));
     }
@@ -896,7 +861,7 @@ fn load_configs(
     let mut configs = Vec::new();
     let mut owners = Vec::new();
     for input in paths {
-        let discovered = config::Config::discover(input)?;
+        let discovered = Config::discover(input)?;
         let path = discovered.as_ref().map(|(path, _)| path.clone());
         let owner = match found.iter().position(|known| *known == path) {
             Some(owner) => owner,
@@ -911,11 +876,37 @@ fn load_configs(
     Ok((configs, owners))
 }
 
+/// The config file `--config`, `CROSGHA_CONFIG`, or `ZIZMOR_CONFIG` names for every input; an
+/// empty variable counts as unset.
+fn explicit_config(args: &Args) -> Option<PathBuf> {
+    args.config.clone().or_else(|| {
+        ["CROSGHA_CONFIG", "ZIZMOR_CONFIG"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .find(|value| !value.is_empty())
+            .map(PathBuf::from)
+    })
+}
+
+/// Warns about config keys that no crosgha rule reads, so a file written for zizmor still loads.
+fn warn_unused(configs: &[Config]) {
+    for id in configs.iter().flat_map(rules::unknown_ids) {
+        report::warning(format_args!(
+            "`rules.{id}` matches no crosgha rule and is ignored"
+        ));
+    }
+    for id in configs.iter().flat_map(rules::unused_options) {
+        report::warning(format_args!(
+            "`rules.{id}.config` has no crosgha equivalent and is ignored"
+        ));
+    }
+}
+
 /// Runs `run` once per config on the items it owns, with that config in `settings`. Results keep
 /// the order of `items`.
 fn per_config<T: Clone, R>(
     items: &[(T, usize)],
-    configs: &mut [config::Config],
+    configs: &mut [Config],
     settings: &mut policy::Settings,
     run: impl Fn(&[T], &policy::Settings) -> Vec<R>,
 ) -> Vec<R> {

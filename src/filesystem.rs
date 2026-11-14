@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::tree::{self, LocalTree, Scanned};
 use crate::workflow::Kind;
 
 const BOM: &str = "\u{feff}";
@@ -16,8 +17,8 @@ const BOM: &str = "\u{feff}";
 /// directory is walked, and a repository root or its `.github` is scanned only through its
 /// workflows, as zizmor collects `.` inputs; the rest of a repository holds YAML that is not a
 /// workflow. The actions of a repository are found from its workflows instead
-/// (`repository_root`, `action_file`), so an input whose repository publishes an action at its
-/// root is not empty.
+/// (`repository_root`, `tree::action_file`), so an input whose repository publishes an action at
+/// its root is not empty.
 pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mut workflows = Vec::new();
     let redirected = if is_github_dir(path) {
@@ -33,8 +34,12 @@ pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
         collect(directory, &mut workflows)?;
     }
     workflows.sort();
-    let root_action = repository_root(path).and_then(|root| action_file(&root));
-    if workflows.is_empty() && root_action.is_none() {
+    let unread = Scanned::new();
+    let root_action = repository_root(path).is_some_and(|root| {
+        let root = LocalTree::new(root, &unread);
+        matches!(tree::action_file(&root, ""), Ok(Some(_)))
+    });
+    if workflows.is_empty() && !root_action {
         return Err(format!(
             "no .yml or .yaml workflow files found in `{}`",
             directory.display()
@@ -62,16 +67,6 @@ pub fn kind(path: &Path) -> Kind {
     } else {
         Kind::Workflow
     }
-}
-
-/// The metadata file of the action in `directory`. The runner loads `action.yml` and reads
-/// `action.yaml` only when there is none (`ActionManager.cs` in actions/runner at
-/// 8cfa1049f86781d141056082d73802d56cd2b433); a directory with only a `Dockerfile` has none.
-pub fn action_file(directory: &Path) -> Option<PathBuf> {
-    ["action.yml", "action.yaml"]
-        .iter()
-        .map(|name| directory.join(name))
-        .find(|path| path.is_file())
 }
 
 /// The repository an input belongs to: the root above a `.github/workflows` directory or a
@@ -127,7 +122,8 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
         let is_file = entry_type.is_file()
             || (entry_type.is_symlink()
                 && entry.path().metadata().is_ok_and(|meta| meta.is_file()));
-        // The runner never reads an `action.yaml` next to an `action.yml` (`action_file`).
+        // The runner never reads an `action.yaml` next to an `action.yml`
+        // (`tree::action_file`).
         let shadowed = entry.file_name() == "action.yaml"
             && path.join("action.yml").is_file()
             && kind(&entry.path()) == Kind::Action;

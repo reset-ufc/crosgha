@@ -109,7 +109,8 @@ src/filesystem.rs           Workflow discovery and verified writes
 src/report.rs               Text, JSON, SARIF, annotation, and agent output; rule catalog
 src/policy.rs               Personas, severity, settings, and failure threshold
 src/config.rs               crosgha.yml / zizmor.yml discovery and rule settings
-src/github.rs               Cached read-only GitHub REST client for online rules
+src/github.rs               Cached read-only GitHub REST client for online rules and remote inputs
+src/tree.rs                 Repository read interface (local directory or GitHub commit) and action discovery
 src/migrate.rs              `migrate --from zizmor|actionlint` step rewrites
 src/hook.rs                 `hook install|uninstall`: the git pre-push hook
 action.yml                  Composite Action metadata and inputs
@@ -121,10 +122,10 @@ docs/*.md                   User docs linked from README.md; docs/rules.md is ch
 docs/rule-examples.md       Generated from tests/fixtures/: `CROSGHA_BLESS=1 cargo test --test report`
 tests/cli.rs                end-to-end scans: inputs, discovery, exit status, flags
 tests/{fix,config,report,repository,migrate,hook}.rs  end-to-end tests per feature
-tests/rules.rs              fixture-driven rule checks, fake GitHub API server
+tests/rules.rs              fixture-driven rule checks and remote inputs against the fake GitHub API
 tests/action.rs             Action entry point against a local release server
 tests/install.rs            install.sh piped into sh against the same server
-tests/common/               shared test helpers: the binary, fixtures, TempDir, the release server
+tests/common/               shared test helpers: the binary, fixtures, TempDir, the fake GitHub API, the release server
 tests/fixtures/             rules/, actions/, online/ (+ api.json), repos/, migrate/, and CLI inputs
 .githooks/                  commit-msg (Conventional Commits), pre-push (full check)
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)

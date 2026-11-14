@@ -40,17 +40,49 @@ file](https://docs.github.com/en/actions/reference/workflows-and-actions/metadat
 - **Fixes, ignores, and config:** the same as for workflows: ignore comments in the action file, `crosgha.yml` or
   `zizmor.yml` of the input (an action found through a repository uses that repository's), and the verified fixes.
   `persist-credentials` is never fixed in an action, because the steps that run after it are in the caller's workflow.
-- **Remote inputs** read workflows only; their repository's actions are tracked in #99, and the actions they call
-  from other repositories in #100.
+- **Remote inputs** find their repository's actions the same way (below). Actions called from other repositories
+  are tracked in #100.
 
-`crosgha owner/repo@ref` scans workflows directly in that GitHub repository's `.github/workflows`.
-Omit `@ref` to scan the default branch. A local path with the same spelling takes precedence.
-`https://github.com/owner/repo@ref` is also accepted. The report names the resolved commit SHA, so
-all files come from one revision. Remote inputs require `--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`;
-private repositories outside the caller's repository need a token that can read them. The scan
-makes one commit request, one directory request, and one request per YAML workflow before online
-rules. `--no-online-audits` skips those rules but still fetches the workflows. `--offline` and
-`--fix` reject remote inputs. Repository rules and remote config discovery are tracked in #99.
+### Remote repositories
+
+`crosgha owner/repo@ref` scans a GitHub repository without a clone. Omit `@ref` to scan the default branch; a local
+path with the same spelling takes precedence, and `https://github.com/owner/repo@ref` is also accepted. Remote inputs
+require `--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`; private repositories outside the caller's repository need a token
+that can read them. `--offline` and `--fix` reject them before any request.
+
+- **One revision:** the ref is resolved to a commit first, and every file is read at that SHA, which the report names
+  (`owner/repo@<sha>:.github/workflows/ci.yml`).
+- **Same scan as a clone:** the workflows directly in `.github/workflows`, the root action and the local actions they
+  call ([Actions](#actions)), the repository rules (`missing-release-cooldown`, `missing-security-tooling`), and
+  `repo-org-settings` report what a local clone of that commit reports, and repository-wide findings are placed on the
+  same first workflow.
+- **Config:** the repository's own `crosgha.yml` or `zizmor.yml`, at its root or in `.github`, in the order of
+  [Config file](configuration.md#config-file). `--config` (or its variables) and `--no-config` work as for local
+  inputs. In a run with several inputs, each local and remote input uses its own repository's config.
+- **`repo-org-settings`** checks the remote repository itself. `--repository` (and `GITHUB_REPOSITORY`, which names the
+  calling repository in Actions) applies to local inputs only.
+- **Not followed:** symbolic links and submodules. The API lists a link without its target and a submodule's files
+  live in another repository, so a workflow, action, or config reached only through one is skipped. Locally, links are
+  followed.
+- **Errors:** a workflow or action the tree lists but the API refuses (403, 404, a server error) is reported for that
+  file, the rest is still checked, and the run exits 2. A missing commit, or an unreadable tree, config, or Dependabot
+  file, stops the run with exit 2. After a rate limit or a rejected token no further request is sent, so every later
+  read fails the same way.
+
+**Request cost per remote repository,** before online rules (`--no-online-audits` skips those, not these reads):
+
+| Requests | For |
+|---|---|
+| 1 | the commit the ref names |
+| 1 | the recursive tree, which answers every "does this file exist" check. When GitHub truncates it (over 100,000 entries or 7 MB), 1 more per directory a lookup needs: the root, `.github`, `.github/workflows`, and the directories on the way to each called action |
+| 1 per file | each `.yml`/`.yaml` workflow |
+| 0 or 1 | the config file found (none with `--config` or `--no-config`) |
+| 1 per file | each action metadata file found: the root `action.yml` and each local action reached |
+| 0 to 2 | `.github/dependabot.yml` and `.yaml`, when they exist and `missing-release-cooldown` runs (`pedantic`) |
+| 0 or 1 | the Actions settings for `repo-org-settings` (`pedantic`, online rules enabled) |
+
+A repository with 5 workflows, a root action, two local actions, a `zizmor.yml`, and a Dependabot config costs
+1 + 1 + 5 + 1 + 3 + 1 = 12 requests at `--persona pedantic`, before `repo-org-settings` and the online rules.
 
 ## Pre-push hook
 

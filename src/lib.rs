@@ -14,4 +14,5 @@ mod migrate;
 mod policy;
 mod report;
 mod rules;
+mod tree;
 mod workflow;

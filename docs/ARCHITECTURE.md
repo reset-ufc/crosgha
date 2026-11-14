@@ -17,16 +17,21 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 
 ```text
 CLI (directly, from the pre-push hook, or from the Action)
-    -> discover workflow and action files and the config
+    -> discover workflow and action files and the config (a remote input: resolve the ref to a commit and list its tree)
     -> parse and validate each file as a workflow or an action
     -> run the rules enabled by persona and config that read that kind of file (online rules only with a token)
     -> add each repository's root action and the local actions its files call that resolve inside it, until none is new
     -> drop ignored findings, remap severities, apply --min-severity
     -> validate every proposed patch
-    -> run repository rules for the .github directory next to the scanned workflows
-    -> write verified files when --fix is requested and every workflow parsed
+    -> run repository rules for the repository around the scanned workflows
+    -> write verified files when --fix is requested and every workflow parsed (never for remote inputs)
     -> render the report and choose an exit status
 ```
+
+A local directory and a remote repository go through the same steps. What differs is behind `tree::Tree`, the
+repository's files: `LocalTree` reads a directory, and `RemoteTree` reads one commit through the GitHub API. Action
+discovery (`tree::actions`), the repository rules, and remote config discovery take a `&dyn Tree`, so each has one
+body for both kinds of input.
 
 The stages have these interfaces:
 
@@ -34,19 +39,20 @@ The stages have these interfaces:
 |---|---|---|
 | `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, whether each is a workflow or an action (`kind`: `action.yml`/`action.yaml` outside `.github/workflows`), the metadata file of an action directory (`action.yml` before `action.yaml`, as the runner reads them), the repository root and `.github` directory of an input, file contents without a BOM (`Source`), and per-file verified writes that put the BOM back and refuse a file changed since it was read or reached through a symbolic link below the scanned path. |
 | `workflow` | YAML source | A `yamlpath::Document`, the semantic YAML value, and its `Kind`; `parse` validates a workflow's `on`/`jobs` structure and `parse_action` an action's `runs` mapping and string `runs.using`. A parse error is reported for that file, the other files are still checked, and the run exits with status 2 without writing. |
-| `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order. |
+| `config` | Scanned path, a remote tree, or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order; a remote repository is searched at its root only, as zizmor does. |
+| `tree` | Local repository root, or a GitHub repository and commit | The `Tree` read interface (entry kind, text, file names, identity) over `/`-separated repository paths, with `LocalTree` and `RemoteTree`. `RemoteTree` answers existence from one recursive Git tree request; when GitHub truncates it, from one non-recursive request per directory a lookup needs, starting at the root. Symbolic links and submodules of a remote tree are neither files nor directories. Also the action discovery walk shared by local and remote inputs. |
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
 | `rules::common` | Parsed workflow or action | Shared traversal: jobs (a composite action's `runs` is one job, with locations `action` and `step N`), steps (including `parallel` groups), triggers, `uses` refs, local actions, action versions, and boolean inputs. |
 | `rules::expression` | Text with `${{ }}` | Expression spans and bodies, context paths, which of them an outsider controls, where a named secret is read, and how a condition compares or negates a path. |
 | `rules::shell` | `run` script | Simple commands (quoted text and heredoc bodies stay data), the program each runs past keywords, assignments, and wrappers such as `sudo`/`env`, getopt-style options, git subcommands, and the shell a step runs in. |
-| `github` | API path | Cached read-only GitHub REST responses for online rules, failures included. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal or a 401 no further request is sent. The tag walk fails when a page repeats the previous one or after 100 pages. |
+| `github` | API path | Cached read-only GitHub REST responses for online rules and remote inputs, failures included: `commit` resolves a ref to a SHA and `contents` reads a file's raw text at a commit, which #100 can reuse for actions pinned in other repositories. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal or a 401 no further request is sent. The tag walk fails when a page repeats the previous one or after 100 pages. |
 | `engine` | Source, its kind, and scan/fix mode | Findings, the local actions the file calls, and a prepared fix result. This is the main in-memory analysis interface, for a file from any source (a remote action in #100 included). Files and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. A rejected proposal keeps its finding, records the reason, and the next proposal still runs. |
 | `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. |
 | `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
 | `migrate` | Workflows and the tool to replace | Rewrites zizmor or actionlint Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
 | `hook` | Current git repository | Writes or removes the `pre-push` hook that runs the CLI. Refuses to install into a hooks directory outside the repository, and never touches a hook that differs from every script a release has written (`TEMPLATES`). |
-| `cli` | Command-line options | Preflight, the walk from each repository root to its actions, output, exit policy, and the decision to persist verified fixes. |
+| `cli` | Command-line options | Preflight, local and remote scans, per-input configs, output, exit policy, and the decision to persist verified fixes. |
 
 `src/main.rs` only enters the CLI. The library modules hold the behavior so
 additional entry points can reuse the same analysis path.
@@ -86,7 +92,7 @@ composite action's `inputs` as untrusted, as zizmor does.
 | Workflow | `fn(&Workflow) -> Result<Vec<Finding>, String>` | `REGISTRY` |
 | Configurable | `fn(&Workflow, Options) -> Result<Vec<Finding>, String>` with its `rules.<id>.config` | `CONFIGURABLE` |
 | Online | `fn(&Workflow, &GitHub, Options) -> Result<Vec<Finding>, String>` | `ONLINE`; runs only with a token |
-| Repository | `fn(&Path, &Scanned, bool, Options) -> Result<Vec<Located>, String>` for the `.github` directory; `Scanned` holds the sources the scan already read, so they are not read twice | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
+| Repository | `fn(&dyn Tree, bool, Options) -> Result<Vec<Located>, String>` for a repository with a `.github` directory, local or remote; a `LocalTree` serves the sources the scan already read, and a `RemoteTree` the cached API answers, so no file is read twice | `REPOSITORY`; `repo-org-settings` also needs `--repository` for local inputs, and checks a remote input's own repository |
 
 Checks that state github.com facts (retired hosted-runner images and service shutdowns in
 `removed-feature`, and `retired-runtime`) sit in the `HOSTED` table and are
@@ -196,14 +202,14 @@ validated and then refused until its repository operations have end-to-end fixtu
 | Test file | What it runs |
 |---|---|
 | `tests/rules.rs` | Scans every `tests/fixtures/rules/<rule>[.<variant>].before.yml` at the `auditor` persona. Findings of the rule must match the `# expect: <rule>` markers exactly, `--fix` must remove all or none of them and write exactly `.after.yml` (or nothing when that file is absent; `CROSGHA_BLESS=1` regenerates it), and the hand-written `.clean.yml` must not be reported. |
-| `tests/rules.rs` (online) | Runs the online fixtures against a local server that replays `tests/fixtures/online/api.json` and rejects wrong tokens. |
+| `tests/rules.rs` (online) | Runs the online fixtures against a local server (`tests/common::github_api`) that replays `tests/fixtures/online/api.json`, serves each `tests/fixtures/repos/<name>` as `fixture/<name>`, and rejects wrong tokens. |
 | `tests/rules.rs` (actions) | The same checks on `tests/fixtures/actions/`, each fixture scanned as an `action.yml`. |
 | `tests/rules.rs` (coverage) | Fails if any registered rule lacks a fixture, or a rule with a `metadata` check lacks an action fixture, and scans each `tests/fixtures/repos/<rule>/` repository, offline and against the fake API, which must report its rule. |
 | `tests/cli.rs` | The binary end to end: inputs, discovery (a repository's local actions in `repos/composite`), exit codes, and flags. |
 | `tests/fix.rs` | `--fix`: verified writes, rejected fixes, line breaks, BOMs, symlinks, and a file edited during the scan. |
-| `tests/config.rs` | Config discovery, per-input configs, ignores, and schema errors. |
+| `tests/config.rs` | Config discovery (local and remote, in the same order), per-input configs, ignores, and schema errors. |
 | `tests/report.rs` | Every report format and the rule catalog. |
-| `tests/repository.rs` | Repository rules: Dependabot cooldown, security tooling, local actions, and github.com-only rules. |
+| `tests/repository.rs` | Repository rules: Dependabot cooldown, security tooling, local actions, and github.com-only rules. Every `tests/fixtures/repos/` repository, served by the fake GitHub API (`tests/common`) at one commit, must report exactly what its local copy reports, also from a truncated tree. |
 | `tests/migrate.rs`, `tests/hook.rs` | `migrate` on workflows and repositories; `hook install` and `uninstall` in scratch git repositories. |
 | `tests/action.rs` | `action/entrypoint.sh` with a runner environment against a local release server: verified install, SARIF and outputs, a tampered checksum, and `fail-on-no-inputs`. |
 | `tests/install.rs` | `install.sh` piped into `sh` against the same local release server: the latest release on the user's `PATH` and in-place upgrades, a tampered or missing release, a new binary that cannot run, plain HTTP only for a loopback origin, and platforms without a release binary. |

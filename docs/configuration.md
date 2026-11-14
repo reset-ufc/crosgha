@@ -20,9 +20,9 @@ Rules with scope `online` in the [rule table](rules.md) query the GitHub API, an
 - **GitHub Enterprise Server:** `--gh-hostname` (or `GH_HOST`). It also turns off the checks that describe github.com:
   retired runner images and shut-down action versions in `removed-feature`, and `retired-runtime` (in workflow steps
   and in action files).
-- **`repo-org-settings`** also needs `--repository owner/name` (or `GITHUB_REPOSITORY`) and a token with the
-  Administration (read) repository permission. `GITHUB_TOKEN` cannot have it, so in Actions the rule is usually
-  skipped with a warning.
+- **`repo-org-settings`** also needs a token with the Administration (read) repository permission, and, for local
+  inputs, `--repository owner/name` (or `GITHUB_REPOSITORY`); a remote input checks its own repository. `GITHUB_TOKEN`
+  cannot have that permission, so in Actions the rule is usually skipped with a warning.
 - **Without the API,** `archived-action` still reports the archived actions of the `actions` and `actions-rs`
   organizations from a built-in list.
 
@@ -32,7 +32,10 @@ crosgha reads `crosgha.yml` or an existing `zizmor.yml`, found for each input pa
 config, or passed with `--config` (also `CROSGHA_CONFIG` or `ZIZMOR_CONFIG`; an empty one counts as unset) for every
 input. Discovery starts at the repository root whether the input is the root, its `.github`, `.github/workflows`, or a
 workflow in it, and walks up to the Git root; in each directory `.github/crosgha.yml` wins over `crosgha.yml`, then
-`.github/zizmor.yml`, then `zizmor.yml` (`.yaml` is accepted too). `--no-config` skips both. Keys may use crosgha's or
+`.github/zizmor.yml`, then `zizmor.yml` (`.yaml` is accepted too, after `.yml`). A [remote
+repository](usage.md#remote-repositories) (`owner/repo@ref`) is searched the same way at its root only, at the scanned
+commit, as zizmor reads `.github/zizmor.yml` or `zizmor.yml` from the root of a remote repository. `--no-config` skips
+both. Keys may use crosgha's or
 zizmor's rule names. Unknown settings keys, wrong value types, and unknown severities are config errors (exit 2). A
 `rules.<id>` that matches no crosgha rule or equivalent, such as a typo or a zizmor rule crosgha lacks, is ignored with
 a warning on stderr that names it, so a file written for zizmor keeps working.
