@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.0](https://github.com/reset-ufc/crosgha/compare/v0.16.0...v0.17.0) (2026-11-14)
+
+
+### Added
+
+* **fix:** quote environment file paths in run scripts ([ca1727f](https://github.com/reset-ufc/crosgha/commit/ca1727f8ff0d46dd5ff33fec850769fefa3a7bf1))
+* **fix:** quote environment file paths in run scripts ([e98c98c](https://github.com/reset-ufc/crosgha/commit/e98c98c38d145d52856d580400d7b3f80611577d))
+* **fix:** rewrite deprecated workflow commands to environment files ([a05e08c](https://github.com/reset-ufc/crosgha/commit/a05e08c4a95f89675750b2b039191703c71a5c13))
+* **fix:** rewrite deprecated workflow commands to environment files ([930d922](https://github.com/reset-ufc/crosgha/commit/930d922f008a98e04a20aa893d7322206b1df572)), closes [#74](https://github.com/reset-ufc/crosgha/issues/74)
+
+
+### Fixed
+
+* **fix:** leave environment file paths in shell patterns unquoted ([2ba8914](https://github.com/reset-ufc/crosgha/commit/2ba891466842b68184a3de45f675b4d43d416a96))
+* **fix:** quote only environment file paths that are redirect targets ([20c8a42](https://github.com/reset-ufc/crosgha/commit/20c8a4204744360f9f4b84c38df1162f9748b7b1))
+* **fix:** write add-path rewrites with printf so `-n` paths survive ([1ef1e62](https://github.com/reset-ufc/crosgha/commit/1ef1e6268da43d01cfaa10770e17273c1043bd88))
+
 ## [0.16.0](https://github.com/reset-ufc/crosgha/compare/v0.15.1...v0.16.0) (2026-11-13)
 
 
