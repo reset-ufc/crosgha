@@ -516,13 +516,18 @@ impl Walk<'_> {
     }
 
     /// The shortest chain from `first`, a scanned `uses:` line that leads to `start`, to every
-    /// node it reaches, in breadth-first order.
+    /// node it reaches within `MAX_DEPTH`, in breadth-first order. The walk may have read a node
+    /// deeper than that through a shorter line, but the runner never runs it from this one.
     fn shortest(&self, start: usize, first: Link) -> Vec<(usize, Vec<Link>)> {
         let mut found: Vec<(usize, Vec<Link>)> = vec![(start, vec![first])];
         let mut seen = HashSet::from([start]);
         let mut queue = VecDeque::from([0]);
         while let Some(at) = queue.pop_front() {
             let node = found[at].0;
+            // A chain holds one link per depth, starting at 0.
+            if found[at].1.len() > MAX_DEPTH {
+                continue;
+            }
             for edge in &self.edges {
                 if !matches!(edge.caller, Caller::Node(caller) if caller == node)
                     || !seen.insert(edge.target)

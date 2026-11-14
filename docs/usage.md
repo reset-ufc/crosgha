@@ -107,7 +107,9 @@ turns it on with `follow-actions: true`.
 - **Each action once:** an action is identified by owner, repository, path, and commit, so a cycle stops and an action
   that several chains reach is read and checked once. The same action at two commits is two actions. Followed
   composite actions are nested at most 9 levels below the scanned step, the runner's limit
-  (`CompositeActionsMaxDepth` in actions/runner); calls deeper than that are skipped with a warning.
+  (`CompositeActionsMaxDepth` in actions/runner); calls deeper than that are skipped with a warning. The limit holds
+  per scanned line: an action read because a shorter line reaches it is not reported through a line whose chain to it
+  would be deeper.
 - **Chains:** every finding names the `uses:` lines that lead to it, starting at a line of a scanned file. Text,
   annotations, SARIF, and agent lines show the shortest chain from the first such line and how many other scanned
   lines also lead there; JSON lists one chain per scanned line under `via` ([Output](output.md)). Annotations, SARIF,

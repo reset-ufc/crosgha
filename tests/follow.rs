@@ -424,6 +424,45 @@ fn nesting_stops_at_the_runners_composite_depth_limit() {
     );
 }
 
+/// A chain is reported only within the depth the runner allows from its own scanned line, even
+/// when another, shorter line made the walk read deeper.
+#[test]
+fn a_chain_past_the_depth_limit_does_not_report_what_a_shorter_ignored_chain_reached() {
+    let (api, log) = api(&[]);
+    let output = follow(
+        &api,
+        &["--no-config", "--format", "json", "--fail-on", "none"],
+        &[fixture("follow/deep-ignored.yml")],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let report = json(&output);
+    let first = "deep-ignored.yml:13";
+    // `(finding, links in its one chain)`: level N is N links below the first step.
+    let mut found: Vec<(String, usize)> = followed(&report)
+        .into_iter()
+        .map(|(at, chains)| {
+            assert_eq!(chains.len(), 1, "{at}: {chains:?}");
+            assert_eq!(chains[0][0], first, "{at}: {chains:?}");
+            (at, chains[0].len())
+        })
+        .collect();
+    found.sort();
+    let mut expected: Vec<(String, usize)> = (1..=10)
+        .map(|level| (format!("deep:{level}/action.yml:6 unpinned-action"), level))
+        .collect();
+    expected.sort();
+    assert_eq!(found, expected, "{report:#}");
+    // Level 11 was read, one level below the second step.
+    let requests = log.lock().unwrap().clone();
+    assert!(
+        requests
+            .iter()
+            .any(|path| path.starts_with("/repos/fixture/deep/contents/11/action.yml")),
+        "{requests:?}"
+    );
+}
+
 #[test]
 fn a_failed_read_skips_only_that_action_and_a_rate_limit_stops_the_walk() {
     const DOCKER: &str =
