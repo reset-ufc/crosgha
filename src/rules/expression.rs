@@ -452,24 +452,42 @@ pub fn status_checks(condition: &str) -> Vec<StatusCheck> {
     for outside in text.split('\'').step_by(2) {
         for name in NAMES {
             for (start, _) in outside.match_indices(name) {
-                let preceded = outside[..start]
+                let before = &outside[..start];
+                let preceded = before
                     .bytes()
                     .next_back()
                     .is_some_and(|byte| is_context_char(byte) || byte == b'.');
                 let call = outside[start + name.len()..]
                     .trim_start()
                     .strip_prefix('(')
-                    .is_some_and(|arguments| arguments.trim_start().starts_with(')'));
-                if !preceded && call {
+                    .and_then(|arguments| arguments.trim_start().strip_prefix(')'));
+                if let (false, Some(after)) = (preceded, call) {
                     found.push(StatusCheck {
                         name,
-                        negated: outside[..start].trim_end().ends_with('!'),
+                        negated: negated(before, after),
                     });
                 }
             }
         }
     }
     found
+}
+
+/// Whether a `!` negates a call that `before` and `after` surround, also through parentheses that
+/// hold only the call, as in `!(cancelled())`. A `!` before a group that holds more, as in
+/// `!(cancelled() || x)`, negates the group: the call itself may still decide in the positive.
+fn negated(mut before: &str, mut after: &str) -> bool {
+    loop {
+        before = before.trim_end();
+        after = after.trim_start();
+        match (before.strip_suffix('('), after.strip_prefix(')')) {
+            (Some(outer_before), Some(outer_after)) => {
+                before = outer_before;
+                after = outer_after;
+            }
+            _ => return before.ends_with('!'),
+        }
+    }
 }
 
 /// How tightly a binary operator binds, loosest first. The runner ranks `<`, `>` above `==`,

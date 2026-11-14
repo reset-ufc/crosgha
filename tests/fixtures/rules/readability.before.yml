@@ -27,6 +27,13 @@ jobs:
       - name: Cleanup
         if: ${{ !Always() }} # expect: readability, readability
         run: make clean
+      # Parentheses that hold only the call do not hide the negation.
+      - name: Notify grouped
+        if: ${{ !(cancelled()) }} # expect: readability
+        run: make notify
+      - name: Notify nested
+        if: ${{ github.event_name == 'push' && ! ( (failure()) ) }} # expect: readability
+        run: make notify
       - name: Block
         if: | # expect: readability
           github.event_name == 'push' &&
@@ -46,6 +53,10 @@ jobs:
       - name: Any status
         if: ${{ success() || failure() || cancelled() }}
         run: make report
+      # A `!` before a group that holds more negates the group, not the status check.
+      - name: Group
+        if: ${{ !(cancelled() || github.event_name == 'schedule') }}
+        run: make group
       - name: Branch
         if: ${{ !startsWith(github.ref, 'refs/tags/') && github.event_name != 'schedule' }}
         run: make branch
