@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.26.0](https://github.com/reset-ufc/crosgha/compare/v0.25.0...v0.26.0) (2026-11-14)
+
+
+### Added
+
+* **action:** enable auto-merge on fix pull requests with dangerously-auto-merge ([2ddadb9](https://github.com/reset-ufc/crosgha/commit/2ddadb9f5f655058126fb59fa9f8164c17fe892d))
+* **action:** enable auto-merge on fix pull requests with dangerously-auto-merge ([e728225](https://github.com/reset-ufc/crosgha/commit/e728225beaf9b65d326d6de9efb816fdd996f2d5)), closes [#73](https://github.com/reset-ufc/crosgha/issues/73)
+* **action:** open fix pull requests with fix: pull-request ([0b20914](https://github.com/reset-ufc/crosgha/commit/0b209146df2d9467392dff1d8db6958a0c65b6a1))
+* **action:** open fix pull requests with fix: pull-request ([b0b9175](https://github.com/reset-ufc/crosgha/commit/b0b91756df7f94b22501b8117adc5c25a9db9b37)), closes [#72](https://github.com/reset-ufc/crosgha/issues/72)
+* **migrate:** add ghalint as a migration source ([47b3ee0](https://github.com/reset-ufc/crosgha/commit/47b3ee0a63c22d1ac0ddf4a1e074663c807b8e3b))
+* **migrate:** add ghalint as a migration source ([53897cb](https://github.com/reset-ufc/crosgha/commit/53897cb49b48af604e9aadb9616187ef1740649d)), closes [#78](https://github.com/reset-ufc/crosgha/issues/78)
+* **migrate:** add octoscan as a migration source ([63918cf](https://github.com/reset-ufc/crosgha/commit/63918cf34825fdcb5d57858b958cf3214068deb9))
+* **migrate:** add octoscan as a migration source ([b4a7e6a](https://github.com/reset-ufc/crosgha/commit/b4a7e6aa9d53a69900072bcf0d3b4c8bec30e4a2)), closes [#79](https://github.com/reset-ufc/crosgha/issues/79)
+* **migrate:** add poutine as a migration source ([a3c10ba](https://github.com/reset-ufc/crosgha/commit/a3c10ba706d2274ad43983fc85126e5bf5a1f8ed))
+* **migrate:** add poutine as a migration source ([395549e](https://github.com/reset-ufc/crosgha/commit/395549e660f0ea2efaa50ba194efa61d7266a45b)), closes [#77](https://github.com/reset-ufc/crosgha/issues/77)
+* **report:** add rule examples to SARIF help in markdown ([fa29b74](https://github.com/reset-ufc/crosgha/commit/fa29b74d92db3de1c6d556e1137ecfe9b0e6805b))
+* **report:** add rule examples to SARIF help in markdown ([7c4499b](https://github.com/reset-ufc/crosgha/commit/7c4499b64bd3c65ff6da32e3a2cb586627066f1d)), closes [#94](https://github.com/reset-ufc/crosgha/issues/94)
+
+
+### Fixed
+
+* **fix:** reject rewrites of values shared through anchors ([6a06158](https://github.com/reset-ufc/crosgha/commit/6a0615861702a877945c4703bd11f220b21223e4))
+* **fix:** reject rewrites of values shared through anchors ([56861ea](https://github.com/reset-ufc/crosgha/commit/56861ea056349fda76dd376805a378139fa045f1)), closes [#167](https://github.com/reset-ufc/crosgha/issues/167)
+
 ## [0.25.0](https://github.com/reset-ufc/crosgha/compare/v0.24.0...v0.25.0) (2026-11-14)
 
 
