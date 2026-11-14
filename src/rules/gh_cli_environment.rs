@@ -127,7 +127,11 @@ impl Missing {
 /// What the environment gives `gh` at one point of a job.
 #[derive(Clone, Default)]
 struct Context<'a> {
+    /// Environment variables, which `gh` inherits.
     variables: BTreeSet<&'a str>,
+    /// Shell variables the script assigned without exporting them, so `gh` does not see them
+    /// until `export NAME`.
+    unexported: BTreeSet<&'a str>,
     /// An `env` is an expression, so it may set any variable.
     unknown: bool,
     /// `gh auth login` stored a token that later commands use.
@@ -147,14 +151,29 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Records the variables that `words` assign: `NAME=value`, as after `export`, or before a
-    /// program.
-    fn assign(&mut self, words: &[&'a str]) {
+    /// Records the variables that `words` export: `NAME=value`, as after `export` or before a
+    /// program, and `NAME` alone when the script assigned it before.
+    fn export(&mut self, words: &[&'a str]) {
+        for word in words {
+            match word.split_once('=') {
+                Some((name, _)) if shell::is_assignment(word) => {
+                    self.variables.insert(name);
+                }
+                None if self.unexported.contains(word) => {
+                    self.variables.insert(word);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Records the shell variables that `words` assign without exporting them.
+    fn keep(&mut self, words: &[&'a str]) {
         for word in words {
             if shell::is_assignment(word)
                 && let Some((name, _)) = word.split_once('=')
             {
-                self.variables.insert(name);
+                self.unexported.insert(name);
             }
         }
     }
@@ -180,12 +199,11 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 context.repository = true;
             }
             let Some(script) = step.run() else { continue };
-            let reads_commands = shell::name(workflow, &job, &step)
-                .is_some_and(|name| COMMAND_SHELLS.contains(&name));
-            if reads_commands {
+            let shell = shell::name(workflow, &job, &step).unwrap_or_default();
+            if COMMAND_SHELLS.contains(&shell) {
                 let mut seen = context.clone();
                 seen.set(step.value.get("env"));
-                for (missing, message) in problems(script, &mut seen) {
+                for (missing, message) in problems(script, shell, &mut seen) {
                     let mut finding = common::finding(
                         workflow,
                         &RULE,
@@ -205,23 +223,37 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-/// The first `gh` command of `script` that lacks each part of its environment, with the message.
-/// `context` takes the variables the script sets and what its commands leave for later steps.
-fn problems<'a>(script: &'a str, context: &mut Context<'a>) -> Vec<(Missing, String)> {
+/// The first `gh` command of `script`, run by `shell`, that lacks each part of its environment,
+/// with the message. `context` takes the variables the script sets and what its commands leave
+/// for later steps.
+fn problems<'a>(script: &'a str, shell: &str, context: &mut Context<'a>) -> Vec<(Missing, String)> {
     let mut found: Vec<(Missing, String)> = Vec::new();
+    let powershell = matches!(shell, "pwsh" | "powershell");
     for command in shell::commands(script) {
         let Some(program) = shell::program(&command.words) else {
-            context.assign(&command.words);
+            context.keep(&command.words);
             continue;
         };
-        if let Some(name) = powershell_variable(program.path) {
+        if powershell && let Some(name) = powershell_variable(program.path) {
             context.variables.insert(name);
             continue;
         }
         match program.name {
-            "export" | "declare" | "typeset" | "readonly" | "local" | "set" => {
-                context.assign(program.args);
+            "export" => context.export(program.args),
+            // `declare -x` and `typeset -x` export; without it they, `local`, and `readonly` only
+            // assign.
+            "declare" | "typeset"
+                if program
+                    .args
+                    .iter()
+                    .any(|arg| arg.starts_with('-') && arg.contains('x')) =>
+            {
+                context.export(program.args);
             }
+            "declare" | "typeset" | "local" | "readonly" => context.keep(program.args),
+            // cmd has no shell variables: `set NAME=value` changes the environment. In bash, `set`
+            // sets positional parameters.
+            "set" if shell == "cmd" => context.export(program.args),
             "git" if shell::git_subcommand(&program).is_some_and(|(name, _)| name == "clone") => {
                 context.repository = true;
             }
@@ -229,7 +261,7 @@ fn problems<'a>(script: &'a str, context: &mut Context<'a>) -> Vec<(Missing, Str
                 // Assignments before `gh`, also through `env` or `sudo`, set variables for it alone.
                 let before = &command.words[..command.words.len() - program.args.len() - 1];
                 let mut seen = context.clone();
-                seen.assign(before);
+                seen.export(before);
                 for (missing, message) in lacking(program.args, &seen) {
                     if !found.iter().any(|(other, _)| *other == missing) {
                         found.push((missing, message));

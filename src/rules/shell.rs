@@ -17,57 +17,160 @@ pub struct Command<'a> {
     pub piped: bool,
 }
 
-/// The simple commands of `script`, split on newlines, `;`, `|`, `&`, `(`, `)`, and backticks.
-/// Quotes around a word are dropped, a `${{ }}` expression stays inside one word, a `\` line
-/// continuation is a space, and a `#` that starts a word outside quotes ends the line.
-// ponytail: separators are not quote-aware, so `echo "a; b"` splits; parse quoting if that
-// produces false findings in practice.
+/// The simple commands of `script`, split on newlines, `;`, `|`, `&`, `(`, `)`, and backticks
+/// in shell code. Text in quotes is data that stays inside one word, while `$(...)` and backticks
+/// in double quotes still run commands. A heredoc body is data too: its blank-separated words end
+/// the command that reads it, so text it prints is still seen. Quotes around a word
+/// are dropped, a `${{ }}` expression stays inside one word, a `\` line continuation is a space,
+/// and a `#` that starts a word in shell code ends the line.
+// ponytail: a `case` pattern's `)` inside `$(` closes it early; parse the shell grammar if that
+// misreads real scripts.
 pub fn commands(script: &str) -> Vec<Command<'_>> {
     let bytes = script.as_bytes();
     let mut commands = vec![Command {
         words: Vec::new(),
         piped: false,
     }];
+    let mut nesting = vec![Nesting::Code(0)];
+    let mut heredocs: Vec<Heredoc> = Vec::new();
     let mut start = None;
-    let mut quote = None;
     let mut index = 0;
     while index < bytes.len() {
-        let byte = bytes[index];
-        if bytes[index..].starts_with(b"${{") {
+        let rest = &bytes[index..];
+        if rest.starts_with(b"${{") {
             start.get_or_insert(index);
             index =
                 expression::end(&script[index + 3..]).map_or(bytes.len(), |end| index + end + 5);
             continue;
         }
-        if byte == b'#' && start.is_none() && quote.is_none() {
-            index = script[index..]
-                .find('\n')
-                .map_or(bytes.len(), |end| index + end);
+        let inner = nesting.len() > 1;
+        if let Some(Nesting::Double) = nesting.last() {
+            match rest {
+                [b'$', b'(', ..] => {
+                    end_word(&mut commands, script, &mut start, index);
+                    nesting.push(Nesting::Code(1));
+                    index += 1;
+                    separate(&mut commands, bytes, index);
+                }
+                [b'`', ..] => {
+                    end_word(&mut commands, script, &mut start, index);
+                    nesting.push(Nesting::Backtick);
+                    separate(&mut commands, bytes, index);
+                }
+                [b'\\', ..] => {
+                    start.get_or_insert(index);
+                    index += 1;
+                }
+                [b'"', ..] => {
+                    nesting.pop();
+                }
+                _ => {
+                    start.get_or_insert(index);
+                }
+            }
+            index += 1;
             continue;
         }
-        let continuation = byte == b'\\' && bytes.get(index + 1) == Some(&b'\n');
-        if continuation || matches!(byte, b' ' | b'\t' | b'\r') {
-            end_word(&mut commands, script, &mut start, index);
-            index += 1 + usize::from(continuation);
-            continue;
-        }
-        if matches!(byte, b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'`') {
-            end_word(&mut commands, script, &mut start, index);
-            quote = quote.filter(|_| byte != b'\n');
-            separate(&mut commands, bytes, index);
-        } else {
-            quote = match (quote, byte) {
-                (None, b'\'' | b'"') => Some(byte),
-                (Some(open), _) if open == byte => None,
-                (open, _) => open,
-            };
-            start.get_or_insert(index);
+        match rest {
+            [b'\\', b'\n', ..] | [b' ' | b'\t' | b'\r', ..] => {
+                end_word(&mut commands, script, &mut start, index);
+                index += usize::from(rest[0] == b'\\');
+            }
+            [b'\\', ..] => {
+                start.get_or_insert(index);
+                index += 1;
+            }
+            [b'\'', ..] => {
+                start.get_or_insert(index);
+                index = script[index + 1..]
+                    .find('\'')
+                    .map_or(bytes.len(), |end| index + 1 + end);
+            }
+            [b'"', ..] => {
+                start.get_or_insert(index);
+                nesting.push(Nesting::Double);
+            }
+            [b'#', ..] if start.is_none() => {
+                index = script[index..]
+                    .find('\n')
+                    .map_or(bytes.len(), |end| index + end);
+                continue;
+            }
+            [b'<', b'<', b'<', ..] => {
+                start.get_or_insert(index);
+                index += 2;
+            }
+            [b'<', b'<', ..] if let Some((heredoc, end)) = heredoc(script, index + 2) => {
+                end_word(&mut commands, script, &mut start, index);
+                heredocs.push(heredoc);
+                index = end;
+                continue;
+            }
+            [b'\n', ..] if !heredocs.is_empty() => {
+                end_word(&mut commands, script, &mut start, index);
+                let end = heredoc_bodies_end(script, index + 1, &heredocs).unwrap_or(bytes.len());
+                let body = script[index + 1..end]
+                    .split_whitespace()
+                    .map(|word| word.trim_matches(['"', '\'']))
+                    .filter(|word| !word.is_empty());
+                commands.last_mut().expect(NOT_EMPTY).words.extend(body);
+                separate(&mut commands, bytes, index);
+                heredocs.clear();
+                index = end;
+                continue;
+            }
+            [b'(', ..] => {
+                end_word(&mut commands, script, &mut start, index);
+                match nesting.last_mut().expect(OPEN) {
+                    _ if index > 0 && bytes[index - 1] == b'$' => nesting.push(Nesting::Code(1)),
+                    Nesting::Code(depth) if inner => *depth += 1,
+                    _ => {}
+                }
+                separate(&mut commands, bytes, index);
+            }
+            [b')', ..] => {
+                end_word(&mut commands, script, &mut start, index);
+                match nesting.last_mut().expect(OPEN) {
+                    Nesting::Code(1) if inner => {
+                        nesting.pop();
+                    }
+                    Nesting::Code(depth) if inner => *depth -= 1,
+                    _ => {}
+                }
+                separate(&mut commands, bytes, index);
+            }
+            [b'`', ..] => {
+                end_word(&mut commands, script, &mut start, index);
+                match nesting.last() {
+                    Some(Nesting::Backtick) => {
+                        nesting.pop();
+                    }
+                    _ => nesting.push(Nesting::Backtick),
+                }
+                separate(&mut commands, bytes, index);
+            }
+            [b'\n' | b';' | b'|' | b'&', ..] => {
+                end_word(&mut commands, script, &mut start, index);
+                separate(&mut commands, bytes, index);
+            }
+            _ => {
+                start.get_or_insert(index);
+            }
         }
         index += 1;
     }
     end_word(&mut commands, script, &mut start, bytes.len());
     commands.retain(|command| !command.words.is_empty());
     commands
+}
+
+/// Where `commands` reads, the innermost last.
+enum Nesting {
+    /// Shell code with the parentheses still open in it; `$(` opens one.
+    Code(usize),
+    /// Shell code that the next backtick ends.
+    Backtick,
+    Double,
 }
 
 /// Starts the next command at the separator `bytes[index]`; a single `|` pipes into it.

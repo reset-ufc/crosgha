@@ -2868,6 +2868,21 @@ jobs:
           if ! gh label list --search triage | grep -q triage; then
             gh label create triage --color FBCA04
           fi
+      # A plain assignment makes a shell variable, which gh does not inherit.
+      - run: | # expect: gh-cli-environment
+          GH_REPO="${GITHUB_REPOSITORY}"
+          gh pr list --state open
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # Text in quotes and heredoc bodies is printed, not run.
+      - run: |
+          echo 'Usage: gh pr list; gh issue list'
+          echo "Run gh release view && gh run list to check"
+          cat <<'EOF'
+          gh pr list --state merged
+          EOF
+        env:
+          GH_TOKEN: ${{ github.token }}
       # Commands that need neither a token nor a repository.
       - run: gh --version && gh help environment
       - run: gh auth status || true
@@ -2938,6 +2953,17 @@ jobs:
           export GH_TOKEN="${{ github.token }}"
           git clone "https://github.com/${GITHUB_REPOSITORY}" source
           cd source && gh pr checks 1
+      - shell: bash
+        run: |
+          GH_REPO="${GITHUB_REPOSITORY}"
+          export GH_REPO
+          declare -x GH_TOKEN="${{ github.token }}"
+          gh issue list
+      - shell: cmd
+        run: |
+          set "GH_TOKEN=${{ github.token }}"
+          set GH_REPO=%GITHUB_REPOSITORY%
+          gh run list
       # Dependabot's auto-merge example: the operand is a pull request URL.
       - shell: bash
         run: gh pr merge --auto --merge "$PR_URL"
