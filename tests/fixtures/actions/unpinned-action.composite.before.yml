@@ -1,0 +1,15 @@
+name: Test
+description: Installs Python, restores the cache, and runs the tests.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6 # expect: unpinned-action
+      with:
+        python-version: '3.13'
+    - uses: ./.github/actions/cache
+    - uses: docker://alpine:3.20 # expect: unpinned-action
+      with:
+        args: true
+    - name: Test
+      shell: bash
+      run: python -m pytest

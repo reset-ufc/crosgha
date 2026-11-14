@@ -1,0 +1,20 @@
+name: Set up the toolchain
+description: Installs the toolchain, then restores the build cache.
+inputs:
+  toolchain:
+    description: Toolchain channel or version.
+    default: stable
+outputs:
+  version:
+    description: The installed version.
+    value: ${{ steps.install.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - id: install
+      name: Install
+      shell: bash
+      run: |
+        rustup toolchain install ${{ inputs.toolchain }}
+        echo "::set-output name=version::$(rustc --version)"
+    - uses: ./.github/actions/cache

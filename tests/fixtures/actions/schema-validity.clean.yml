@@ -1,0 +1,16 @@
+name: Build and test
+description: Builds, tests, and packages the project.
+runs:
+  using: composite
+  steps:
+    - name: Build
+      shell: bash
+      run: make build
+    - name: Restore the cache
+      uses: ./.github/actions/cache
+      with:
+        path: build
+    - name: Package
+      shell: bash
+      working-directory: build
+      run: make package

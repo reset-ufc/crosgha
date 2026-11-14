@@ -39,12 +39,10 @@ fn policies(options: Options) -> Vec<(String, String)> {
 
 pub fn detect(workflow: &Workflow, options: Options) -> Result<Vec<Finding>, String> {
     let policies = policies(options);
-    let Some(jobs) = workflow.value.get("jobs").and_then(Value::as_mapping) else {
-        return Ok(Vec::new());
-    };
     let mut findings = Vec::new();
-
-    for (name, job) in jobs {
+    // An action has no `jobs`, only the steps below.
+    let jobs = workflow.value.get("jobs").and_then(Value::as_mapping);
+    for (name, job) in jobs.into_iter().flatten() {
         let Some(job_name) = name.as_str() else {
             continue;
         };
@@ -118,6 +116,32 @@ pub fn detect(workflow: &Workflow, options: Options) -> Result<Vec<Finding>, Str
         }
     }
 
+    Ok(findings)
+}
+
+/// A Docker action's `runs.image` from a registry (`docker://`), as zizmor's `unpinned-images`
+/// audits Docker actions (`audit_docker_action` in `crates/zizmor/src/audit/unpinned_images.rs`
+/// at dc2209b6b6d76781c43d2a09aa9d51b56627457c). A `Dockerfile` path is built from the action's
+/// own revision.
+pub fn action_image(action: &Workflow, _options: Options) -> Result<Vec<Finding>, String> {
+    let mut findings = Vec::new();
+    let image = action
+        .value
+        .get("runs")
+        .and_then(|runs| runs.get("image"))
+        .and_then(Value::as_str)
+        .and_then(|image| image.strip_prefix("docker://"));
+    if action.using().as_deref() == Some("docker")
+        && let Some(image) = image
+    {
+        check_image(
+            action,
+            &mut findings,
+            Route::default().with_key("runs").with_key("image"),
+            "action".to_owned(),
+            image,
+        )?;
+    }
     Ok(findings)
 }
 

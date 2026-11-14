@@ -12,7 +12,7 @@ use crate::workflow::Workflow;
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 pub const SCHEMA: Rule = Rule {
     id: "schema-validity",
-    summary: "Workflows must use only the keys GitHub's workflow syntax defines.",
+    summary: "Workflows and actions must use only the keys GitHub's syntax defines.",
     tag: "syntax/schema-validity",
     severity: Severity::Error,
     persona: Persona::Regular,
@@ -111,6 +111,29 @@ const STEP_KEYS: &[&str] = &[
     "wait-all",
     "cancel",
     "parallel",
+];
+
+/// Keys of `run-step` and `uses-step`, the two kinds of composite step in GitHub's action schema
+/// (actions/languageservices `workflow-parser/src/action-v1.0.json` at
+/// 4043eda158e16579cc5fb1b0b07a4bce2a76f0b5), where `shell` is required next to `run`.
+const RUN_STEP_KEYS: &[&str] = &[
+    "name",
+    "id",
+    "if",
+    "run",
+    "shell",
+    "env",
+    "continue-on-error",
+    "working-directory",
+];
+const USES_STEP_KEYS: &[&str] = &[
+    "name",
+    "id",
+    "if",
+    "uses",
+    "with",
+    "env",
+    "continue-on-error",
 ];
 
 /// `GITHUB_TOKEN` scopes and the levels each accepts, from `permissions-mapping` in GitHub's
@@ -378,6 +401,101 @@ pub fn schema(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         .into_iter()
         .map(|(route, location, message)| {
             common::finding(workflow, &SCHEMA, route, location, message)
+        })
+        .collect()
+}
+
+/// An action file's required keys, its runtime, and its composite steps. `name` and `description`
+/// are required by the metadata syntax
+/// (https://docs.github.com/en/actions/reference/workflows-and-actions/metadata-syntax), and the
+/// runner refuses an unknown `using`, a JavaScript action without `main`, a Docker action without
+/// `image`, and a composite action without `steps` (`ActionManifestManager.cs` in actions/runner at
+/// 8cfa1049f86781d141056082d73802d56cd2b433).
+pub fn action_schema(action: &Workflow) -> Result<Vec<Finding>, String> {
+    let mut problems: Vec<(Route<'static>, String, String)> = Vec::new();
+    let runs = Route::default().with_key("runs");
+    // A missing key has no node of its own, so the finding sits on `runs`, which parsing requires.
+    for key in ["name", "description"] {
+        if action.value.get(key).is_none() {
+            problems.push((
+                runs.clone(),
+                "action".to_owned(),
+                format!("action has no `{key}`"),
+            ));
+        }
+    }
+    let using = action.using().unwrap_or_default();
+    let required = match using.as_str() {
+        "composite" => Some("steps"),
+        "docker" => Some("image"),
+        "node12" | "node16" | "node20" | "node24" => Some("main"),
+        _ => {
+            problems.push((
+                runs.with_key("using"),
+                "action".to_owned(),
+                format!(
+                    "`using: {using}` is not one of composite, docker, node12, node16, node20, or node24"
+                ),
+            ));
+            None
+        }
+    };
+    let declared = |key: &str| action.value.get("runs").and_then(|runs| runs.get(key));
+    if let Some(key) = required {
+        let present = match declared(key) {
+            Some(Value::String(text)) => key != "steps" && !text.is_empty(),
+            Some(Value::Sequence(_)) => key == "steps",
+            _ => false,
+        };
+        if !present {
+            let form = if key == "steps" {
+                "a list"
+            } else {
+                "a non-empty string"
+            };
+            problems.push((
+                runs.clone(),
+                "action".to_owned(),
+                format!("`using: {using}` needs `runs.{key}` as {form}"),
+            ));
+        }
+    }
+    for job in common::jobs(action) {
+        for step in common::steps(&job) {
+            let (run, uses) = (step.value.get("run"), step.value.get("uses"));
+            let known = match (run, uses) {
+                (Some(_), None) => RUN_STEP_KEYS,
+                (None, Some(_)) => USES_STEP_KEYS,
+                _ => {
+                    problems.push((
+                        step.route.clone(),
+                        step.location.clone(),
+                        "composite step needs exactly one of `uses` or `run`".to_owned(),
+                    ));
+                    continue;
+                }
+            };
+            let kind = if run.is_some() { "run" } else { "uses" };
+            for (route, key) in unknown_keys(step.value, known, &step.route) {
+                problems.push((
+                    route,
+                    step.location.clone(),
+                    format!("a composite `{kind}` step cannot set `{key}`"),
+                ));
+            }
+            if run.is_some() && step.value.get("shell").is_none() {
+                problems.push((
+                    step.key("run"),
+                    step.location.clone(),
+                    "composite `run` steps need `shell`".to_owned(),
+                ));
+            }
+        }
+    }
+    problems
+        .into_iter()
+        .map(|(route, location, message)| {
+            common::finding(action, &SCHEMA, route, location, message)
         })
         .collect()
 }
@@ -851,7 +969,7 @@ pub fn insecure_protocol(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 workflow,
                 &INSECURE_PROTOCOL,
                 route,
-                "workflow",
+                workflow.kind.noun(),
                 "URL uses an unencrypted scheme",
             )
         })

@@ -5,9 +5,7 @@ use yaml_serde::Value;
 use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{
-    ChangeKind, Edit, Finding, LineRewrite, ProposedFix, Rule, common, repository, runner, shell,
-};
+use super::{ChangeKind, Edit, Finding, LineRewrite, ProposedFix, Rule, common, runner, shell};
 use crate::policy::{Persona, Severity};
 use crate::workflow::Workflow;
 
@@ -32,6 +30,23 @@ pub const REMOVED: Rule = Rule {
     configurable: false,
     relational: false,
 };
+
+// GitHub retired these JavaScript action runtimes; runners now run such actions on Node 24:
+// https://github.blog/changelog/2023-05-04-github-actions-all-actions-will-run-on-node16-instead-of-node12/
+// https://github.blog/changelog/2024-09-25-end-of-life-for-actions-node16/
+// https://github.blog/changelog/2026-09-23-node-20-is-no-longer-available-in-github-actions/
+pub const RUNTIME: Rule = Rule {
+    id: "retired-runtime",
+    summary: "JavaScript actions must not declare a retired Node.js runtime.",
+    tag: "deprecated-command/feature",
+    severity: Severity::Warning,
+    persona: Persona::Regular,
+    equivalents: &[("actionlint", "action")],
+    configurable: false,
+    relational: false,
+};
+
+const RETIRED_RUNTIMES: &[&str] = &["node12", "node16", "node20"];
 
 pub const DEPRECATED: Rule = Rule {
     id: "deprecated-command",
@@ -379,7 +394,7 @@ pub fn removed_hosted(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 }
 
 /// Majors of GitHub's own JavaScript actions whose latest release declares a retired Node.js
-/// runtime (`repository::RUNTIME`), read from `runs.using` in each major's newest `vX.Y.Z` tag on
+/// runtime (`RUNTIME`), read from `runs.using` in each major's newest `vX.Y.Z` tag on
 /// 2026-09-27. A major is the unit because `@vN` follows its newest release.
 // ponytail: `actions/*` only and major granularity, so a pin to an older minor of a node24 major
 // (setup-go v6.0.0) is missed; per-release data or more owners would close both gaps.
@@ -516,7 +531,7 @@ pub fn retired_runtime(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             if let Some((major, runtime)) = runtime {
                 findings.push(common::finding(
                     workflow,
-                    &repository::RUNTIME,
+                    &RUNTIME,
                     step.key("uses"),
                     step.location.clone(),
                     format!(
@@ -527,6 +542,23 @@ pub fn retired_runtime(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
+}
+
+/// An action file that declares a retired Node.js runtime in `runs.using`.
+pub fn retired_action_runtime(action: &Workflow) -> Result<Vec<Finding>, String> {
+    let Some(using) = action
+        .using()
+        .filter(|using| RETIRED_RUNTIMES.contains(&using.as_str()))
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(vec![common::finding(
+        action,
+        &RUNTIME,
+        Route::default().with_key("runs").with_key("using"),
+        "action",
+        format!("`{using}` is retired; runners run this action on Node 24, so declare `node24`"),
+    )?])
 }
 
 /// Inputs an action's newer major removed, whatever host runs it.

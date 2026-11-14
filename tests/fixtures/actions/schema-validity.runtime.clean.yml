@@ -1,0 +1,8 @@
+name: Greet
+description: Prints a greeting.
+inputs:
+  who:
+    description: Who to greet.
+runs:
+  using: NODE24
+  main: dist/index.js

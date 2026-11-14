@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::engine::Inspection;
 use crate::policy::Severity;
 use crate::rules::{self, Finding, Located, Place, Rule};
+use crate::workflow::Kind;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Format {
@@ -143,12 +144,11 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: 
         }
     };
     if fixed > 0 {
-        let changed = files.iter().filter(|file| file.fixed() > 0).count();
         let _ = writeln!(
             output,
             "{SUCCESS}Fixed{SUCCESS:#} {} in {}{failed}.",
             count(fixed, "finding"),
-            count(changed, "workflow file")
+            files_count(files.iter().filter(|file| file.fixed() > 0))
         );
         if !shown.is_empty() {
             let _ = writeln!(
@@ -163,13 +163,13 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: 
             true => format!("{SUCCESS}✓{SUCCESS:#} "),
             false => String::new(),
         };
-        let checked = count(files.len(), "workflow file");
+        let checked = files_count(files);
         let _ = writeln!(output, "{mark}Checked {checked}{failed}: no findings.");
     } else {
         let _ = writeln!(
             output,
             "Checked {}{failed}: {}{}.",
-            count(files.len(), "workflow file"),
+            files_count(files),
             count(shown.len(), "finding"),
             breakdown(&shown)
         );
@@ -214,6 +214,22 @@ fn style(severity: Severity) -> Style {
 /// `3 findings`, `1 workflow file`.
 fn count(n: usize, noun: &str) -> String {
     format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+}
+
+/// `2 workflow files`, `1 action file`, or `2 workflow files and 1 action file`.
+fn files_count<'a>(files: impl IntoIterator<Item = &'a FileReport>) -> String {
+    let (actions, workflows): (Vec<&FileReport>, Vec<&FileReport>) = files
+        .into_iter()
+        .partition(|file| file.inspection.kind == Kind::Action);
+    match (workflows.len(), actions.len()) {
+        (workflows, 0) => count(workflows, "workflow file"),
+        (0, actions) => count(actions, "action file"),
+        (workflows, actions) => format!(
+            "{} and {}",
+            count(workflows, "workflow file"),
+            count(actions, "action file")
+        ),
+    }
 }
 
 /// ` (1 error, 2 notes)`, colored by severity, skipping severities without findings.
@@ -333,8 +349,13 @@ pub fn rules() -> String {
         .iter()
         .map(|(rule, scope)| {
             let level = style(rule.severity);
+            let actions = rules::action_checks(rule);
+            let actions = match actions.is_empty() {
+                true => "-".to_owned(),
+                false => actions.join(","),
+            };
             format!(
-                "{BOLD}{:id$}{BOLD:#}  {:tag$}  {level}{:7}{level:#}  {:8}  {scope}\n",
+                "{BOLD}{:id$}{BOLD:#}  {:tag$}  {level}{:7}{level:#}  {:8}  {scope:10}  {actions}\n",
                 rule.id,
                 rule.tag,
                 rule.severity.as_str(),
@@ -370,6 +391,7 @@ pub fn rules_json() -> String {
                 "severity": rule.severity.as_str(),
                 "persona": rule.persona.as_str(),
                 "scope": scope,
+                "actions": rules::action_checks(rule),
                 "summary": rule.summary,
                 "equivalents": equivalents(rule),
                 "configurable": rule.configurable,

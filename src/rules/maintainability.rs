@@ -455,7 +455,7 @@ pub fn duplicated_steps(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     &DUPLICATED_STEPS,
                     step.anchor(),
                     step.location.clone(),
-                    "step repeats an earlier step in the same job",
+                    format!("step repeats an earlier step in the same {}", job.noun()),
                 )?);
             } else {
                 seen.push(body);
@@ -506,7 +506,7 @@ pub fn complexity(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 &COMPLEXITY,
                 job.route.clone(),
                 job.location(),
-                format!("job has {count} steps (limit {MAX_STEPS})"),
+                format!("{} has {count} steps (limit {MAX_STEPS})", job.noun()),
             )?;
             finding.concepts = &["TooManySteps"];
             findings.push(finding);

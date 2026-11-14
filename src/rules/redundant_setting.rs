@@ -3,7 +3,7 @@ use yamlpath::Route;
 
 use super::{Finding, Rule, common, shell};
 use crate::policy::{Persona, Severity};
-use crate::workflow::Workflow;
+use crate::workflow::{Kind, Workflow};
 
 // ghlint at 74115a437cfa161c2fd2d72fc2ebcd83ac514b80: `EmptyEnvRule.kt`, `RedundantShellRule.kt`,
 // and `DuplicateShellRule.kt` in
@@ -148,7 +148,12 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
         if let Some(shell) = common_shell(&shells) {
             let count = shells.len();
-            if job_shell.is_none() && workflow_shell.is_none() && count >= MIN_REPEATED_SHELLS {
+            // A composite action has no `defaults`, so each `run` step must set its shell.
+            if job.kind == Kind::Workflow
+                && job_shell.is_none()
+                && workflow_shell.is_none()
+                && count >= MIN_REPEATED_SHELLS
+            {
                 findings.push(report(
                     workflow,
                     job.route.clone(),

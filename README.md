@@ -3,8 +3,10 @@
 aCtions Repair Of miSconfigured GitHub Actions: a Rust CLI and GitHub Action that detects smells in GitHub Actions
 workflows and fixes them deterministically, preserving comments and formatting.
 
-- 51 rules cover every tag of a curated smell taxonomy: 42 check workflow files, 4 check the repository, and 5 query
-  the GitHub API.
+- 51 rules cover every tag of a curated smell taxonomy: 43 check workflow or action files, 3 check the repository,
+  and 5 query the GitHub API.
+- Composite actions (`action.yml`) get the step rules, and JavaScript and Docker actions their metadata checks: the
+  repository's root action and the local actions its workflows call are found with the workflows.
 - It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
   actionlint rule in every finding, so switching tools does not mean rewriting configuration.
 - Output is text, JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), or brief lines for AI
@@ -26,8 +28,9 @@ Release archives and building from source: [docs/install.md](docs/install.md).
 ## Quick start
 
 ```sh
-crosgha                                   # scans .github/workflows
+crosgha                                   # scans .github/workflows and the actions it calls
 crosgha path/to/workflow.yml
+crosgha path/to/action.yml                # a composite, JavaScript, or Docker action
 crosgha --persona pedantic .github/workflows
 crosgha --fix .github/workflows
 crosgha -f sarif > results.sarif          # also: json, github, agent
@@ -58,7 +61,7 @@ goes: [docs/action.md](docs/action.md).
 | Document | Covers |
 |---|---|
 | [docs/install.md](docs/install.md) | Install script options, release archives, building from source |
-| [docs/usage.md](docs/usage.md) | Which paths are scanned, the pre-push hook, migrating from zizmor or actionlint |
+| [docs/usage.md](docs/usage.md) | Which paths and actions are scanned, the pre-push hook, migrating from zizmor or actionlint |
 | [docs/action.md](docs/action.md) | Action inputs, outputs, and run steps |
 | [docs/configuration.md](docs/configuration.md) | Personas, online rules, `crosgha.yml` / `zizmor.yml`, ignoring findings, severity |
 | [docs/output.md](docs/output.md) | Output formats and exit status |

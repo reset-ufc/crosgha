@@ -369,10 +369,21 @@ fn rule_catalog_as_json_matches_the_text_catalog() {
         let fields: Vec<&str> = line.split_whitespace().collect();
         for (key, value) in ["id", "tag", "severity", "persona", "scope"]
             .iter()
-            .zip(fields)
+            .zip(&fields)
         {
-            assert_eq!(rule[key], value, "{rule}");
+            assert_eq!(rule[key], *value, "{rule}");
         }
+        let actions: Vec<&str> = rule["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|check| check.as_str().unwrap())
+            .collect();
+        let listed = match actions.is_empty() {
+            true => "-".to_owned(),
+            false => actions.join(","),
+        };
+        assert_eq!(fields[5], listed, "{rule}");
         assert!(!rule["summary"].as_str().unwrap().is_empty(), "{rule}");
     }
     let injection = rules
@@ -387,18 +398,23 @@ fn rule_catalog_as_json_matches_the_text_catalog() {
     let catalog =
         fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/rules.md"))
             .unwrap();
-    let documented: Vec<(String, String, bool)> = catalog
+    let documented: Vec<(String, String, String, bool)> = catalog
         .lines()
         .filter_map(|line| {
             let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
-            (cells.len() == 8 && cells[0].starts_with('`')).then(|| {
+            (cells.len() == 9 && cells[0].starts_with('`')).then(|| {
                 let id = cells[0].trim_matches('`');
-                assert_eq!(cells[7], format!("[examples](rule-examples.md#{id})"));
-                (id.to_owned(), cells[5].to_owned(), !cells[6].is_empty())
+                assert_eq!(cells[8], format!("[examples](rule-examples.md#{id})"));
+                (
+                    id.to_owned(),
+                    cells[5].to_owned(),
+                    cells[6].to_owned(),
+                    !cells[7].is_empty(),
+                )
             })
         })
         .collect();
-    let listed: Vec<(String, String, bool)> = rules
+    let listed: Vec<(String, String, String, bool)> = rules
         .iter()
         .map(|rule| {
             let mut tools: Vec<(&str, Vec<String>)> = Vec::new();
@@ -416,8 +432,15 @@ fn rule_catalog_as_json_matches_the_text_catalog() {
                 .collect::<Vec<_>>()
                 .join("; ");
             let configurable = rule["configurable"].as_bool().expect("configurable");
+            let actions: Vec<&str> = rule["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|check| check.as_str().unwrap())
+                .collect();
             (
                 rule["id"].as_str().unwrap().to_owned(),
+                actions.join(", "),
                 equivalents,
                 configurable,
             )
@@ -488,13 +511,19 @@ fn rule_examples(rules: &[serde_json::Value]) -> String {
                     good.iter().map(|path| path.to_string()).collect(),
                 ),
                 None => {
-                    let dir = ["rules", "online"]
+                    // An action fixture, when the rule has one, follows its workflow fixture.
+                    let dirs: Vec<&str> = ["rules", "online", "actions"]
                         .into_iter()
-                        .find(|dir| fixture(&format!("{dir}/{id}.before.yml")).is_file())
-                        .unwrap_or_else(|| panic!("no fixture for {id}"));
+                        .filter(|dir| fixture(&format!("{dir}/{id}.before.yml")).is_file())
+                        .collect();
+                    assert!(!dirs.is_empty(), "no fixture for {id}");
                     (
-                        vec![format!("{dir}/{id}.before.yml")],
-                        vec![format!("{dir}/{id}.clean.yml")],
+                        dirs.iter()
+                            .map(|dir| format!("{dir}/{id}.before.yml"))
+                            .collect(),
+                        dirs.iter()
+                            .map(|dir| format!("{dir}/{id}.clean.yml"))
+                            .collect(),
                     )
                 }
             };

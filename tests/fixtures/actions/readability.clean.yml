@@ -1,0 +1,17 @@
+name: Build
+description: Builds the project and reports its size.
+runs:
+  using: composite
+  steps:
+    - id: build
+      name: Build
+      shell: bash
+      run: make build
+    - name: Size
+      shell: bash
+      run: du -sh build
+    - id: report-sizes
+      name: Report sizes
+      if: ${{ success() || failure() }}
+      shell: bash
+      run: du -h dist

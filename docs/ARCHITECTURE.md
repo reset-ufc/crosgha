@@ -6,7 +6,7 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 | Area | Current state |
 |---|---|
 | CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
-| Rule modules | 51 rules covering every taxonomy tag: 42 per workflow, 4 per repository, 5 online. |
+| Rule modules | 51 rules covering every taxonomy tag: 43 per file, 3 per repository, 5 online. Step rules also run on composite actions' `runs.steps`, and metadata checks on action files. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
 | Fix validation | Runnable for add, replace, and remove proposals; `persist-credentials` and `error-suppression` propose adds of a step input, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, `unsafe-if-condition` the new source of an `if` scalar, `readability` the new source of a step value, and `redundant-setting` removals of a key. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
@@ -17,9 +17,10 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 
 ```text
 CLI (directly, from the pre-push hook, or from the Action)
-    -> discover workflow files and the config
-    -> parse and validate each workflow
-    -> run the rules enabled by persona and config (online rules only with a token)
+    -> discover workflow and action files and the config
+    -> parse and validate each file as a workflow or an action
+    -> run the rules enabled by persona and config that read that kind of file (online rules only with a token)
+    -> add each repository's root action and the local actions its files call, until none is new
     -> drop ignored findings, remap severities, apply --min-severity
     -> validate every proposed patch
     -> run repository rules for the .github directory next to the scanned workflows
@@ -31,21 +32,21 @@ The stages have these interfaces:
 
 | Module | Input | Output and responsibility |
 |---|---|---|
-| `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, file contents without a BOM (`Source`), the owning `.github` directory, and per-file verified writes that put the BOM back and refuse a file changed since it was read. |
-| `workflow` | YAML source | A `yamlpath::Document` and semantic YAML value; `parse` also validates the `on`/`jobs` structure. A parse error is reported for that file, the other files are still checked, and the run exits with status 2 without writing. |
+| `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, whether each is a workflow or an action (`kind`: `action.yml`/`action.yaml` outside `.github/workflows`), the metadata file of an action directory (`action.yml` before `action.yaml`, as the runner reads them), the repository root and `.github` directory of an input, file contents without a BOM (`Source`), and per-file verified writes that put the BOM back and refuse a file changed since it was read. |
+| `workflow` | YAML source | A `yamlpath::Document`, the semantic YAML value, and its `Kind`; `parse` validates a workflow's `on`/`jobs` structure and `parse_action` an action's `runs` mapping and string `runs.using`. A parse error is reported for that file, the other files are still checked, and the run exits with status 2 without writing. |
 | `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order. |
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
-| `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, `uses` refs, action versions, and boolean inputs. |
+| `rules::common` | Parsed workflow or action | Shared traversal: jobs (a composite action's `runs` is one job, with locations `action` and `step N`), steps (including `parallel` groups), triggers, `uses` refs, local actions, action versions, and boolean inputs. |
 | `rules::expression` | Text with `${{ }}` | Expression spans and bodies, context paths, which of them an outsider controls, where a named secret is read, and how a condition compares or negates a path. |
 | `rules::shell` | `run` script | Simple commands (quoted text and heredoc bodies stay data), the program each runs past keywords, assignments, and wrappers such as `sudo`/`env`, getopt-style options, git subcommands, and the shell a step runs in. |
 | `github` | API path | Cached read-only GitHub REST responses for online rules, failures included. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal or a 401 no further request is sent. The tag walk fails when a page repeats the previous one or after 100 pages. |
-| `engine` | Source and scan/fix mode | Findings and a prepared fix result. This is the main in-memory analysis interface. Workflows and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
+| `engine` | Source, its kind, and scan/fix mode | Findings, the local actions the file calls, and a prepared fix result. This is the main in-memory analysis interface, for a file from any source (a remote action in #100 included). Files and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. A rejected proposal keeps its finding, records the reason, and the next proposal still runs. |
 | `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. |
 | `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
 | `migrate` | Workflows and the tool to replace | Rewrites zizmor or actionlint Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
 | `hook` | Current git repository | Writes or removes the `pre-push` hook that runs the CLI. Refuses to install into a hooks directory outside the repository, and never touches a hook that differs from every script a release has written (`TEMPLATES`). |
-| `cli` | Command-line options | Preflight, output, exit policy, and the decision to persist verified fixes. |
+| `cli` | Command-line options | Preflight, the walk from each repository root to its actions, output, exit policy, and the decision to persist verified fixes. |
 
 `src/main.rs` only enters the CLI. The library modules hold the behavior so
 additional entry points can reuse the same analysis path.
@@ -65,17 +66,30 @@ Each rule lives in `src/rules/` and declares:
 
 Equivalent IDs keep existing ignore comments and `zizmor.yml` entries working after a switch, and
 the report names them. The concept and primary source are cited above each rule. Rules come in
-four shapes, dispatched from explicit tables in `rules/mod.rs`:
+four shapes, dispatched from explicit tables in `rules/mod.rs`. Each row of a file table also says what the
+check reads (`Reads`), which decides the files it runs on:
+
+| `Reads` | Runs on | For checks of |
+|---|---|---|
+| `Workflow` | workflows | triggers, jobs, `permissions`, `defaults`, runners, and timeouts, which an action does not have |
+| `Steps` | workflows and actions | steps, `uses` lines, and text anywhere in the file; a composite action's `runs` is one job |
+| `Metadata` | actions | `runs.using`, `runs.image`, the required keys, and the keys of composite steps |
+
+A rule may have rows of several kinds (`schema-validity` has a workflow and a metadata row), and the catalog's
+`actions` field lists the kinds other than `Workflow`. A `Steps` check meets syntax that differs in actions only where
+a composite action has no equivalent: it skips job names and IDs, `defaults`-based shell checks, and the
+`persist-credentials` fix, whose later steps are in the caller's workflow. `script-injection` also treats a
+composite action's `inputs` as untrusted, as zizmor does.
 
 | Shape | Signature | Registered in |
 |---|---|---|
 | Workflow | `fn(&Workflow) -> Result<Vec<Finding>, String>` | `REGISTRY` |
 | Configurable | `fn(&Workflow, Options) -> Result<Vec<Finding>, String>` with its `rules.<id>.config` | `CONFIGURABLE` |
 | Online | `fn(&Workflow, &GitHub, Options) -> Result<Vec<Finding>, String>` | `ONLINE`; runs only with a token |
-| Repository | `fn(&Path, &Scanned, bool, Options) -> Result<Vec<Located>, String>` for the `.github` directory; `Scanned` holds the workflows the scan already parsed, so they are not read twice | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
+| Repository | `fn(&Path, &Scanned, bool, Options) -> Result<Vec<Located>, String>` for the `.github` directory; `Scanned` holds the sources the scan already read, so they are not read twice | `REPOSITORY`; `repo-org-settings` also needs `--repository` |
 
 Checks that state github.com facts (retired hosted-runner images and service shutdowns in
-`removed-feature`, and `retired-runtime`) sit in the `HOSTED` and `HOSTED_REPOSITORY` tables and are
+`removed-feature`, and `retired-runtime`) sit in the `HOSTED` table and are
 skipped when `--gh-hostname` names another host. The `readability` check of the workflow's file name
 sits in the `NAMED` table, whose functions also take the file's base name.
 
@@ -182,8 +196,9 @@ validated and then refused until its repository operations have end-to-end fixtu
 |---|---|
 | `tests/rules.rs` | Scans every `tests/fixtures/rules/<rule>[.<variant>].before.yml` at the `auditor` persona. Findings of the rule must match the `# expect: <rule>` markers exactly, `--fix` must remove all or none of them and write exactly `.after.yml` (or nothing when that file is absent; `CROSGHA_BLESS=1` regenerates it), and the hand-written `.clean.yml` must not be reported. |
 | `tests/rules.rs` (online) | Runs the online fixtures against a local server that replays `tests/fixtures/online/api.json` and rejects wrong tokens. |
-| `tests/rules.rs` (coverage) | Fails if any registered rule lacks a fixture, and scans each `tests/fixtures/repos/<rule>/` repository, offline and against the fake API, which must report its rule. |
-| `tests/cli.rs` | The binary end to end: inputs, discovery, exit codes, and flags. |
+| `tests/rules.rs` (actions) | The same checks on `tests/fixtures/actions/`, each fixture scanned as an `action.yml`. |
+| `tests/rules.rs` (coverage) | Fails if any registered rule lacks a fixture, or a rule with a `metadata` check lacks an action fixture, and scans each `tests/fixtures/repos/<rule>/` repository, offline and against the fake API, which must report its rule. |
+| `tests/cli.rs` | The binary end to end: inputs, discovery (a repository's local actions in `repos/composite`), exit codes, and flags. |
 | `tests/fix.rs` | `--fix`: verified writes, rejected fixes, line breaks, BOMs, symlinks, and a file edited during the scan. |
 | `tests/config.rs` | Config discovery, per-input configs, ignores, and schema errors. |
 | `tests/report.rs` | Every report format and the rule catalog. |

@@ -1,0 +1,33 @@
+name: Pull request report
+description: Runs a caller's command, then summarizes and labels the pull request.
+inputs:
+  command:
+    description: Command to run after the build.
+    required: true
+  title:
+    description: Title of the summary.
+    default: Build report
+runs:
+  using: composite
+  steps:
+    - name: Run the command
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+      run: bash -c "$COMMAND"
+    - name: Comment
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      env:
+        TITLE: ${{ inputs.title }}
+      with:
+        script: |
+          await github.rest.issues.createComment({
+            ...context.repo,
+            issue_number: context.issue.number,
+            body: process.env.TITLE,
+          })
+    - name: Label
+      shell: bash
+      env:
+        HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      run: gh pr edit --add-label "$HEAD_REF"

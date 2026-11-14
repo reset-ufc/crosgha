@@ -28,7 +28,7 @@ use yamlpath::Route;
 
 use crate::github::GitHub;
 use crate::policy::{Persona, Settings, Severity};
-use crate::workflow::Workflow;
+use crate::workflow::{Kind, Workflow};
 
 pub struct Rule {
     pub id: &'static str,
@@ -154,7 +154,8 @@ pub enum ChangeKind {
     Remove,
 }
 
-pub use repository::{Located, Parsed, Place, Scanned, local_actions};
+pub use common::local_actions;
+pub use repository::{Located, Place, Scanned};
 
 /// The rule's `rules.<id>.config` block, if the config has one.
 pub type Options<'a> = Option<&'a yaml_serde::Value>;
@@ -165,97 +166,245 @@ type ConfigurableDetect = fn(&Workflow, Options) -> Result<Vec<Finding>, String>
 type RepositoryDetect = fn(&Path, &Scanned, bool, Options) -> Result<Vec<Located>, String>;
 type OnlineDetect = fn(&Workflow, &GitHub, Options) -> Result<Vec<Finding>, String>;
 
-const REGISTRY: &[(&Rule, Detect)] = &[
+/// What a check reads, which decides the files it runs on. A composite action's `runs.steps` run
+/// inside the caller's job, so it has no triggers, jobs, `permissions`, timeouts, or concurrency:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/metadata-syntax#runs-for-composite-actions
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Reads {
+    /// Keys only a workflow has: triggers, jobs, `permissions`, `defaults`, the job's runner.
+    Workflow,
+    /// Steps, `uses` references, or text anywhere in the file, so it also runs on action metadata
+    /// files, whose composite `runs` is one job (`common::jobs`).
+    Steps,
+    /// The metadata of an action file: `runs.using`, `runs.image`, and the required keys.
+    Metadata,
+}
+
+impl Reads {
+    fn covers(self, kind: Kind) -> bool {
+        match self {
+            Reads::Workflow => kind == Kind::Workflow,
+            Reads::Steps => true,
+            Reads::Metadata => kind == Kind::Action,
+        }
+    }
+}
+
+const REGISTRY: &[(&Rule, Detect, Reads)] = &[
     // Supply chain
     (
         &supply_chain::UNPINNED_PACKAGE,
         supply_chain::unpinned_package,
+        Reads::Steps,
     ),
-    (&supply_chain::REMOTE_SCRIPT, supply_chain::remote_script),
-    (&supply_chain::TYPOSQUATTING, supply_chain::typosquatting),
+    (
+        &supply_chain::REMOTE_SCRIPT,
+        supply_chain::remote_script,
+        Reads::Steps,
+    ),
+    (
+        &supply_chain::TYPOSQUATTING,
+        supply_chain::typosquatting,
+        Reads::Steps,
+    ),
     // Injection and privileged triggers
-    (&injection::SCRIPT_INJECTION, injection::script_injection),
-    (&env_injection::RULE, env_injection::detect),
-    (&injection::PROMPT_INJECTION, injection::prompt_injection),
-    (&injection::PWN_REQUEST, injection::pwn_request),
-    (&injection::DANGEROUS_TRIGGER, injection::dangerous_trigger),
-    (&injection::UNSAFE_IF, injection::unsafe_if),
+    (
+        &injection::SCRIPT_INJECTION,
+        injection::script_injection,
+        Reads::Steps,
+    ),
+    (&env_injection::RULE, env_injection::detect, Reads::Steps),
+    (
+        &injection::PROMPT_INJECTION,
+        injection::prompt_injection,
+        Reads::Steps,
+    ),
+    (
+        &injection::PWN_REQUEST,
+        injection::pwn_request,
+        Reads::Workflow,
+    ),
+    (
+        &injection::DANGEROUS_TRIGGER,
+        injection::dangerous_trigger,
+        Reads::Workflow,
+    ),
+    (&injection::UNSAFE_IF, injection::unsafe_if, Reads::Steps),
     (
         &injection::ARTIFACT_POISONING,
         injection::artifact_poisoning,
+        Reads::Workflow,
     ),
-    (&injection::CACHE_POISONING, injection::cache_poisoning),
-    (&injection::OBFUSCATION, injection::obfuscation),
+    (
+        &injection::CACHE_POISONING,
+        injection::cache_poisoning,
+        Reads::Workflow,
+    ),
+    (
+        &injection::OBFUSCATION,
+        injection::obfuscation,
+        Reads::Steps,
+    ),
     // Permissions and secrets
-    (&permissions::EXCESSIVE, permissions::excessive),
-    (&permissions::WORKFLOW_LEVEL, permissions::workflow_level),
-    (&token_permissions::RULE, token_permissions::detect),
+    (
+        &permissions::EXCESSIVE,
+        permissions::excessive,
+        Reads::Workflow,
+    ),
+    (
+        &permissions::WORKFLOW_LEVEL,
+        permissions::workflow_level,
+        Reads::Workflow,
+    ),
+    (
+        &token_permissions::RULE,
+        token_permissions::detect,
+        Reads::Workflow,
+    ),
+    // Composite steps cannot read `secrets` at all (no step key of `action-v1.0.json` lists the
+    // context, actions/languageservices at 4043eda158e16579cc5fb1b0b07a4bce2a76f0b5).
     (
         &permissions::SECRETS_EXPOSURE,
         permissions::secrets_exposure,
+        Reads::Workflow,
     ),
-    (&inherited_secrets::RULE, inherited_secrets::detect),
-    (&permissions::HARDCODED, permissions::hardcoded),
-    (&persist_credentials::RULE, persist_credentials::detect),
-    (&permissions::OIDC, permissions::oidc),
+    (
+        &inherited_secrets::RULE,
+        inherited_secrets::detect,
+        Reads::Workflow,
+    ),
+    (
+        &permissions::HARDCODED,
+        permissions::hardcoded,
+        Reads::Steps,
+    ),
+    (
+        &persist_credentials::RULE,
+        persist_credentials::detect,
+        Reads::Steps,
+    ),
+    (&permissions::OIDC, permissions::oidc, Reads::Workflow),
     // Runner
-    (&runner::MONITORING, runner::monitoring),
-    (&runner::VERSIONING, runner::versioning),
+    (&runner::MONITORING, runner::monitoring, Reads::Workflow),
+    (&runner::VERSIONING, runner::versioning, Reads::Workflow),
     // Maintainability
-    (&job_timeout::RULE, job_timeout::detect),
-    (&error_suppression::RULE, error_suppression::detect),
-    (&maintainability::CONCURRENCY, maintainability::concurrency),
+    (&job_timeout::RULE, job_timeout::detect, Reads::Workflow),
+    (
+        &error_suppression::RULE,
+        error_suppression::detect,
+        Reads::Steps,
+    ),
+    (
+        &maintainability::CONCURRENCY,
+        maintainability::concurrency,
+        Reads::Workflow,
+    ),
     (
         &maintainability::BROAD_TRIGGER,
         maintainability::broad_trigger,
+        Reads::Workflow,
     ),
-    (&maintainability::FORK_GUARD, maintainability::fork_guard),
-    (&maintainability::MATRIX, maintainability::matrix),
+    (
+        &maintainability::FORK_GUARD,
+        maintainability::fork_guard,
+        Reads::Workflow,
+    ),
+    (
+        &maintainability::MATRIX,
+        maintainability::matrix,
+        Reads::Workflow,
+    ),
     (
         &maintainability::CACHE_MISUSE,
         maintainability::cache_misuse,
+        Reads::Steps,
     ),
     (
         &maintainability::DUPLICATED_STEPS,
         maintainability::duplicated_steps,
+        Reads::Steps,
     ),
-    (&redundant_setting::RULE, redundant_setting::detect),
-    (&maintainability::COMPLEXITY, maintainability::complexity),
-    (&readability::RULE, readability::detect),
-    (&deprecation::DEPRECATED, deprecation::deprecated),
-    (&deprecation::REMOVED, deprecation::removed),
+    (
+        &redundant_setting::RULE,
+        redundant_setting::detect,
+        Reads::Steps,
+    ),
+    (
+        &maintainability::COMPLEXITY,
+        maintainability::complexity,
+        Reads::Steps,
+    ),
+    (&readability::RULE, readability::detect, Reads::Steps),
+    (
+        &deprecation::DEPRECATED,
+        deprecation::deprecated,
+        Reads::Steps,
+    ),
+    (&deprecation::REMOVED, deprecation::removed, Reads::Steps),
     // Correctness
-    (&correctness::SCHEMA, correctness::schema),
-    (&correctness::SCRIPT_LINT, correctness::script_lint),
+    (&correctness::SCHEMA, correctness::schema, Reads::Workflow),
+    (
+        &correctness::SCHEMA,
+        correctness::action_schema,
+        Reads::Metadata,
+    ),
+    (
+        &correctness::SCRIPT_LINT,
+        correctness::script_lint,
+        Reads::Steps,
+    ),
     (
         &correctness::INSECURE_PROTOCOL,
         correctness::insecure_protocol,
+        Reads::Steps,
     ),
-    (&gh_cli_environment::RULE, gh_cli_environment::detect),
+    // A composite action runs in the caller's job, whose `env` and checkout it cannot see.
+    (
+        &gh_cli_environment::RULE,
+        gh_cli_environment::detect,
+        Reads::Workflow,
+    ),
 ];
 
-/// Checks that read the workflow's file name. Their rules are listed through `REGISTRY`, so they
-/// are not repeated in `all()`.
-const NAMED: &[(&Rule, NamedDetect)] = &[(&readability::RULE, readability::file_name)];
+/// Checks that read the workflow's file name. An action's file name is fixed.
+const NAMED: &[(&Rule, NamedDetect, Reads)] =
+    &[(&readability::RULE, readability::file_name, Reads::Workflow)];
 
 /// Rules that read `rules.<id>.config`, with the option names zizmor documents.
-const CONFIGURABLE: &[(&Rule, ConfigurableDetect)] = &[
-    (&immutable_references::RULE, immutable_references::detect),
-    (&supply_chain::FORBIDDEN, supply_chain::forbidden),
-    (&runner::SELF_HOSTED, runner::self_hosted),
+const CONFIGURABLE: &[(&Rule, ConfigurableDetect, Reads)] = &[
+    (
+        &immutable_references::RULE,
+        immutable_references::detect,
+        Reads::Steps,
+    ),
+    (
+        &immutable_references::RULE,
+        immutable_references::action_image,
+        Reads::Metadata,
+    ),
+    (
+        &supply_chain::FORBIDDEN,
+        supply_chain::forbidden,
+        Reads::Steps,
+    ),
+    (&runner::SELF_HOSTED, runner::self_hosted, Reads::Workflow),
 ];
 
-const ONLINE: &[(&Rule, OnlineDetect)] = &[
-    (&online::VULNERABLE, online::vulnerable),
-    (&online::OUTDATED, online::outdated),
-    (&online::COMMENT_MISMATCH, online::comment_mismatch),
-    (&online::IMPOSTOR, online::impostor),
-    (&online::ARCHIVED, online::archived),
+const ONLINE: &[(&Rule, OnlineDetect, Reads)] = &[
+    (&online::VULNERABLE, online::vulnerable, Reads::Steps),
+    (&online::OUTDATED, online::outdated, Reads::Steps),
+    (
+        &online::COMMENT_MISMATCH,
+        online::comment_mismatch,
+        Reads::Steps,
+    ),
+    (&online::IMPOSTOR, online::impostor, Reads::Steps),
+    (&online::ARCHIVED, online::archived, Reads::Steps),
 ];
 
-/// Offline stand-ins for online rules, run only without GitHub API access. Their rules are listed
-/// through `ONLINE`, so they are not repeated in `all()`.
-const OFFLINE: &[(&Rule, Detect)] = &[(&online::ARCHIVED, online::archived_offline)];
+/// Offline stand-ins for online rules, run only without GitHub API access.
+const OFFLINE: &[(&Rule, Detect, Reads)] =
+    &[(&online::ARCHIVED, online::archived_offline, Reads::Steps)];
 
 const REPOSITORY: &[(&Rule, RepositoryDetect)] = &[
     (&repository::COOLDOWN, repository::cooldown),
@@ -264,29 +413,65 @@ const REPOSITORY: &[(&Rule, RepositoryDetect)] = &[
 
 /// Checks that state github.com facts (retired hosted-runner images, service shutdowns, the
 /// runner's Node.js) and are skipped for another `--gh-hostname`. `removed-feature` keeps its
-/// host-independent part in `REGISTRY`, and `retired-runtime` is listed through
-/// `HOSTED_REPOSITORY`, so neither is repeated in `all()`.
-const HOSTED: &[(&Rule, Detect)] = &[
-    (&deprecation::REMOVED, deprecation::removed_hosted),
-    (&repository::RUNTIME, deprecation::retired_runtime),
+/// host-independent part in `REGISTRY`.
+const HOSTED: &[(&Rule, Detect, Reads)] = &[
+    (
+        &deprecation::REMOVED,
+        deprecation::removed_hosted,
+        Reads::Steps,
+    ),
+    (
+        &deprecation::RUNTIME,
+        deprecation::retired_runtime,
+        Reads::Steps,
+    ),
+    (
+        &deprecation::RUNTIME,
+        deprecation::retired_action_runtime,
+        Reads::Metadata,
+    ),
 ];
-const HOSTED_REPOSITORY: &[(&Rule, RepositoryDetect)] =
-    &[(&repository::RUNTIME, repository::runtime)];
 
-/// Every rule with the scope it reads: one workflow, the repository, or the GitHub API.
+/// Every rule once, with the scope it reads: workflow and action files, the repository, or the
+/// GitHub API.
 pub fn all() -> impl Iterator<Item = (&'static Rule, &'static str)> {
-    REGISTRY
+    let files = REGISTRY
         .iter()
-        .map(|(rule, _)| (*rule, "workflow"))
-        .chain(CONFIGURABLE.iter().map(|(rule, _)| (*rule, "workflow")))
-        .chain(ONLINE.iter().map(|(rule, _)| (*rule, "online")))
+        .chain(HOSTED)
+        .map(|(rule, ..)| *rule)
+        .chain(CONFIGURABLE.iter().map(|(rule, ..)| *rule))
+        .map(|rule| (rule, "workflow"));
+    let mut seen: Vec<&str> = Vec::new();
+    files
+        .chain(ONLINE.iter().map(|(rule, ..)| (*rule, "online")))
         .chain(REPOSITORY.iter().map(|(rule, _)| (*rule, "repository")))
-        .chain(
-            HOSTED_REPOSITORY
-                .iter()
-                .map(|(rule, _)| (*rule, "repository")),
-        )
         .chain([(&online::SETTINGS, "repository")])
+        .filter(move |(rule, _)| {
+            let new = !seen.contains(&rule.id);
+            seen.push(rule.id);
+            new
+        })
+}
+
+/// What a rule checks in action metadata files: `steps` (a composite action's `runs.steps` and
+/// `uses` lines, or text anywhere in the file) and `metadata` (`runs` and the required keys).
+pub fn action_checks(rule: &Rule) -> Vec<&'static str> {
+    let reads: Vec<Reads> = REGISTRY
+        .iter()
+        .chain(HOSTED)
+        .chain(OFFLINE)
+        .map(|(row, _, reads)| (*row, *reads))
+        .chain(NAMED.iter().map(|(row, _, reads)| (*row, *reads)))
+        .chain(CONFIGURABLE.iter().map(|(row, _, reads)| (*row, *reads)))
+        .chain(ONLINE.iter().map(|(row, _, reads)| (*row, *reads)))
+        .filter(|(row, _)| row.id == rule.id)
+        .map(|(_, reads)| reads)
+        .collect();
+    [(Reads::Steps, "steps"), (Reads::Metadata, "metadata")]
+        .into_iter()
+        .filter(|(check, _)| reads.contains(check))
+        .map(|(_, name)| name)
+        .collect()
 }
 
 /// Config IDs that no crosgha rule or equivalent answers to.
@@ -302,10 +487,9 @@ pub fn unknown_ids(config: &crate::config::Config) -> Vec<String> {
 pub fn unused_options(config: &crate::config::Config) -> Vec<String> {
     let readers: Vec<&Rule> = CONFIGURABLE
         .iter()
-        .map(|(rule, _)| *rule)
-        .chain(ONLINE.iter().map(|(rule, _)| *rule))
+        .map(|(rule, ..)| *rule)
+        .chain(ONLINE.iter().map(|(rule, ..)| *rule))
         .chain(REPOSITORY.iter().map(|(rule, _)| *rule))
-        .chain(HOSTED_REPOSITORY.iter().map(|(rule, _)| *rule))
         .filter(|rule| rule.configurable)
         .collect();
     config
@@ -340,12 +524,7 @@ pub fn detect_repository(
     settings: &Settings,
 ) -> Result<Vec<Located>, String> {
     let mut found = Vec::new();
-    let hosted = if settings.hosted {
-        HOSTED_REPOSITORY
-    } else {
-        &[]
-    };
-    for (rule, detect) in REPOSITORY.iter().chain(hosted) {
+    for (rule, detect) in REPOSITORY {
         if enabled(rule, settings) {
             found.extend(detect(
                 github,
@@ -391,38 +570,41 @@ fn finish(findings: &mut Vec<Finding>, settings: &Settings, file: &str) {
     }
 }
 
-/// Runs every enabled rule on the workflow stored in `file` (a base name, for config ignores).
+/// Runs every enabled rule that reads `workflow`'s kind of file on the file stored in `file` (a base
+/// name, for config ignores). Any parsed workflow or action can come here, whatever its source.
 pub fn detect_all(
     workflow: &Workflow,
     settings: &Settings,
     file: &str,
 ) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
+    let runs =
+        |rule: &'static Rule, reads: &Reads| reads.covers(workflow.kind) && enabled(rule, settings);
     let hosted = if settings.hosted { HOSTED } else { &[] };
-    for (rule, detect) in REGISTRY.iter().chain(hosted) {
-        if enabled(rule, settings) {
+    for (rule, detect, reads) in REGISTRY.iter().chain(hosted) {
+        if runs(rule, reads) {
             findings.extend(detect(workflow)?);
         }
     }
-    for (rule, detect) in NAMED {
-        if enabled(rule, settings) {
+    for (rule, detect, reads) in NAMED {
+        if runs(rule, reads) {
             findings.extend(detect(workflow, file)?);
         }
     }
-    for (rule, detect) in CONFIGURABLE {
-        if enabled(rule, settings) {
+    for (rule, detect, reads) in CONFIGURABLE {
+        if runs(rule, reads) {
             findings.extend(detect(workflow, settings.config.options(rule))?);
         }
     }
     if let Some(github) = &settings.github {
-        for (rule, detect) in ONLINE {
-            if enabled(rule, settings) {
+        for (rule, detect, reads) in ONLINE {
+            if runs(rule, reads) {
                 findings.extend(detect(workflow, github, settings.config.options(rule))?);
             }
         }
     } else {
-        for (rule, detect) in OFFLINE {
-            if enabled(rule, settings) {
+        for (rule, detect, reads) in OFFLINE {
+            if runs(rule, reads) {
                 findings.extend(detect(workflow)?);
             }
         }

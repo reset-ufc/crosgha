@@ -2,11 +2,44 @@
 
 ## Scanning
 
-Each `PATH` may be a workflow file, a directory of workflows, a repository root, or its `.github`; the last two are
-scanned through `.github/workflows` as zizmor does with `.`. Subdirectories are never scanned: GitHub does not load
-workflows from them. Without a `PATH`, crosgha scans `.github/workflows`. A `dependabot.yml` path gets only the
-Dependabot cooldown check. Symlinked files are scanned but never rewritten; a symlink to another scanned workflow is
-reported and fixed once, through its target.
+Each `PATH` may be a workflow file, an action file, a directory of workflows, a repository root, or its `.github`; the
+last two are scanned through `.github/workflows` as zizmor does with `.`. Subdirectories are never scanned: GitHub does
+not load workflows from them. Without a `PATH`, crosgha scans `.github/workflows`. A `dependabot.yml` path gets only the
+Dependabot cooldown check. Symlinked files are scanned but never rewritten; a symlink to another scanned workflow or
+action is reported and fixed once, through its target.
+
+### Actions
+
+A file named `action.yml` or `action.yaml` is an [action metadata
+file](https://docs.github.com/en/actions/reference/workflows-and-actions/metadata-syntax), unless it sits in
+`.github/workflows`, where it is a workflow (zizmor tells them apart the same way).
+
+- **Named as a `PATH`:** always scanned, and so is an action file directly inside a directory `PATH`. In a directory,
+  `action.yaml` is skipped when `action.yml` is next to it, because the runner then never reads it.
+- **With a repository:** a repository root, its `.github`, or its `.github/workflows` (also the default `PATH`) adds the
+  actions the repository runs or publishes: the root `action.yml` (or `action.yaml`), and each local action a scanned
+  workflow calls with `uses: ./path`, followed through the composite actions it calls in turn. Paths resolve from the
+  repository root, the caller's checkout. Each action is scanned once, a cycle included; a `uses: ./path` without a
+  metadata file (a missing directory, or a Docker action with only a `Dockerfile`) is skipped. crosgha does not walk
+  the other directories as zizmor does, so an action that no workflow calls, such as one published from a
+  subdirectory, is scanned only when given as a `PATH`. A repository with a root action and no workflows is not an
+  empty input.
+- **What runs:** a composite action's `runs.steps` get every rule that reads steps, `uses` lines, or text anywhere in
+  the file; JavaScript and Docker actions have no steps, so only those file-wide checks and the metadata checks apply.
+  Rules that read triggers, jobs, `permissions`, timeouts, concurrency, or `defaults` never run on an action. The
+  **Actions** column of the [rule catalog](rules.md) lists what each rule checks, and `--list-rules` prints it last.
+- **Inputs are untrusted:** in a composite action, `script-injection` also reports `${{ inputs.<name> }}` expanded into
+  a `run` script or `actions/github-script`'s `script`, since the caller sets every input, possibly from event data.
+  Pass the input through `env` instead.
+- **Invalid metadata:** an action without a `runs` mapping or a string `runs.using` cannot be parsed, like a workflow
+  without `on` or `jobs`: it is reported on stderr, the other files are still checked, the run exits 2, and `--fix`
+  writes nothing. Other schema problems, such as a composite `run` step without `shell`, are `schema-validity`
+  findings.
+- **Fixes, ignores, and config:** the same as for workflows: ignore comments in the action file, `crosgha.yml` or
+  `zizmor.yml` of the input (an action found through a repository uses that repository's), and the verified fixes.
+  `persist-credentials` is never fixed in an action, because the steps that run after it are in the caller's workflow.
+- **Remote inputs** read workflows only; their repository's actions are tracked in #99, and the actions they call
+  from other repositories in #100.
 
 `crosgha owner/repo@ref` scans workflows directly in that GitHub repository's `.github/workflows`.
 Omit `@ref` to scan the default branch. A local path with the same spelling takes precedence.

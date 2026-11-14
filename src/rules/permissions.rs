@@ -270,7 +270,7 @@ pub fn hardcoded(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     }
     common::strings(&workflow.value, &Route::default(), &mut |route, text| {
         if contains_token(text) {
-            flagged.push((route.clone(), "workflow contains a literal access token"));
+            flagged.push((route.clone(), "file contains a literal access token"));
         }
     });
 
@@ -279,7 +279,11 @@ pub fn hardcoded(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     for (route, message) in flagged {
         if seen.insert(format!("{route:?}")) {
             findings.push(common::finding(
-                workflow, &HARDCODED, route, "workflow", message,
+                workflow,
+                &HARDCODED,
+                route,
+                workflow.kind.noun(),
+                message,
             )?);
         }
     }

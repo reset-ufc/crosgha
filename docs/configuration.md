@@ -18,7 +18,8 @@ Rules with scope `online` in the [rule table](rules.md) query the GitHub API, an
 - **When they run:** whenever a token is available (`--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`), unless
   `--offline` or `--no-online-audits` is set.
 - **GitHub Enterprise Server:** `--gh-hostname` (or `GH_HOST`). It also turns off the checks that describe github.com:
-  retired runner images and shut-down action versions in `removed-feature`, and `retired-runtime`.
+  retired runner images and shut-down action versions in `removed-feature`, and `retired-runtime` (in workflow steps
+  and in action files).
 - **`repo-org-settings`** also needs `--repository owner/name` (or `GITHUB_REPOSITORY`) and a token with the
   Administration (read) repository permission. `GITHUB_TOKEN` cannot have it, so in Actions the rule is usually
   skipped with a warning.

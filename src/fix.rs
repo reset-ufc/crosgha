@@ -53,7 +53,7 @@ pub fn apply(
         file,
     };
     let normalized = LineBreaks::normalize(workflow.document.source())
-        .and_then(|(lf, breaks)| Some((Workflow::parse(lf).ok()?, breaks)));
+        .and_then(|(lf, breaks)| Some((workflow.kind.parse(lf).ok()?, breaks)));
     let (mut current, mut breaks) = match normalized {
         Some((parsed, breaks)) => (parsed, Some(breaks)),
         None => (workflow, None),
@@ -235,7 +235,7 @@ fn patch(
     {
         source = moved;
     }
-    let next = Workflow::parse(source)?;
+    let next = current.kind.parse(source)?;
     let after = rules::detect_all(&next, context.settings, context.file)?;
     compare_findings(finding, before, &after, context.original)?;
     validate_change(current, &next, proposal)?;

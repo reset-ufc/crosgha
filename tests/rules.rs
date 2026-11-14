@@ -391,6 +391,30 @@ fn reported_lines(path: &Path, rule: &str, api: Option<&str>, config: Option<&Pa
     lines
 }
 
+/// A copy of `path` to scan: `actions/` fixtures become an `action.yml`, the name that makes a file
+/// an action, each in its own directory. rules/ and online/ share fixture names and run in
+/// parallel threads of one process, so each copy has its own name.
+fn stage(path: &Path, directory: &str, label: &str) -> PathBuf {
+    let name = path.file_name().unwrap().to_str().unwrap();
+    let unique = format!("crosgha-{}-{directory}-{label}-{name}", std::process::id());
+    let copy = if directory == "actions" {
+        let parent = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&parent).unwrap();
+        parent.join("action.yml")
+    } else {
+        std::env::temp_dir().join(unique)
+    };
+    fs::copy(path, &copy).unwrap();
+    copy
+}
+
+fn unstage(copy: &Path, directory: &str) {
+    match directory {
+        "actions" => fs::remove_dir_all(copy.parent().unwrap()).unwrap(),
+        _ => fs::remove_file(copy).unwrap(),
+    }
+}
+
 fn check_fixtures(directory: &str, api: Option<&str>) {
     let mut failures = Vec::new();
     let mut checked = 0;
@@ -412,7 +436,9 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         if expected.is_empty() {
             failures.push(format!("{name}: no `# expect: {rule}` marker"));
         }
-        let reported = reported_lines(&path, rule, api, config);
+        let scanned = stage(&path, directory, "scan");
+        let reported = reported_lines(&scanned, rule, api, config);
+        unstage(&scanned, directory);
         if reported != expected {
             failures.push(format!(
                 "{name}: expected {{line: count}} {expected:?}, reported {reported:?}"
@@ -420,14 +446,11 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
         }
 
         // `--fix` either removes every finding of the rule or leaves all of them in place.
-        // rules/ and online/ share fixture names and run in parallel threads of one process.
-        let copy =
-            std::env::temp_dir().join(format!("crosgha-{}-{directory}-{name}", std::process::id()));
-        fs::copy(&path, &copy).unwrap();
+        let copy = stage(&path, directory, "fix");
         scan(&copy, true, api, config);
         let fixed_source = fs::read_to_string(&copy).unwrap();
         let fixed: usize = reported_lines(&copy, rule, api, config).values().sum();
-        fs::remove_file(&copy).unwrap();
+        unstage(&copy, directory);
         let total: usize = expected.values().sum();
         if fixed != 0 && fixed != total {
             failures.push(format!("{name}: --fix left {fixed} of {total} findings"));
@@ -461,7 +484,9 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
             failures.push(format!("{stem}.clean.yml is missing"));
             continue;
         }
+        let clean = stage(&clean, directory, "clean");
         let remaining = reported_lines(&clean, rule, api, config);
+        unstage(&clean, directory);
         if !remaining.is_empty() {
             failures.push(format!(
                 "{stem}.clean.yml still reports lines {remaining:?}"
@@ -475,6 +500,13 @@ fn check_fixtures(directory: &str, api: Option<&str>) {
 #[test]
 fn every_workflow_rule_reports_exactly_the_marked_lines() {
     check_fixtures("rules", None);
+}
+
+/// The same fixture checks on action metadata files (`tests/fixtures/actions/`), each scanned as an
+/// `action.yml`.
+#[test]
+fn every_action_rule_reports_exactly_the_marked_lines() {
+    check_fixtures("actions", None);
 }
 
 #[test]
@@ -911,8 +943,8 @@ fn repo_org_settings_are_read_for_the_named_repository() {
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("401"));
 }
 
-/// `(rule, scope)` for every rule in the catalog.
-fn catalog() -> Vec<(String, String)> {
+/// `(rule, scope, what it checks in actions)` for every rule in the catalog.
+fn catalog() -> Vec<(String, String, String)> {
     let output = bin().arg("--list-rules").output().unwrap();
     assert!(
         output.status.success(),
@@ -924,25 +956,33 @@ fn catalog() -> Vec<(String, String)> {
         .lines()
         .map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            (fields[0].to_owned(), fields[fields.len() - 1].to_owned())
+            (
+                fields[0].to_owned(),
+                fields[4].to_owned(),
+                fields[5].to_owned(),
+            )
         })
         .collect()
 }
 
 #[test]
 fn every_registered_rule_has_a_fixture() {
-    let missing: Vec<String> = catalog()
-        .into_iter()
-        .filter(|(rule, scope)| {
-            let path = match scope.as_str() {
-                "workflow" => format!("rules/{rule}.before.yml"),
-                "online" => format!("online/{rule}.before.yml"),
-                _ => format!("repos/{rule}"),
-            };
-            !fixture(&path).exists()
-        })
-        .map(|(rule, scope)| format!("{rule} ({scope})"))
-        .collect();
+    let mut missing = Vec::new();
+    for (rule, scope, actions) in catalog() {
+        let path = match scope.as_str() {
+            "workflow" => format!("rules/{rule}.before.yml"),
+            "online" => format!("online/{rule}.before.yml"),
+            _ => format!("repos/{rule}"),
+        };
+        if !fixture(&path).exists() {
+            missing.push(format!("{rule} ({scope})"));
+        }
+        // A check of action metadata reads nothing a workflow fixture has.
+        if actions.contains("metadata") && !fixture(&format!("actions/{rule}.before.yml")).exists()
+        {
+            missing.push(format!("{rule} (action metadata)"));
+        }
+    }
     assert!(missing.is_empty(), "rules without fixtures: {missing:?}");
 }
 
@@ -960,9 +1000,9 @@ fn every_repository_rule_reports_its_fixture_repository() {
         "--gh-hostname",
         &api,
     ];
-    for (rule, _) in catalog()
+    for (rule, ..) in catalog()
         .into_iter()
-        .filter(|(_, scope)| scope == "repository")
+        .filter(|(_, scope, _)| scope == "repository")
     {
         let reported = [&["--offline"][..], &online[..]].iter().any(|mode| {
             let output = bin()

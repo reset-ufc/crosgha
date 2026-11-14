@@ -1,0 +1,8 @@
+name: Greet
+description: Prints a greeting.
+inputs:
+  who:
+    description: Who to greet.
+runs:
+  using: node18 # expect: schema-validity
+  main: dist/index.js

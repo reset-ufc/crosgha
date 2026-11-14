@@ -1,0 +1,11 @@
+name: Lint
+description: Lints the repository inside a container.
+inputs:
+  strict:
+    description: Fail on warnings.
+    default: 'true'
+runs:
+  using: docker
+  image: Dockerfile
+  args:
+    - --strict=${{ inputs.strict }}

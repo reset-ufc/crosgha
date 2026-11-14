@@ -1,0 +1,9 @@
+description: Lints the repository inside a container.
+inputs:
+  strict:
+    description: Fail on warnings.
+    default: 'true'
+runs: # expect: schema-validity, schema-validity
+  using: docker
+  args:
+    - --strict=${{ inputs.strict }}
