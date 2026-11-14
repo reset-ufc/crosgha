@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/reset-ufc/crosgha/compare/v0.19.0...v0.20.0) (2026-11-14)
+
+
+### Added
+
+* **rules:** report and fix actions that pass when they find nothing ([#156](https://github.com/reset-ufc/crosgha/issues/156)) ([8b73d2a](https://github.com/reset-ufc/crosgha/commit/8b73d2ab0391949c4f59f6618e45ebc322751e9f)), closes [#87](https://github.com/reset-ufc/crosgha/issues/87)
+
 ## [0.19.0](https://github.com/reset-ufc/crosgha/compare/v0.18.0...v0.19.0) (2026-11-14)
 
 
