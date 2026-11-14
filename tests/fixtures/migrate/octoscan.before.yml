@@ -1,0 +1,61 @@
+name: Octoscan
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/*'
+permissions: {}
+jobs:
+  # The README's job: the Action writes SARIF and the next step uploads its `sarif_output`.
+  octoscan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - id: octoscan
+        name: Run octoscan
+        uses: synacktiv/action-octoscan@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v1.2.0
+        with:
+          version: v0.1.7
+          filter_triggers: external
+          filter_run: true
+          token: ${{ github.token }}
+      - name: Upload SARIF file to GitHub
+        uses: github/codeql-action/upload-sarif@dddddddddddddddddddddddddddddddddddddddd # v3.24.10
+        with:
+          sarif_file: "${{steps.octoscan.outputs.sarif_output}}"
+          category: octoscan
+  # A working directory, and nothing uploads the SARIF.
+  workdir:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: synacktiv/action-octoscan@main
+        with:
+          workdir: services/api
+          debug_rules: true
+  # Rule filters name octoscan's rules.
+  filtered:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: synacktiv/action-octoscan@main
+        with:
+          disable_rules: shellcheck,local-action
+      - uses: synacktiv/action-octoscan@main
+        with:
+          config_file: octoscan.yml
+  # A later step reads the SARIF path, which the crosgha Action names otherwise.
+  consumed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: scan
+        uses: synacktiv/action-octoscan@main
+      - run: cat "${{ steps.scan.outputs.sarif_output }}"

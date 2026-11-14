@@ -94,7 +94,7 @@ It is listed in `.git/info/exclude` and never committed.
    hand: it is the exact `--fix` output, regenerated with `CROSGHA_BLESS=1 cargo test --test rules`
    and reviewed in the diff; it is absent when `--fix` leaves the file unchanged.
 8. Behavior copied from another tool (zizmor's config, ignore comments, and personas; `migrate`'s view of
-   zizmor, actionlint, poutine, and ghalint steps) follows that tool's documentation. Link the doc page next to the code, and give
+   zizmor, actionlint, poutine, ghalint, and octoscan steps) follows that tool's documentation. Link the doc page next to the code, and give
    every case the page describes its own test, not only the first one.
 
 ## Layout
@@ -114,7 +114,7 @@ src/config.rs               crosgha.yml / zizmor.yml discovery and rule settings
 src/github.rs               Cached read-only GitHub REST client for online rules and remote inputs
 src/tree.rs                 Repository read interface (local directory or GitHub commit) and action discovery
 src/follow.rs               `--follow-actions`: actions of other repositories, read at their commit and followed
-src/migrate.rs              `migrate --from zizmor|actionlint|poutine|ghalint` step rewrites
+src/migrate.rs              `migrate --from zizmor|actionlint|poutine|ghalint|octoscan` step rewrites
 src/hook.rs                 `hook install|uninstall`: the git pre-push hook
 action.yml                  Composite Action metadata and inputs
 action/entrypoint.sh        Action: input checks, verified release install, one run, outputs

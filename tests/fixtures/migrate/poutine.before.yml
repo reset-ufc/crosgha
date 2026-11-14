@@ -71,3 +71,16 @@ jobs:
       - uses: github/codeql-action/upload-sarif@dddddddddddddddddddddddddddddddddddddddd # v3.24.10
         with:
           sarif_file: results.sarif
+  # The report path is an expression, which the upload repeats.
+  expression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - uses: boostsecurityio/poutine-action@main
+        with:
+          output: ${{ inputs.report }}
+      - uses: github/codeql-action/upload-sarif@dddddddddddddddddddddddddddddddddddddddd # v3.24.10
+        with:
+          sarif_file: ${{ inputs.report }}

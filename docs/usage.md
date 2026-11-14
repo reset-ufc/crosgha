@@ -159,9 +159,9 @@ push from every repository.
 - **Safety:** both commands refuse to touch a `pre-push` hook that crosgha did not write. A hook counts as crosgha's
   only if it matches the generated script exactly, so an edited copy is yours.
 
-## Migrating from zizmor, actionlint, poutine, or ghalint
+## Migrating from zizmor, actionlint, poutine, ghalint, or octoscan
 
-`crosgha migrate --from zizmor|actionlint|poutine|ghalint [PATH]` moves a repository over:
+`crosgha migrate --from zizmor|actionlint|poutine|ghalint|octoscan [PATH]` moves a repository over:
 
 - **Action steps:** `zizmorcore/zizmor-action`, `raven-actions/actionlint`, `reviewdog/action-actionlint`, and
   `rhysd/actionlint` steps become crosgha Action steps. zizmor steps keep their `with:` block (the crosgha Action
@@ -180,6 +180,16 @@ push from every repository.
   `ghalint run` becomes the crosgha Action, and `ghalint run-action` (or `act`) with files becomes one with those
   files as `inputs`. Without files it checks every action file up to three directories deep, so the step stays with a
   note, as do `-c`/`-config`, a `GHALINT_CONFIG` in the step's `env`, and `ghalint exp`.
+- **octoscan:** `synacktiv/action-octoscan` steps become crosgha Action steps with `fail-on: none`, since that Action
+  accepts octoscan's findings exit status, and a `workdir` other than `.` becomes `inputs`. Its SARIF upload is
+  handled as for poutine: an upload of `steps.<id>.outputs.sarif_output` (or of `octoscan.sarif`) is removed, and
+  without one the step gets `advanced-security: 'false'`. `version`, `token`, `filter_triggers`, `filter_run`, and
+  `debug_rules` are dropped: they pick the octoscan release or tune octoscan's own rules. A step with `ignore`,
+  `disable_rules`, `enable_rules`, or `config_file`, or whose report a later step reads, stays, with a note. In shell
+  steps, `docker pull ghcr.io/synacktiv/octoscan[:tag]` installs it and `octoscan scan <target>` becomes the crosgha
+  Action with the target as `inputs`, failing on findings as octoscan does. `-d`, `--debug`, `--verbose`,
+  `--oneline`, `--filter-run`, `--debug-rules`, and `--filter-triggers` are dropped; `octoscan dl`, `--format`, and
+  any other flag keep the step, with a note. octoscan reads no config file on its own, so none is migrated.
 - **Shell steps:** steps that only install the tool are removed only when a crosgha step replaced the tool in the same
   job and no step of that job still runs it; otherwise they stay with a note. Steps that only run it become crosgha
   Action steps, with CLI flags translated to inputs. Steps that install or run the tool next to other commands, with

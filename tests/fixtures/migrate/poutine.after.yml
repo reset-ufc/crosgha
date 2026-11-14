@@ -70,3 +70,13 @@ jobs:
       - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
         with:
           fail-on: none
+  # The report path is an expression, which the upload repeats.
+  expression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          fail-on: none

@@ -1,5 +1,5 @@
-//! `crosgha migrate --from <tool>`: moves a repository from zizmor, actionlint, poutine, or
-//! ghalint to crosgha.
+//! `crosgha migrate --from <tool>`: moves a repository from zizmor, actionlint, poutine, ghalint,
+//! or octoscan to crosgha.
 //! It rewrites the tool's Action steps, turns shell steps that only install and run the tool into
 //! crosgha Action steps, and writes a `crosgha.yml` from the tool's config. The tool's own config
 //! file is left in place.
@@ -22,10 +22,13 @@ pub enum Tool {
     Actionlint,
     Poutine,
     Ghalint,
+    Octoscan,
 }
 
-/// poutine's documented Action step is followed by this upload of the SARIF file it writes
-/// (https://github.com/boostsecurityio/poutine/blob/2ad918cfe37a6889f05602264a03256eef149bdc/README.md#github-actions).
+/// The documented Action steps of poutine and octoscan are followed by this upload of the SARIF file
+/// they write
+/// (https://github.com/boostsecurityio/poutine/blob/2ad918cfe37a6889f05602264a03256eef149bdc/README.md#github-actions,
+/// https://github.com/synacktiv/action-octoscan/blob/8240435152eb820d7e730de80414b90bb9f20a5b/README.md).
 const UPLOAD_SARIF: &str = "github/codeql-action/upload-sarif@";
 
 impl Tool {
@@ -35,6 +38,7 @@ impl Tool {
             Self::Actionlint => "actionlint",
             Self::Poutine => "poutine",
             Self::Ghalint => "ghalint",
+            Self::Octoscan => "octoscan",
         }
     }
 
@@ -51,6 +55,7 @@ impl Tool {
             Self::Poutine => &["boostsecurityio/poutine-action@"],
             // ghalint documents no Action of its own, only the CLI.
             Self::Ghalint => &[],
+            Self::Octoscan => &["synacktiv/action-octoscan@"],
         }
     }
 
@@ -103,8 +108,8 @@ pub fn run(
             let mut kept = false;
             let steps_before = steps;
             let job_steps = common::steps(&job);
-            // poutine Action steps with the SARIF file each writes, and the SARIF uploads of the job.
-            let mut poutine_steps = Vec::new();
+            // Action steps that write a SARIF report, and the SARIF uploads of the job.
+            let mut reports = Vec::new();
             let mut uploads = Vec::new();
             for step in &job_steps {
                 let place = || -> Result<String, String> {
@@ -124,37 +129,30 @@ pub fn run(
                     ));
                     continue;
                 }
-                if tool == Tool::Poutine
-                    && let Some(uses) = step.uses()
+                if step
+                    .uses()
+                    .is_some_and(|uses| uses.starts_with(UPLOAD_SARIF))
                 {
-                    let with = |key: &str, default: &str| {
-                        step.value
-                            .get("with")
-                            .and_then(|with| with.get(key))
-                            .and_then(Value::as_str)
-                            .unwrap_or(default)
-                            .to_owned()
-                    };
-                    if uses.starts_with(UPLOAD_SARIF) {
-                        uploads.push((step, with("sarif_file", "")));
-                        continue;
-                    }
-                    if action {
-                        // https://github.com/boostsecurityio/poutine-action/blob/badd750a259150be3b8b00823ad60849d539b96d/action.yml
-                        let (format, output) =
-                            (with("format", "sarif"), with("output", "results.sarif"));
-                        if format == "sarif" {
-                            poutine_steps.push((step, output));
-                        } else {
+                    let file = step
+                        .value
+                        .get("with")
+                        .and_then(|with| with.get("sarif_file"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    uploads.push((step, sarif_reference(file)));
+                    continue;
+                }
+                if action && let Some(report) = report(step, tool) {
+                    match report {
+                        Ok((names, inputs)) => reports.push((step, names, inputs)),
+                        Err(reason) => {
                             kept = true;
-                            summary.notes.push(format!(
-                                "{}: writes poutine's `{format}` report to `{output}`, which the \
-                                 crosgha Action does not produce; replace this step by hand",
-                                place()?
-                            ));
+                            summary
+                                .notes
+                                .push(format!("{}: {reason}; replace this step by hand", place()?));
                         }
-                        continue;
                     }
+                    continue;
                 }
                 if action {
                     edits.push((
@@ -218,40 +216,47 @@ pub fn run(
                     }
                 }
             }
-            // The crosgha Action uploads SARIF itself, so an upload of poutine's file goes; with no
-            // such upload, poutine's report never reached the Security tab, and crosgha's does not
-            // either. poutine fails only with `--fail-on-violation`, which its Action never passes.
+            // The crosgha Action uploads SARIF itself, so an upload of the tool's file goes; with no
+            // such upload, the tool's report never reached the Security tab, and crosgha's does not
+            // either. Neither Action fails on findings: poutine fails only with
+            // `--fail-on-violation`, which its Action never passes, and octoscan's Action accepts
+            // the exit status octoscan gives for findings.
             let mut removed_uploads = Vec::new();
-            for (step, output) in poutine_steps {
+            for (step, names, mut inputs) in reports {
                 let uploaded: Vec<&common::Step> = uploads
                     .iter()
-                    .filter(|(_, file)| *file == output)
+                    .filter(|(_, file)| names.contains(file))
                     .map(|(upload, _)| *upload)
                     .collect();
-                // The crosgha Action keeps its SARIF in its own file, so a step that reads
-                // poutine's would find nothing.
-                let mut readers = Vec::new();
+                // The crosgha Action keeps its SARIF in its own file, so a step that reads the
+                // tool's would find nothing.
+                let mut reader = None;
                 for other in &job_steps {
                     let own = std::ptr::eq(other, step)
                         || uploaded.iter().any(|upload| std::ptr::eq(*upload, other));
-                    if !own && step_source(&workflow, other)?.contains(output.as_str()) {
-                        readers.push(other);
+                    let source = step_source(&workflow, other)?;
+                    if let Some(name) = names.iter().find(|name| source.contains(name.as_str()))
+                        && !own
+                    {
+                        reader = Some((other, name));
+                        break;
                     }
                 }
-                if let Some(reader) = readers.first() {
+                if let Some((reader, name)) = reader {
                     kept = true;
                     let line = common::line(&workflow, &reader.anchor())?;
                     summary.notes.push(format!(
-                        "{}:{}: {}: reads `{output}`, which poutine wrote and the crosgha Action \
-                         does not; the poutine step was kept, migrate it by hand",
+                        "{}:{}: {}: reads `{name}`, which {tool} wrote and the crosgha Action \
+                         does not; the {tool} step was kept, migrate it by hand",
                         file.display(),
                         line,
-                        reader.location
+                        reader.location,
+                        tool = tool.name()
                     ));
                     continue;
                 }
                 steps += 1;
-                let mut inputs = vec![("fail-on", "none".to_owned())];
+                inputs.push(("fail-on", "none".to_owned()));
                 if uploaded.is_empty() {
                     inputs.push(("advanced-security", "false".to_owned()));
                 }
@@ -344,6 +349,9 @@ pub fn run(
                 config_notes(&configs, &keys, &mut summary.notes)?;
                 None
             }
+            // octoscan reads a config only from `--config-file` or the Action's `config_file`,
+            // whose steps are kept with a note.
+            Tool::Octoscan => None,
         },
         None => None,
     };
@@ -391,6 +399,78 @@ fn removal(workflow: &Workflow, route: &Route) -> Result<Range<usize>, String> {
         lines.pop();
     }
     Ok(span.start..span.start + lines.concat().len())
+}
+
+/// What a SARIF-writing Action step needs to become a crosgha step: the names under which other
+/// steps reach its report, and the crosgha inputs that keep its scope. `None` for a tool whose
+/// Action steps are rewritten in place; `Err` when the step does more than crosgha's inputs say.
+#[expect(clippy::type_complexity, reason = "one private caller destructures it")]
+fn report(
+    step: &common::Step,
+    tool: Tool,
+) -> Option<Result<(Vec<String>, Vec<(&'static str, String)>), String>> {
+    let with = step.value.get("with").and_then(Value::as_mapping);
+    let input = |key: &str| with.and_then(|with| with.get(key)).and_then(Value::as_str);
+    match tool {
+        // https://github.com/boostsecurityio/poutine-action/blob/badd750a259150be3b8b00823ad60849d539b96d/action.yml
+        Tool::Poutine => {
+            let (format, output) = (
+                input("format").unwrap_or("sarif"),
+                input("output").unwrap_or("results.sarif"),
+            );
+            Some(if format == "sarif" {
+                Ok((vec![sarif_reference(output)], Vec::new()))
+            } else {
+                Err(format!(
+                    "writes poutine's `{format}` report to `{output}`, which the crosgha Action \
+                     does not produce"
+                ))
+            })
+        }
+        // The Action scans `workdir` and writes `octoscan.sarif` there, naming it in its
+        // `sarif_output` output:
+        // https://github.com/synacktiv/action-octoscan/blob/8240435152eb820d7e730de80414b90bb9f20a5b/entrypoint.sh
+        Tool::Octoscan => {
+            for key in with.into_iter().flat_map(|with| with.keys()) {
+                let reason = match key.as_str().unwrap_or_default() {
+                    // The octoscan release and its download token, and filters of octoscan's own
+                    // rules, which crosgha's rules do not share.
+                    "workdir" | "version" | "token" | "filter_triggers" | "filter_run"
+                    | "debug_rules" => continue,
+                    key @ ("disable_rules" | "enable_rules") => {
+                        format!("`{key}` names octoscan rules")
+                    }
+                    "ignore" => "`ignore` matches octoscan messages".to_owned(),
+                    "config_file" => "`config_file` points to octoscan's config".to_owned(),
+                    key => format!("`{key}` is not an input of action-octoscan"),
+                };
+                return Some(Err(reason));
+            }
+            let workdir = input("workdir").unwrap_or(".").trim_end_matches('/');
+            let (mut names, mut inputs) = (Vec::new(), Vec::new());
+            if workdir.is_empty() || workdir == "." {
+                names.push("octoscan.sarif".to_owned());
+            } else {
+                names.push(format!("{workdir}/octoscan.sarif"));
+                inputs.push(("inputs", workdir.to_owned()));
+            }
+            if let Some(id) = step.value.get("id").and_then(Value::as_str) {
+                names.push(format!("steps.{id}.outputs.sarif_output"));
+            }
+            Some(Ok((names, inputs)))
+        }
+        Tool::Zizmor | Tool::Actionlint | Tool::Ghalint => None,
+    }
+}
+
+/// A SARIF path as written in `with`, or the expression inside `${{ }}` when that is all it holds,
+/// so a report path and its upload compare equal however each spaces the expression.
+fn sarif_reference(file: &str) -> String {
+    let file = file.trim();
+    file.strip_prefix("${{")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .map_or(file, str::trim)
+        .to_owned()
 }
 
 fn step_source<'w>(workflow: &'w Workflow, step: &common::Step) -> Result<&'w str, String> {
@@ -479,7 +559,14 @@ fn installs(line: &str, tool: Tool) -> bool {
         .map(String::as_str)
         .skip_while(|word| *word == "sudo")
         .collect();
-    let Some(install) = words.iter().position(|word| *word == "install") else {
+    // octoscan's documented install is pulling its image:
+    // https://github.com/synacktiv/octoscan/blob/b4f3d355898f7ee799383f60371c30181583271e/README.md#installation
+    let verb = if tool == Tool::Octoscan {
+        "pull"
+    } else {
+        "install"
+    };
+    let Some(install) = words.iter().position(|word| *word == verb) else {
         return false;
     };
     let manager = match tool {
@@ -492,6 +579,7 @@ fn installs(line: &str, tool: Tool) -> bool {
         Tool::Actionlint => matches!(words[..install], ["go" | "brew"]),
         Tool::Poutine => matches!(words[..install], ["brew"]),
         Tool::Ghalint => matches!(words[..install], ["go" | "brew"]),
+        Tool::Octoscan => matches!(words[..install], ["docker"]),
     };
     let mut packages = words[install + 1..]
         .iter()
@@ -512,6 +600,9 @@ fn installs(line: &str, tool: Tool) -> bool {
                 ["ghalint", "suzuki-shunsuke/ghalint/ghalint"].contains(package)
                     || package.starts_with("github.com/suzuki-shunsuke/ghalint/cmd/ghalint@")
             }
+            Tool::Octoscan => package
+                .strip_prefix("ghcr.io/synacktiv/octoscan")
+                .is_some_and(|tag| tag.is_empty() || tag.starts_with([':', '@'])),
         })
 }
 
@@ -568,6 +659,7 @@ fn invocation_args(words: &[String], tool: Tool) -> Option<&[String]> {
         }
         (Tool::Poutine, [first, ..]) if *first == "poutine" || first.ends_with("/poutine") => 1,
         (Tool::Ghalint, [first, ..]) if *first == "ghalint" || first.ends_with("/ghalint") => 1,
+        (Tool::Octoscan, [first, ..]) if *first == "octoscan" || first.ends_with("/octoscan") => 1,
         _ => return None,
     };
     Some(&words[skip..])
@@ -608,6 +700,27 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             }
         },
         (Tool::Ghalint, None) => return Err("`ghalint` runs no command".to_owned()),
+        // `scan` checks a local file or directory; `dl` downloads workflows first:
+        // https://github.com/synacktiv/octoscan/blob/b4f3d355898f7ee799383f60371c30181583271e/README.md#usage
+        (Tool::Octoscan, Some((command, rest))) => match command.as_str() {
+            "scan" => rest,
+            "dl" => {
+                return Err(
+                    "`octoscan dl` downloads workflows through the GitHub API; the crosgha Action \
+                     scans the checkout"
+                        .to_owned(),
+                );
+            }
+            flag if flag.starts_with('-') => {
+                return Err(format!("`{flag}` has no crosgha Action input"));
+            }
+            _ => {
+                return Err(format!(
+                    "`octoscan {command}` has no crosgha Action equivalent"
+                ));
+            }
+        },
+        (Tool::Octoscan, None) => return Err("`octoscan` runs no command".to_owned()),
         _ => args,
     };
     let mut fail_on_violation = false;
@@ -649,7 +762,7 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             (Tool::Zizmor, "--gh-token") => Some(("token", value())),
             // The Action prints text (zizmor's `plain`) or annotations, and keeps SARIF in a file;
             // a step whose log carries JSON or SARIF would lose it.
-            (Tool::Zizmor | Tool::Poutine, "--format") => match value() {
+            (Tool::Zizmor | Tool::Poutine | Tool::Octoscan, "--format") => match value() {
                 Some(format) if format == "plain" && tool == Tool::Zizmor => None,
                 Some(format) if format == "pretty" && tool == Tool::Poutine => None,
                 Some(format) if format == "github" && tool == Tool::Zizmor => {
@@ -704,6 +817,18 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
                     ));
                 }
             },
+            // Output detail, and filters of octoscan's own rules, which crosgha's rules do not
+            // share.
+            (
+                Tool::Octoscan,
+                "-d" | "--debug" | "--verbose" | "--oneline" | "--filter-run" | "--debug-rules",
+            ) => None,
+            (Tool::Octoscan, "--filter-triggers") => {
+                if inline.is_none() {
+                    value();
+                }
+                None
+            }
             _ => return Err(format!("`{flag}` has no crosgha Action input")),
         };
         if let Some((key, value)) = setting {
