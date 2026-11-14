@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/reset-ufc/crosgha/compare/v0.22.0...v0.23.0) (2026-11-14)
+
+
+### Added
+
+* **scan:** lint composite, JavaScript, and Docker actions ([#162](https://github.com/reset-ufc/crosgha/issues/162)) ([d44ca85](https://github.com/reset-ufc/crosgha/commit/d44ca854d9b98f851fe9b2eab227166ec6245cb1)), closes [#91](https://github.com/reset-ufc/crosgha/issues/91)
+
 ## [0.22.0](https://github.com/reset-ufc/crosgha/compare/v0.21.0...v0.22.0) (2026-11-14)
 
 
