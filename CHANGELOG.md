@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/reset-ufc/crosgha/compare/v0.21.0...v0.22.0) (2026-11-14)
+
+
+### Added
+
+* **rules:** report ghlint's style checks and fix empty env, repeated shells, and the token secret ([#160](https://github.com/reset-ufc/crosgha/issues/160)) ([b3c00d7](https://github.com/reset-ufc/crosgha/commit/b3c00d79bf00f591f6af917f585166ad6449bca9)), closes [#90](https://github.com/reset-ufc/crosgha/issues/90)
+
 ## [0.21.0](https://github.com/reset-ufc/crosgha/compare/v0.20.0...v0.21.0) (2026-11-14)
 
 
