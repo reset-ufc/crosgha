@@ -1,0 +1,14 @@
+# deep.yml plus a second step that calls level 10 directly and ignores `unpinned-action` there.
+# Level 11 is then read (1 level below that step), but its finding is not reported through the
+# first step, whose chain to it would nest deeper than the runner allows.
+name: Deep
+on:
+  pull_request:
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: fixture/deep/1@v1
+      - uses: fixture/deep/10@v1 # crosgha: ignore[unpinned-action]

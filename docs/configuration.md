@@ -25,6 +25,8 @@ Rules with scope `online` in the [rule table](rules.md) query the GitHub API, an
   cannot have that permission, so in Actions the rule is usually skipped with a warning.
 - **Without the API,** `archived-action` still reports the archived actions of the `actions` and `actions-rs`
   organizations from a built-in list.
+- **Actions of other repositories** are read and checked only with `--follow-actions`, which also needs a token
+  ([usage](usage.md#actions-from-other-repositories)). Online rules do not run on those files.
 
 ## Config file
 
@@ -67,6 +69,9 @@ a warning on stderr that names it, so a file written for zizmor keeps working.
   `gh-cli-environment`. `TooManySteps` and `TooManyJobs` each name one part of `complex-job`, and neither names
   long scripts or conditions. Every ghlint ID of `readability` and `redundant-setting` names one part of that rule.
   Ignoring or disabling such an ID affects only those parts.
+- **Actions of other repositories** (`--follow-actions`): comments inside them are not honored. An inline ignore on
+  the scanned `uses:` line, or a config `ignore` entry for that file and line, covers every finding the line pulls
+  in; a finding that another scanned line also reaches stays reported through that line.
 - **Override:** `--no-ignores` reports everything, including findings that comments or the config ignore.
 
 ## Severity

@@ -15,7 +15,9 @@ steps:
 
 Pin the Action by full commit SHA with a version comment; there is no moving `v1` tag. It takes zizmor-action's inputs
 (`inputs`, `persona`, `min-severity`, `online-audits`, `token`, `advanced-security`, `annotations`, `config`,
-`fail-on-no-inputs`, and more) plus `fail-on`, and sets the outputs `output-file` (SARIF path) and `findings` (count).
+`fail-on-no-inputs`, and more) plus `fail-on` and `follow-actions` (default `false`; checks the actions that steps
+call from other repositories, needs `online-audits` and a token, and spends API requests: see
+[usage](usage.md#actions-from-other-repositories)), and sets the outputs `output-file` (SARIF path) and `findings` (count).
 A run goes like this:
 
 1. It downloads the release that matches its own revision and checks the archive against the release's `sha256.sum`

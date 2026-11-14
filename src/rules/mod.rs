@@ -156,7 +156,7 @@ pub enum ChangeKind {
     Remove,
 }
 
-pub use common::local_actions;
+pub use common::{Call, calls, local_actions};
 pub use repository::{Located, Place};
 
 /// The rule's `rules.<id>.config` block, if the config has one.
@@ -642,15 +642,23 @@ fn finish_located(found: Vec<Located>, settings: &Settings) -> Vec<Located> {
 /// `# crosgha: ignore[rule,...]` or zizmor's `# zizmor: ignore[rule,...]` anywhere in the
 /// finding's YAML span, matching https://docs.zizmor.sh/usage/#with-comments
 pub(super) fn ignored(workflow: &Workflow, finding: &Finding) -> bool {
-    let Ok(feature) = workflow.document.query_pretty(&finding.route) else {
-        return false;
+    ignore_ids(workflow, &finding.route)
+        .iter()
+        .any(|id| finding.answers_to(id))
+}
+
+/// The rule IDs that ignore comments in the YAML span at `route` name.
+pub(super) fn ignore_ids(workflow: &Workflow, route: &Route) -> Vec<String> {
+    let Ok(feature) = workflow.document.query_pretty(route) else {
+        return Vec::new();
     };
     workflow
         .document
         .feature_comments(&feature)
         .iter()
         .flat_map(|comment| ignore_list(workflow.document.extract(comment)))
-        .any(|id| finding.answers_to(id))
+        .map(str::to_owned)
+        .collect()
 }
 
 const IGNORE_MARKERS: [&str; 2] = ["crosgha: ignore[", "zizmor: ignore["];

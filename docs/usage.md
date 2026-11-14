@@ -41,7 +41,7 @@ file](https://docs.github.com/en/actions/reference/workflows-and-actions/metadat
   `zizmor.yml` of the input (an action found through a repository uses that repository's), and the verified fixes.
   `persist-credentials` is never fixed in an action, because the steps that run after it are in the caller's workflow.
 - **Remote inputs** find their repository's actions the same way (below). Actions called from other repositories
-  are tracked in #100.
+  are checked with `--follow-actions` ([below](#actions-from-other-repositories)).
 
 ### Remote repositories
 
@@ -83,6 +83,63 @@ that can read them. `--offline` and `--fix` reject them before any request.
 
 A repository with 5 workflows, a root action, two local actions, a `zizmor.yml`, and a Dependabot config costs
 1 + 1 + 5 + 1 + 3 + 1 = 12 requests at `--persona pedantic`, before `repo-org-settings` and the online rules.
+
+### Actions from other repositories
+
+`--follow-actions` also checks the actions that the scanned files' steps call from other repositories
+(`uses: owner/repo[/path]@ref`). It is off by default because it spends GitHub API requests, and it needs a token
+(`--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`); `--offline`, `--no-online-audits`, and `--fix` refuse it. The Action
+turns it on with `follow-actions: true`.
+
+- **What is read:** each ref that is not a full 40-character SHA is resolved to a commit first, and the action's
+  `action.yml`, or `action.yaml` when there is none, is read at that commit, as the runner reads them. A followed
+  file is reported as `owner/repo@<sha>:path/action.yml`, so the report names the commit it analyzed; a tag or branch
+  that moves later is a different commit.
+- **What runs:** the same rules as on a local action file ([Actions](#actions)): a composite action's steps get the
+  step rules, and JavaScript and Docker actions only the metadata checks (`retired-runtime`, an unpinned
+  `docker://` image, `schema-validity`). Online rules do not run on followed files, so the request cost stays the one
+  below. The scanned input's config applies, as do `--persona` and `--min-severity`.
+- **What is followed:** the `uses:` lines of a composite action's steps, transitively. `$/path` in a followed action
+  is that action's repository at the same commit, as the runner resolves it. Not followed: `./path` inside another
+  repository's action, which is the caller's checkout; `docker://` images; references built with `${{ }}`; and a
+  job's `uses:`, which calls a reusable workflow, not an action. Owner and repository names ignore case, and a
+  trailing `/` or empty segments in the path name the same directory, so those spellings are read once.
+- **Each action once:** an action is identified by owner, repository, path, and commit, so a cycle stops and an action
+  that several chains reach is read and checked once. The same action at two commits is two actions. Followed
+  composite actions are nested at most 9 levels below the scanned step, the runner's limit
+  (`CompositeActionsMaxDepth` in actions/runner); calls deeper than that are skipped with a warning. The limit holds
+  per scanned line: an action read because a shorter line reaches it is not reported through a line whose chain to it
+  would be deeper.
+- **Chains:** every finding names the `uses:` lines that lead to it, starting at a line of a scanned file. Text,
+  annotations, SARIF, and agent lines show the shortest chain from the first such line and how many other scanned
+  lines also lead there; JSON lists one chain per scanned line under `via` ([Output](output.md)). Annotations, SARIF,
+  and agent lines are placed on the scanned `uses:` line, since code scanning shows only files of the scanned
+  repository, and the message names the action's file and line.
+- **Ignoring:** ignore comments inside another repository's action are not honored: its author wrote them, not the
+  scanned repository. An ignore comment on a scanned `uses:` line (`# crosgha: ignore[script-injection]`) applies to
+  that line and to everything it pulls in, and so does a config `ignore` entry for that file and line
+  (`ci.yml:12`). A finding stays reported while any scanned line that reaches it does not ignore it. `disable`,
+  severity remaps, and `--no-ignores` work as everywhere.
+- **Never fixed:** `--fix` cannot be combined with `--follow-actions`; a followed file belongs to another repository.
+- **Errors:** a missing repository, ref, or metadata file (a Dockerfile-only action, a wrong path, a SHA outside the
+  repository) is a warning on stderr and leaves the exit status alone. A metadata file that does not parse is a file
+  error. Another failed request (5xx, network, 403) skips that action with a warning, and a rate limit or rejected
+  token stops every later request and is reported once with the number of actions left unread. In those cases the
+  findings already found are still reported, the scan is incomplete, and the run exits 2.
+
+**Request cost,** cached for the whole run, failures included:
+
+| Requests | For |
+|---|---|
+| 1 per distinct repository and ref | resolving a ref that is not a full SHA to a commit |
+| 1 per distinct action and commit | `action.yml` |
+| 0 or 1 per distinct action and commit | `action.yaml`, only when `action.yml` is missing |
+
+Against the test API, `tests/fixtures/follow/caller/.github/workflows/ci.yml` costs 20 requests: 9 ref lookups (6
+resolve, 3 name nothing) and 11 file reads (9 for the 8 actions read, one of which has only `action.yaml`, and 2 for a
+SHA the repository does not have). `GITHUB_TOKEN` gets "1,000 requests per hour per
+repository" ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)),
+shared with the online rules and the rest of the job.
 
 ## Pre-push hook
 

@@ -8,6 +8,7 @@ mod config;
 mod engine;
 mod filesystem;
 mod fix;
+mod follow;
 mod github;
 mod hook;
 mod migrate;

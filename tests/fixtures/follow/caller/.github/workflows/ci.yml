@@ -1,0 +1,38 @@
+# Each `fixture/<name>` is tests/fixtures/follow/<name>, served by the fake GitHub API at one commit.
+name: CI
+on:
+  pull_request:
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # outer -> inner, whose steps carry the smells; outer also calls `$/sub` and `./`.
+      - uses: fixture/outer@v1
+      # The same action: owner and repository names ignore case, and a trailing `/` is the same path.
+      - uses: fixture/Outer/@v1
+      # SHA-pinned, so no ref is resolved; a JavaScript action on a retired runtime.
+      - uses: fixture/node@f00df00df00df00df00df00df00df00df00df00d
+      # A Docker action whose image has no digest.
+      - uses: fixture/docker@v1
+      # Only `action.yaml` exists.
+      - uses: fixture/yamlonly@v1
+      # ping and pong call each other.
+      - uses: fixture/ping@v1
+      # A commit the repository does not have.
+      - uses: fixture/node@0123456789012345678901234567890123456789
+      # A repository that does not exist.
+      - uses: fixture/missing@v1
+      # Not followed: the caller's checkout, an image, and a ref built at run time.
+      - uses: ./.github/actions/local
+      - uses: docker://alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
+      - uses: fixture/node@${{ github.sha }}
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: fixture/outer@v1 # crosgha: ignore[unpinned-action]
+  # A reusable workflow, not an action: not followed.
+  reuse:
+    uses: fixture/caller/.github/workflows/reusable.yml@v1

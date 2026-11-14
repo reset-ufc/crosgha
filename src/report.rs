@@ -50,6 +50,29 @@ pub struct FileReport {
     pub inspection: Inspection,
     /// Why the verified fixes of this file are not on disk.
     pub unwritten: Option<Unwritten>,
+    /// How `--follow-actions` reached a file of another repository; `None` for a scanned file.
+    pub reached: Option<Reached>,
+}
+
+/// The `uses:` lines that lead from scanned files to an action of another repository.
+pub struct Reached {
+    /// The shortest chain from each scanned `uses:` line that reaches the file, in scan order;
+    /// each starts at that line and ends at the line that calls this file.
+    pub chains: Vec<Vec<Link>>,
+    /// For each finding, the chains it is reported through: those whose first line does not
+    /// ignore it.
+    pub through: Vec<Vec<usize>>,
+}
+
+/// One `uses:` line of a chain, with the span of its key.
+#[derive(Clone)]
+pub struct Link {
+    pub path: PathBuf,
+    pub line: usize,
+    pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub uses: String,
 }
 
 pub enum Unwritten {
@@ -121,7 +144,7 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: 
     let mut output = String::new();
     let mut shown = Vec::new();
     for item in reported(files, repository) {
-        diagnostic(&mut output, item.path, item.source, item.finding);
+        diagnostic(&mut output, &item);
         shown.push(item.finding);
     }
     for attempt in attempts(files) {
@@ -176,7 +199,11 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: 
             count(shown.len(), "finding"),
             breakdown(&shown)
         );
-        let fixable = shown.iter().filter(|finding| finding.fix.is_some()).count();
+        // A file of another repository is never fixed.
+        let fixable = reported(files, repository)
+            .iter()
+            .filter(|item| item.via.is_none() && item.finding.fix.is_some())
+            .count();
         if fixable > 0 && !fix {
             let _ = writeln!(
                 output,
@@ -195,8 +222,8 @@ fn text(files: &[FileReport], repository: &[Located], errors: &[RunError], fix: 
         let level = style(Severity::Error);
         let _ = writeln!(
             output,
-            "{level}The scan is incomplete:{level:#} online checks that needed a failed GitHub \
-             API request did not run."
+            "{level}The scan is incomplete:{level:#} checks that needed a failed GitHub API \
+             request did not run."
         );
     }
     output
@@ -219,19 +246,36 @@ fn count(n: usize, noun: &str) -> String {
     format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
 }
 
-/// `2 workflow files`, `1 action file`, or `2 workflow files and 1 action file`.
+/// `2 workflow files`, `1 action file`, `2 workflow files and 1 action file`, or with actions
+/// of other repositories, `1 workflow file, 1 action file, and 3 referenced actions`.
 fn files_count<'a>(files: impl IntoIterator<Item = &'a FileReport>) -> String {
-    let (actions, workflows): (Vec<&FileReport>, Vec<&FileReport>) = files
-        .into_iter()
-        .partition(|file| file.inspection.kind == Kind::Action);
-    match (workflows.len(), actions.len()) {
-        (workflows, 0) => count(workflows, "workflow file"),
-        (0, actions) => count(actions, "action file"),
-        (workflows, actions) => format!(
-            "{} and {}",
-            count(workflows, "workflow file"),
-            count(actions, "action file")
-        ),
+    let mut workflows = 0;
+    let mut actions = 0;
+    let mut referenced = 0;
+    for file in files {
+        match (&file.reached, file.inspection.kind) {
+            (Some(_), _) => referenced += 1,
+            (None, Kind::Action) => actions += 1,
+            (None, Kind::Workflow) => workflows += 1,
+        }
+    }
+    let mut parts: Vec<String> = [
+        (workflows, "workflow file"),
+        (actions, "action file"),
+        (referenced, "referenced action"),
+    ]
+    .into_iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, noun)| count(n, noun))
+    .collect();
+    match parts.len() {
+        0 => count(0, "workflow file"),
+        1 => parts.remove(0),
+        2 => parts.join(" and "),
+        _ => {
+            let last = parts.pop().unwrap_or_default();
+            format!("{}, and {last}", parts.join(", "))
+        }
     }
 }
 
@@ -251,7 +295,14 @@ fn breakdown(findings: &[&Finding]) -> String {
     format!(" ({})", parts.join(", "))
 }
 
-fn diagnostic(output: &mut String, path: &Path, source: Option<&str>, finding: &Finding) {
+fn diagnostic(output: &mut String, item: &Reported) {
+    let Reported {
+        path,
+        finding,
+        source,
+        ref via,
+        ..
+    } = *item;
     let level = style(finding.severity);
     let _ = writeln!(
         output,
@@ -311,6 +362,20 @@ fn diagnostic(output: &mut String, path: &Path, source: Option<&str>, finding: &
             "{pad} {GUTTER}={GUTTER:#} {BOLD}at{BOLD:#}: {}",
             finding.location
         );
+    }
+    if let Some(via) = via {
+        let _ = writeln!(
+            output,
+            "{pad} {GUTTER}={GUTTER:#} {BOLD}via{BOLD:#}: {}",
+            chain(via[0])
+        );
+        if via.len() > 1 {
+            let _ = writeln!(
+                output,
+                "{pad} {GUTTER}={GUTTER:#} {BOLD}via{BOLD:#}: {} (`--format json` lists every chain)",
+                others(via.len() - 1)
+            );
+        }
     }
     let _ = writeln!(
         output,
@@ -417,18 +482,115 @@ struct Reported<'a> {
     source: Option<&'a str>,
     /// The workflow and text a repository-wide finding is placed on in annotations and SARIF.
     anchor: Option<(&'a Path, &'a str)>,
+    /// For a finding in another repository's action, the chains of `uses:` lines it is reported
+    /// through; never empty.
+    via: Option<Vec<&'a [Link]>>,
+}
+
+/// `.github/workflows/ci.yml:14 `org/a@v1` > org/a@<sha>:action.yml:8 `org/b@v2``
+fn chain(links: &[Link]) -> String {
+    let hops: Vec<String> = links
+        .iter()
+        .map(|link| format!("{}:{} `{}`", relative(&link.path), link.line, link.uses))
+        .collect();
+    hops.join(" > ")
+}
+
+/// The first chain, and how many other scanned `uses:` lines also lead to the finding.
+fn via_text(via: &[&[Link]]) -> String {
+    match via {
+        [] => String::new(),
+        [first] => chain(first),
+        [first, rest @ ..] => format!("{}; {}", chain(first), others(rest.len())),
+    }
+}
+
+fn others(n: usize) -> String {
+    match n {
+        1 => "1 more scanned `uses:` line leads here".to_owned(),
+        _ => format!("{n} more scanned `uses:` lines lead here"),
+    }
+}
+
+/// The source a scanned or followed file at `path` is reported with.
+fn source_of<'a>(files: &'a [FileReport], path: &Path) -> Option<&'a str> {
+    files
+        .iter()
+        .find(|file| file.path == path)
+        .map(|file| file.shown().0)
+}
+
+/// Where annotations, SARIF, and agent lines place `item`: its own file and span, or, for a
+/// finding in another repository's action, the scanned `uses:` line its first chain starts at,
+/// since code scanning and editors can open only files of the scanned repository. The second
+/// value is the prefix that then names the finding's own file and line in the message.
+fn placed<'a>(files: &'a [FileReport], item: &Reported<'a>) -> (Placement<'a>, String) {
+    let finding = item.finding;
+    match &item.via {
+        Some(via) => {
+            let root = &via[0][0];
+            let placement = Placement {
+                path: &root.path,
+                source: source_of(files, &root.path),
+                line: root.line,
+                column: root.column,
+                end_line: root.end_line,
+                end_column: root.end_column,
+            };
+            let prefix = format!("{}:{}: ", relative(item.path), finding.line);
+            (placement, prefix)
+        }
+        None => (
+            Placement {
+                path: item.path,
+                source: item.source,
+                line: finding.line,
+                column: finding.column,
+                end_line: finding.end_line,
+                end_column: finding.end_column,
+            },
+            String::new(),
+        ),
+    }
+}
+
+/// A file span that a report points at.
+struct Placement<'a> {
+    path: &'a Path,
+    source: Option<&'a str>,
+    line: usize,
+    column: usize,
+    end_line: usize,
+    end_column: usize,
+}
+
+/// ` (via ...)` after the message of a finding in another repository's action.
+fn via_suffix(item: &Reported) -> String {
+    item.via
+        .as_ref()
+        .map(|via| format!(" (via {})", via_text(via)))
+        .unwrap_or_default()
 }
 
 /// Every reported finding: what remains after `--fix`, or everything found.
 fn reported<'a>(files: &'a [FileReport], repository: &'a [Located]) -> Vec<Reported<'a>> {
     let workflows = files.iter().flat_map(|file| {
         let (source, findings) = file.shown();
-        findings.iter().map(move |finding| Reported {
-            path: &file.path,
-            finding,
-            source: Some(source),
-            anchor: None,
-        })
+        findings
+            .iter()
+            .enumerate()
+            .map(move |(index, finding)| Reported {
+                path: &file.path,
+                finding,
+                source: Some(source),
+                anchor: None,
+                via: file.reached.as_ref().map(|reached| {
+                    reached.through[index]
+                        .iter()
+                        .map(|chain| reached.chains[*chain].as_slice())
+                        .collect()
+                }),
+            })
     });
     let repository = repository.iter().map(|located| {
         let (source, anchor) = match &located.place {
@@ -446,6 +608,7 @@ fn reported<'a>(files: &'a [FileReport], repository: &'a [Located]) -> Vec<Repor
             finding: &located.finding,
             source,
             anchor,
+            via: None,
         }
     });
     workflows.chain(repository).collect()
@@ -505,7 +668,7 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[RunError]) -> St
         .into_iter()
         .map(|item| {
             let finding = item.finding;
-            json!({
+            let mut entry = json!({
                 "rule": finding.rule.id,
                 "tag": finding.rule.tag,
                 "severity": finding.severity.as_str(),
@@ -517,7 +680,28 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[RunError]) -> St
                 "location": finding.location,
                 "message": finding.message,
                 "equivalents": equivalents(finding.rule),
-            })
+            });
+            if let Some(via) = &item.via {
+                let chains: Vec<Value> = via
+                    .iter()
+                    .map(|links| {
+                        links
+                            .iter()
+                            .map(|link| {
+                                let source = source_of(files, &link.path);
+                                json!({
+                                    "path": link.path.display().to_string(),
+                                    "line": link.line,
+                                    "column": char_column(source, link.line, link.column),
+                                    "uses": link.uses,
+                                })
+                            })
+                            .collect()
+                    })
+                    .collect();
+                entry["via"] = Value::Array(chains);
+            }
+            entry
         })
         .collect();
     let fixes: Vec<Value> = attempts(files)
@@ -546,6 +730,7 @@ fn json(files: &[FileReport], repository: &[Located], errors: &[RunError]) -> St
         "tool": { "name": "crosgha", "version": env!("CARGO_PKG_VERSION") },
         "summary": {
             "files": files.len(),
+            "referenced_actions": files.iter().filter(|file| file.reached.is_some()).count(),
             "findings": findings.len(),
             "fixed": files.iter().map(FileReport::fixed).sum::<usize>(),
             "errors": errors.len(),
@@ -635,19 +820,26 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[RunError]) 
                 .position(|rule| rule.id == finding.rule.id)
                 .unwrap_or_default();
             let (message, location) = match (item.source, item.anchor) {
-                (Some(source), _) => (
-                    format!("{}: {}", finding.location, finding.message),
-                    Some(json!({
-                        "artifactLocation": { "uri": artifact_uri(item.path) },
-                        "region": {
-                            "startLine": finding.line,
-                            "startColumn": utf16_column(Some(source), finding.line, finding.column),
-                            "endLine": finding.end_line,
-                            "endColumn":
-                                utf16_column(Some(source), finding.end_line, finding.end_column),
-                        },
-                    })),
-                ),
+                (Some(_), _) => {
+                    let (at, prefix) = placed(files, &item);
+                    (
+                        format!(
+                            "{prefix}{}: {}{}",
+                            finding.location,
+                            finding.message,
+                            via_suffix(&item)
+                        ),
+                        Some(json!({
+                            "artifactLocation": { "uri": artifact_uri(at.path) },
+                            "region": {
+                                "startLine": at.line,
+                                "startColumn": utf16_column(at.source, at.line, at.column),
+                                "endLine": at.end_line,
+                                "endColumn": utf16_column(at.source, at.end_line, at.end_column),
+                            },
+                        })),
+                    )
+                }
                 // A repository-wide finding names its directory in the message. GitHub needs a
                 // file location anyway ("At least one location is required for code scanning to
                 // display a result", per the page above), so it points at line 1 of its anchor.
@@ -764,23 +956,24 @@ fn github(files: &[FileReport], repository: &[Located]) -> String {
                     data(&format!("{}: {message}", relative(item.path))),
                 );
             }
+            let (at, prefix) = placed(files, &item);
             // actions/toolkit: columns "cannot be sent when startLine and endLine are different
             // values".
-            let columns = match finding.line == finding.end_line {
+            let columns = match at.line == at.end_line {
                 true => format!(
                     ",col={},endColumn={}",
-                    char_column(item.source, finding.line, finding.column),
-                    char_column(item.source, finding.end_line, finding.end_column)
+                    char_column(at.source, at.line, at.column),
+                    char_column(at.source, at.end_line, at.end_column)
                 ),
                 false => String::new(),
             };
             format!(
                 "::{command} file={},line={},endLine={}{columns},title={}::{}\n",
-                property(&relative(item.path)),
-                finding.line,
-                finding.end_line,
+                property(&relative(at.path)),
+                at.line,
+                at.end_line,
                 property(finding.rule.id),
-                data(&message),
+                data(&format!("{prefix}{message}{}", via_suffix(&item))),
             )
         })
         .collect()
@@ -793,16 +986,18 @@ fn agent(files: &[FileReport], repository: &[Located]) -> String {
         .into_iter()
         .map(|item| {
             let finding = item.finding;
+            let (at, prefix) = placed(files, &item);
             let line = format!(
-                "{}:{}:{}: {} {}: {}: {}{} help: {}",
-                relative(item.path),
-                finding.line,
-                char_column(item.source, finding.line, finding.column),
+                "{}:{}:{}: {} {}: {prefix}{}: {}{}{} help: {}",
+                relative(at.path),
+                at.line,
+                char_column(at.source, at.line, at.column),
                 finding.severity.as_str(),
                 finding.rule.id,
                 finding.location,
                 finding.message,
                 finding.rule.equivalents_suffix(),
+                via_suffix(&item),
                 finding.rule.summary
             );
             format!("{}\n", line.replace(['\r', '\n'], " "))

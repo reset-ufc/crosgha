@@ -308,7 +308,7 @@ fn is_sha(sha: &str) -> bool {
 }
 
 /// `path` without `.` and empty segments, with each `..` applied; `None` when it leaves the root.
-fn normalize(path: &str) -> Option<String> {
+pub fn normalize(path: &str) -> Option<String> {
     let mut parts: Vec<&str> = Vec::new();
     for part in path.split('/') {
         match part {
@@ -327,7 +327,7 @@ fn split(path: &str) -> (&str, &str) {
     path.rsplit_once('/').unwrap_or(("", path))
 }
 
-fn join(directory: &str, name: &str) -> String {
+pub fn join(directory: &str, name: &str) -> String {
     match directory.trim_end_matches('/') {
         "" => name.to_owned(),
         directory => format!("{directory}/{name}"),

@@ -6,7 +6,7 @@ use std::thread;
 use crate::filesystem::{self, Source};
 use crate::fix::{self, FixOutcome};
 use crate::policy::Settings;
-use crate::rules::{self, Finding};
+use crate::rules::{self, Call, Finding};
 use crate::workflow::Kind;
 
 pub struct Inspection {
@@ -17,6 +17,8 @@ pub struct Inspection {
     pub fix: Option<FixOutcome>,
     /// Local actions the file calls (`uses: ./path`), which the scan inspects next.
     pub local_actions: Vec<String>,
+    /// Actions of other repositories the file's steps call, which `--follow-actions` reads.
+    pub calls: Vec<Call>,
 }
 
 /// Parses `source` as `kind` and runs the rules that read that kind of file, wherever the source
@@ -31,6 +33,7 @@ pub fn inspect(
     let workflow = kind.parse(source.text.clone())?;
     let findings = rules::detect_all(&workflow, settings, file)?;
     let local_actions = rules::local_actions(&workflow);
+    let calls = rules::calls(&workflow)?;
     // Without a proposal the fix pass would only scan the same source again.
     let fix = if apply_fixes && findings.iter().any(|finding| finding.fix.is_some()) {
         Some(fix::apply(workflow, &findings, settings, file)?)
@@ -43,6 +46,7 @@ pub fn inspect(
         findings,
         fix,
         local_actions,
+        calls,
     })
 }
 

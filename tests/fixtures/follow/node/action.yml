@@ -1,0 +1,5 @@
+name: node
+description: A JavaScript action on a retired runtime.
+runs:
+  using: node16
+  main: dist/index.js

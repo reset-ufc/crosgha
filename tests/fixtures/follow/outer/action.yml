@@ -1,0 +1,12 @@
+name: outer
+description: Calls inner, a sub-action of its own repository, and an action of the caller's checkout.
+runs:
+  using: composite
+  steps:
+    - uses: fixture/inner@main
+    # `$/` names this action's repository at the same commit.
+    - uses: $/sub
+    # The caller's checkout, which this repository cannot know.
+    - uses: ./.github/actions/setup
+    - run: echo outer
+      shell: bash

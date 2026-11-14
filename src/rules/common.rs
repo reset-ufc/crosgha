@@ -411,6 +411,42 @@ pub fn local_actions(workflow: &Workflow) -> Vec<String> {
         .collect()
 }
 
+/// A step's `uses:` of an action in another repository (`owner/repo[/path]@ref`), or of `$/path`,
+/// which the runner resolves to the repository of the action that holds the step
+/// (`ResolveSelfRepositoryReferences` in `ActionManager.cs`, actions/runner at
+/// 8cfa1049f86781d141056082d73802d56cd2b433). `./path` is the caller's checkout, so neither it, a
+/// `docker://` image, nor a reference built with `${{ }}` is a call. A job's `uses:` calls a
+/// reusable workflow, not an action.
+pub struct Call {
+    pub uses: String,
+    /// 1-based start and end of the `uses` key, where findings on the line point.
+    pub span: [usize; 4],
+    /// The rule IDs that the line's ignore comments name.
+    pub ignores: Vec<String>,
+}
+
+pub fn calls(workflow: &Workflow) -> Result<Vec<Call>, String> {
+    let mut found = Vec::new();
+    for job in jobs(workflow) {
+        for step in steps(&job) {
+            let Some(uses) = step.uses() else {
+                continue;
+            };
+            let own = uses.starts_with("$/") && !uses.contains("${{");
+            if !own && parse_uses(uses).is_none() {
+                continue;
+            }
+            let route = step.key("uses");
+            found.push(Call {
+                uses: uses.to_owned(),
+                span: span(workflow, &route)?,
+                ignores: super::ignore_ids(workflow, &route),
+            });
+        }
+    }
+    Ok(found)
+}
+
 /// 1-based start and end of the key a route ends with, or of the node for index routes. The
 /// end column is exclusive, as SARIF's `endColumn` is.
 pub fn span(workflow: &Workflow, route: &Route) -> Result<[usize; 4], String> {

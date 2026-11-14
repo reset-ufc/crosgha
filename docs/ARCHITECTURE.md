@@ -6,7 +6,7 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 | Area | Current state |
 |---|---|
 | CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
-| Rule modules | 51 rules covering every taxonomy tag: 43 per file, 3 per repository, 5 online. Step rules also run on composite actions' `runs.steps`, and metadata checks on action files. |
+| Rule modules | 51 rules covering every taxonomy tag: 43 per file, 3 per repository, 5 online. Step rules also run on composite actions' `runs.steps`, and metadata checks on action files, local or read from another repository with `--follow-actions`. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
 | Fix validation | Runnable for add, replace, and remove proposals; `persist-credentials` and `error-suppression` propose adds of a step input, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, `unsafe-if-condition` the new source of an `if` scalar, `readability` the new source of a step value, and `redundant-setting` removals of a key. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
@@ -21,6 +21,8 @@ CLI (directly, from the pre-push hook, or from the Action)
     -> parse and validate each file as a workflow or an action
     -> run the rules enabled by persona and config that read that kind of file (online rules only with a token)
     -> add each repository's root action and the local actions its files call that resolve inside it, until none is new
+    -> with --follow-actions, read the actions those files call from other repositories at their commit and check them,
+       following composite actions breadth first (each owner/repo/path@sha once, at most 9 levels deep)
     -> drop ignored findings, remap severities, apply --min-severity
     -> validate every proposed patch
     -> run repository rules for the repository around the scanned workflows
@@ -45,10 +47,11 @@ The stages have these interfaces:
 | `rules::common` | Parsed workflow or action | Shared traversal: jobs (a composite action's `runs` is one job, with locations `action` and `step N`), steps (including `parallel` groups), triggers, `uses` refs, local actions, action versions, and boolean inputs. |
 | `rules::expression` | Text with `${{ }}` | Expression spans and bodies, context paths, which of them an outsider controls, where a named secret is read, and how a condition compares or negates a path. |
 | `rules::shell` | `run` script | Simple commands (quoted text and heredoc bodies stay data), the program each runs past keywords, assignments, and wrappers such as `sudo`/`env`, getopt-style options, git subcommands, and the shell a step runs in. |
-| `github` | API path | Cached read-only GitHub REST responses for online rules and remote inputs, failures included: `commit` resolves a ref to a SHA and `contents` reads a file's raw text at a commit, which #100 can reuse for actions pinned in other repositories. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal or a 401 no further request is sent. The tag walk fails when a page repeats the previous one or after 100 pages. |
-| `engine` | Source, its kind, and scan/fix mode | Findings, the local actions the file calls, and a prepared fix result. This is the main in-memory analysis interface, for a file from any source (a remote action in #100 included). Files and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
+| `github` | API path | Cached read-only GitHub REST responses for online rules, remote inputs, and followed actions, failures included: `commit` resolves a ref to a SHA and `contents` reads a file's raw text at a commit. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal or a 401 no further request is sent. The tag walk fails when a page repeats the previous one or after 100 pages. |
+| `engine` | Source, its kind, and scan/fix mode | Findings, the local actions the file calls (`uses: ./path`), the actions of other repositories its steps call (`rules::Call`, with the span and ignore comments of each line), and a prepared fix result. This is the main in-memory analysis interface, for a file from any source, a followed action included. Files and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
+| `follow` | The scanned files of one config, a GitHub client, and settings | `--follow-actions`: resolves each call's ref, reads `action.yml` or `action.yaml` at the commit, inspects it as an action with the offline rules and without its own ignore comments, and follows composite calls level by level (`$/path` in the action's repository; not `./`, `docker://`, `${{ }}`, or a job's reusable workflow). Each `(owner, repo, path, sha)` is read once; the runner's `CompositeActionsMaxDepth` caps the depth. Returns one report per action with the shortest chain from each scanned `uses:` line that reaches it, the findings each chain reports after that line's inline and config ignores, and the errors; a rate limit or 401 stops the walk. |
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. A rejected proposal keeps its finding, records the reason, and the next proposal still runs. |
-| `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. |
+| `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. A followed action's finding is shown in its own file in text and JSON, with its chains (`Reached`); SARIF, annotations, and agent lines place it on the scanned `uses:` line its first chain starts at. |
 | `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
 | `migrate` | Workflows and the tool to replace | Rewrites zizmor or actionlint Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
 | `hook` | Current git repository | Writes or removes the `pre-push` hook that runs the CLI. Refuses to install into a hooks directory outside the repository, and never touches a hook that differs from every script a release has written (`TEMPLATES`). |
@@ -152,7 +155,11 @@ in a written file, and the original findings of a file whose fixes were not writ
   count UTF-16 code units (`columnKind`); a repository-wide finding names its directory in the
   message and points at line 1 of the first scanned workflow of that directory, because code
   scanning shows no result without a location;
-- `partialFingerprints` is left to `upload-sarif`.
+- `partialFingerprints` is left to `upload-sarif`;
+- a finding in another repository's action (`--follow-actions`) points at the scanned `uses:` line that reaches it,
+  because code scanning matches locations "against a file committed to the repository" (same page), and its message
+  names the action's file, line, and chain. `upload-sarif` fingerprints a result by its line, so two findings of one
+  rule behind the same `uses:` line may show as one alert; text and JSON list each.
 
 zizmor's severities map onto the SARIF levels: `informational`/`low` → `note`, `medium` →
 `warning`, `high` → `error`.
@@ -211,7 +218,8 @@ validated and then refused until its repository operations have end-to-end fixtu
 | `tests/report.rs` | Every report format and the rule catalog. |
 | `tests/repository.rs` | Repository rules: Dependabot cooldown, security tooling, local actions, and github.com-only rules. Every `tests/fixtures/repos/` repository, served by the fake GitHub API (`tests/common`) at one commit, must report exactly what its local copy reports, also from a truncated tree. |
 | `tests/migrate.rs`, `tests/hook.rs` | `migrate` on workflows and repositories; `hook install` and `uninstall` in scratch git repositories. |
-| `tests/action.rs` | `action/entrypoint.sh` with a runner environment against a local release server: verified install, SARIF and outputs, a tampered checksum, and `fail-on-no-inputs`. |
+| `tests/follow.rs` | `--follow-actions` against the fake GitHub API serving `tests/fixtures/follow/`: a chain through two composite actions, a cycle, an `action.yaml`-only action, JavaScript and Docker metadata checks, ignores on the scanned line and in the config, every format, a remote input, the depth limit, failed reads and a rate limit, the exact requests, and the flag's preconditions. `CROSGHA_TEST_HOSTED`, which only debug builds read, runs the github.com-only checks against the fake host. |
+| `tests/action.rs` | `action/entrypoint.sh` with a runner environment against a local release server: verified install, SARIF and outputs, a tampered checksum, `fail-on-no-inputs`, and `follow-actions` against the fake GitHub API. |
 | `tests/install.rs` | `install.sh` piped into `sh` against the same local release server: the latest release on the user's `PATH` and in-place upgrades, a tampered or missing release, a new binary that cannot run, plain HTTP only for a loopback origin, and platforms without a release binary. |
 
 The pre-push hook and CI run formatting, Clippy, the tests, and crosgha itself on

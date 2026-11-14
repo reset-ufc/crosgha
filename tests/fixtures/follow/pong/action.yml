@@ -1,0 +1,6 @@
+name: pong
+description: Calls ping, which calls pong.
+runs:
+  using: composite
+  steps:
+    - uses: fixture/ping@v1
