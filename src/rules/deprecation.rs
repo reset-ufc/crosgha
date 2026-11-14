@@ -205,7 +205,8 @@ fn lines(script: &str) -> Vec<(&str, bool)> {
 
 /// The environment file write that replaces `line` when it is exactly
 /// `echo <quote>::<command> name=<name>::<value><quote>` or `echo <quote>::add-path::<path><quote>`.
-/// The write keeps `echo` and the quoting, so the shell expands the value as before.
+/// The write keeps the quoting, so the shell expands the value as before. A named write keeps
+/// `echo`: its argument starts with `<name>=`, which echo never reads as an option.
 fn rewrite(line: &str) -> Option<String> {
     let argument = line.strip_prefix("echo ")?;
     let quote = match argument.as_bytes().first() {
@@ -226,18 +227,32 @@ fn rewrite(line: &str) -> Option<String> {
     if !quoted_safely {
         return None;
     }
-    let (file, written) = match head.split_once(' ') {
-        None if head == "add-path" && !value.is_empty() => ("GITHUB_PATH", value.to_owned()),
-        Some((command, property)) => {
-            let (_, file) = NAMED_FILES.iter().find(|(name, _)| *name == command)?;
-            let name = property
-                .strip_prefix("name=")
-                .filter(|name| !name.is_empty() && name.bytes().all(is_name_byte))?;
-            (*file, format!("{name}={value}"))
-        }
-        None => return None,
+    let Some((command, property)) = head.split_once(' ') else {
+        return match head {
+            "add-path" => add_path(quote, value),
+            _ => None,
+        };
     };
-    Some(format!("echo {quote}{written}{quote} >> \"${{{file}}}\""))
+    let (_, file) = NAMED_FILES.iter().find(|(name, _)| *name == command)?;
+    let name = property
+        .strip_prefix("name=")
+        .filter(|name| !name.is_empty() && name.bytes().all(is_name_byte))?;
+    Some(format!(
+        "echo {quote}{name}={value}{quote} >> \"${{{file}}}\""
+    ))
+}
+
+/// The `GITHUB_PATH` write for `path`. `printf` writes it as one argument, where echo would read a
+/// path such as `-n` as an option and write nothing. A backslash stays unfixed: sh's echo expanded
+/// escapes that `%s` does not, and an unquoted path stays one word only without spaces or `$`.
+fn add_path(quote: &str, path: &str) -> Option<String> {
+    let splits = quote.is_empty() && path.contains([' ', '$']);
+    if path.is_empty() || path.contains('\\') || splits {
+        return None;
+    }
+    Some(format!(
+        "printf '%s\\n' {quote}{path}{quote} >> \"${{GITHUB_PATH}}\""
+    ))
 }
 
 fn is_name_byte(byte: u8) -> bool {

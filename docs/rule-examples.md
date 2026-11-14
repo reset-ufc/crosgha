@@ -2212,6 +2212,9 @@ jobs:
       - run: echo "::save-state name=y::2" # expect: deprecated-command
       - run: | # expect: deprecated-command
           echo "::add-path::/opt/bin"
+      # echo would read this path as its `-n` option and write nothing.
+      - run: echo "::add-path::-n" # expect: deprecated-command
+      - run: echo '::add-path::/opt/$tool' # expect: deprecated-command
       - run: echo "x=1" >> "$GITHUB_OUTPUT"
       - run: echo "::add-mask::value"
       # A comment that names a command runs nothing.
@@ -2267,7 +2270,9 @@ jobs:
     steps:
       - run: echo "x=1" >> "${GITHUB_OUTPUT}"
       - run: echo "y=2" >> "${GITHUB_STATE}"
-      - run: echo "/opt/bin" >> "${GITHUB_PATH}"
+      - run: printf '%s\n' "/opt/bin" >> "${GITHUB_PATH}"
+      - run: printf '%s\n' "-n" >> "${GITHUB_PATH}"
+      - run: printf '%s\n' '/opt/$tool' >> "${GITHUB_PATH}"
       - run: echo "::add-mask::value"
       - id: meta
         run: |
@@ -2276,7 +2281,7 @@ jobs:
           echo 'matrix={"os":["ubuntu-24.04","macos-15"]}' >> "${GITHUB_OUTPUT}"
           echo sha=$GITHUB_SHA >> "${GITHUB_OUTPUT}"
           for dir in packages/*; do
-            echo "$PWD/$dir/bin" >> "${GITHUB_PATH}"
+            printf '%s\n' "$PWD/$dir/bin" >> "${GITHUB_PATH}"
           done
           if [ -f .nvmrc ]; then
             echo "NODE_VERSION=$(cat .nvmrc)" >> "${GITHUB_ENV}"

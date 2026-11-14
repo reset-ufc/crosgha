@@ -25,6 +25,9 @@ jobs:
       - run: echo "::set-output name=$key::1" # expect: deprecated-command
       - run: echo "::set-output name=x::C:\" # expect: deprecated-command
       - run: echo "::add-path::" # expect: deprecated-command
+      # sh's echo expanded `\t`, which printf's `%s` keeps; an unquoted `$` path may split into words.
+      - run: echo "::add-path::C:\tools" # expect: deprecated-command
+      - run: echo ::add-path::$HOME/bin # expect: deprecated-command
       # YAML folds `>` scalars and unescapes quoted ones, so the source is not the script.
       - run: > # expect: deprecated-command
           echo "::set-output name=x::1"

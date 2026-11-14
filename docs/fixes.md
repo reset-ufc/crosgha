@@ -25,10 +25,12 @@ Three rules have fixes:
   | `echo "::set-output name=x::1"` | `echo "x=1" >> "${GITHUB_OUTPUT}"` |
   | `echo "::save-state name=x::1"` | `echo "x=1" >> "${GITHUB_STATE}"` |
   | `echo "::set-env name=X::1"` | `echo "X=1" >> "${GITHUB_ENV}"` |
-  | `echo "::add-path::/opt/bin"` | `echo "/opt/bin" >> "${GITHUB_PATH}"` |
+  | `echo "::add-path::/opt/bin"` | `printf '%s\n' "/opt/bin" >> "${GITHUB_PATH}"` |
 
-  The write keeps `echo` and the line's quoting (double, single, or none), so the shell expands the value as it
-  did before, and the line keeps its indentation inside `if` or loop blocks. A step is rewritten only when every
+  The write keeps the line's quoting (double, single, or none), so the shell expands the value as it did before,
+  and the line keeps its indentation inside `if` or loop blocks. A named write keeps `echo`, since its argument
+  starts with `name=` and echo never reads it as an option. A path uses `printf`, because echo would take a path
+  such as `-n` (written or expanded) as an option and write nothing. A step is rewritten only when every
   command in it has a rewrite. It stays unfixed when:
 
   - the step does not run bash or sh: `shell: pwsh`, `python`, or `cmd`, or a Windows runner's default pwsh;
@@ -38,6 +40,8 @@ Three rules have fixes:
   - the name is not literal (`[A-Za-z0-9_-]`), the value holds its own quote character, a double-quoted value ends
     with `\`, or an unquoted value holds anything but plain characters and `$NAME`/`${NAME}` (globs, braces,
     substitutions);
+  - an `add-path` path holds `\` (sh's echo expanded escapes that `printf '%s'` keeps), or is unquoted with a space
+    or `$` (it could split into several words, each a line of its own);
   - the script holds `%25`, `%0D`, or `%0A`: the runner decoded these in a command's value, an environment file
     stores them as written, so a script that escapes multi-line values that way would write something else;
   - the command sits in a heredoc, a quoted string that spans lines, or a line continued with `\`, or the script
