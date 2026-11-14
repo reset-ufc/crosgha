@@ -53,30 +53,31 @@ Four rules have fixes:
   while the runner rejects the extra lines of an environment file. Use the
   [multiline syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#multiline-strings)
   for such values.
-- `embedded-script-lint` quotes and braces each environment file path that a `run` script expands unquoted, the
-  form ShellCheck's [SC2086](https://www.shellcheck.net/wiki/SC2086) and
-  [SC2250](https://www.shellcheck.net/wiki/SC2250) ask for:
+- `embedded-script-lint` quotes and braces each environment file path that a `run` script redirects to, the form
+  ShellCheck's [SC2086](https://www.shellcheck.net/wiki/SC2086) and [SC2250](https://www.shellcheck.net/wiki/SC2250)
+  ask for:
 
   | Before | After |
   |---|---|
   | `echo "x=1" >> $GITHUB_OUTPUT` | `echo "x=1" >> "${GITHUB_OUTPUT}"` |
   | `echo "X=1" >${GITHUB_ENV}` | `echo "X=1" >"${GITHUB_ENV}"` |
-  | `cat $GITHUB_ENV` | `cat "${GITHUB_ENV}"` |
+  | `./lint 2>> $GITHUB_STEP_SUMMARY` | `./lint 2>> "${GITHUB_STEP_SUMMARY}"` |
 
-  Only the path changes: `>` stays `>`, the rest of the line keeps its bytes, and every unquoted path of the
-  step is quoted, also inside `$( )`, `if` blocks, `{ }` groups, and on the first line of a heredoc. The shell
-  then reads the path as one word, as it did whenever the path held no spaces or glob characters. A step stays
-  unfixed when a path the rule reports is not one the shell expands unquoted, or when the reader cannot tell:
+  The fix is a whitelist: a path is quoted only when it is the whole target word of a `>` or `>>` redirect in
+  shell code, also inside `$( )`, `if` blocks, `{ }` groups, and on the first line of a heredoc. Only the path
+  changes: `>` stays `>` and the rest of the line keeps its bytes. The shell then writes to the path as one
+  file name, as it did whenever the path held no spaces or glob characters. A step stays unfixed when the rule
+  reports any path that is not such a target:
 
-  - the path is text: inside single quotes, escaped (`\$GITHUB_ENV`), in a comment, in a heredoc body, or in a
-    double-quoted string that spans lines;
-  - the path may be a pattern, which quoting would turn into a literal: any operand inside `[[ ]]` (`==`, `=`,
-    `!=`, `=~`, and the rest), inside `case ... esac` (subject and patterns), or inside another variable's
-    `${...}` (`${file#$GITHUB_ENV}`, `${X:-$GITHUB_ENV}`). Single-bracket `[ ]` compares strings and is fixed;
-  - the path sits in backticks, or the script uses `$'...'` quoting, leaves a quote or `$(` open, or has a heredoc
-    without its delimiter line;
-  - the script is a folded (`>`) or quoted YAML scalar, which YAML rewrites before the shell sees it, or a plain
-    scalar in a flow mapping (`{run: ...}`), where the added braces would end the scalar.
+  - a command argument or an operand (`cat $GITHUB_ENV`, `[ -f $GITHUB_PATH ]`), a `for` list, a `case` subject or
+    pattern, a `[[ ]]` operand, another variable's `${...}`, or an input redirect (`< $GITHUB_ENV`). There quoting
+    can change what the script does: a `for` list and a pattern glob only unquoted;
+  - text: inside single quotes, escaped (`\$GITHUB_ENV`), in a comment, in a heredoc body, or in a double-quoted
+    string that spans lines;
+  - a path in backticks, or a script that uses `$'...'` quoting, leaves a quote, `$(`, or `${` open, or has a
+    heredoc without its delimiter line;
+  - a folded (`>`) or quoted YAML scalar, which YAML rewrites before the shell sees it, or a plain scalar in a
+    flow mapping (`{run: ...}`), where the added braces would end the scalar.
 
   The rule reports only bash and sh steps, so other shells never get the fix.
 

@@ -597,18 +597,18 @@ fn unquoted_env_file(line: &str) -> bool {
     })
 }
 
-/// Quotes and braces each environment file path that `script` expands unquoted, so
+/// Quotes and braces each environment file path that `script` redirects to, so
 /// `>> $GITHUB_OUTPUT` becomes `>> "${GITHUB_OUTPUT}"`, the form ghlint's
-/// `SafeEnvironmentFileRedirect` asks for. `None` when a path this rule reports is not one the
-/// shell expands unquoted (inside single quotes, a comment, or a heredoc body), or when the YAML
-/// scalar is not the script as written.
+/// `SafeEnvironmentFileRedirect` asks for. `None` when the rule would still report a path that is
+/// not a redirect target (a command argument, a `for` list, a pattern, text in quotes), or when
+/// the YAML scalar is not the script as written.
 fn quote_env_files(workflow: &Workflow, step: &common::Step, script: &str) -> Option<ProposedFix> {
     use std::fmt::Write as _;
 
     if !shell::verbatim(workflow, step, script) {
         return None;
     }
-    let expansions = shell::unquoted_expansions(script, ENV_FILES)?;
+    let expansions = shell::redirect_targets(script, ENV_FILES)?;
     let mut quoted = String::with_capacity(script.len() + 4 * expansions.len());
     let mut copied = 0;
     for expansion in &expansions {

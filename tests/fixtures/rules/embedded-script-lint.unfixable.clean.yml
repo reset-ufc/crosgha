@@ -26,6 +26,18 @@ jobs:
       - run: "echo \"a=1\" >> \"$GITHUB_ENV\""
       - {run: echo a=1 >> "$GITHUB_ENV"}
       - run: |
+          echo "a=1" >> "${GITHUB_ENV}"
+          if [ -f "${GITHUB_PATH}" ]; then cat "${GITHUB_PATH}"; fi
+      - run: |
+          for file in "${GITHUB_OUTPUT}"; do echo "$file"; done
+      - run: |
+          while read -r line; do echo "$line"; done < "${GITHUB_ENV}"
+      - run: |
+          case foo in
+            bar) echo esac ;;
+            "${GITHUB_OUTPUT}") echo matched >> "${GITHUB_STEP_SUMMARY}" ;;
+          esac
+      - run: |
           [[ foo == "${GITHUB_OUTPUT}" ]] && echo matched
       - run: |
           [[ foo = "${GITHUB_OUTPUT}" || -f "${GITHUB_ENV}" ]] && echo matched

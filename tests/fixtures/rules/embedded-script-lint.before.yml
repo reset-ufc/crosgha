@@ -22,19 +22,18 @@ jobs:
         run: echo "g=7" >> $GITHUB_ENV # expect: embedded-script-lint
       - shell: /usr/bin/env -S pwsh -File {0}
         run: echo "h=8" >> $env:GITHUB_ENV
-      # Every unquoted path of a step is quoted, whatever reads or writes it, and the rest of
-      # the line keeps its bytes.
+      # Every redirect target of a step is quoted, and the rest of the line keeps its bytes.
       - run: | # expect: embedded-script-lint
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo 'name=a b' >>$GITHUB_OUTPUT # one word
           echo "a=1" > $GITHUB_ENV; echo "b=2" >> ${GITHUB_ENV}
-          if [ -f $GITHUB_PATH ]; then
+          if [ -d "$HOME/bin" ]; then
             printf '%s\n' "$HOME/bin" >> $GITHUB_PATH
           fi
           {
             echo "x=$(( 1 + 2 ))"
           } >> $GITHUB_OUTPUT
-          cat $GITHUB_ENV
+          ./lint 2>> $GITHUB_STEP_SUMMARY || echo "lint=failed" >>$GITHUB_OUTPUT
       # A heredoc body is data; the redirect on its first line is shell code.
       - run: | # expect: embedded-script-lint
           cat <<EOF >> $GITHUB_STEP_SUMMARY

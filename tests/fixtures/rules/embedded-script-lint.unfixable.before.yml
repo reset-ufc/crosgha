@@ -30,8 +30,20 @@ jobs:
       - run: "echo \"a=1\" >> $GITHUB_ENV" # expect: embedded-script-lint
       # In a flow mapping, the braces of `${GITHUB_ENV}` would end the plain scalar.
       - {run: echo a=1 >> $GITHUB_ENV} # expect: embedded-script-lint
-      # Quoting a pattern makes it literal: with GITHUB_OUTPUT='f*', `foo` matches only unquoted.
-      # Every operand of `[[ ]]` and `case ... esac`, and of another variable's `${...}`, is left.
+      # Only redirect targets are quoted. Elsewhere quoting can change what the script does: with
+      # GITHUB_OUTPUT='f*', the `for` list globs and the patterns match `foo` only unquoted.
+      - run: | # expect: embedded-script-lint
+          echo "a=1" >> $GITHUB_ENV
+          if [ -f $GITHUB_PATH ]; then cat $GITHUB_PATH; fi
+      - run: | # expect: embedded-script-lint
+          for file in $GITHUB_OUTPUT; do echo "$file"; done
+      - run: | # expect: embedded-script-lint
+          while read -r line; do echo "$line"; done < $GITHUB_ENV
+      - run: | # expect: embedded-script-lint
+          case foo in
+            bar) echo esac ;;
+            $GITHUB_OUTPUT) echo matched >> $GITHUB_STEP_SUMMARY ;;
+          esac
       - run: | # expect: embedded-script-lint
           [[ foo == $GITHUB_OUTPUT ]] && echo matched
       - run: | # expect: embedded-script-lint
