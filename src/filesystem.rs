@@ -191,20 +191,49 @@ pub fn read(path: &Path) -> io::Result<Source> {
     })
 }
 
-/// Renaming over a link would replace it with a regular file and leave its target unfixed.
-pub fn refuse_link(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        true => Err("refusing to replace a symbolic link".to_owned()),
-        false => Ok(()),
+/// The directory a scan reaches files from when `input` is one of its paths: the input itself, or
+/// the directory of a file input.
+pub fn base(input: &Path) -> PathBuf {
+    match input.parent() {
+        _ if input.is_dir() => input.to_path_buf(),
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
     }
+}
+
+/// Refuses a write to `path` through a symbolic link: the file itself, which renaming would replace
+/// with a regular file and leave its target unfixed, or a directory between `base` and the file,
+/// which may lead out of the tree the scan started from (another repository, or a directory the
+/// user never named). A link above `base`, such as a symlinked home directory, is the user's.
+pub fn refuse_link(path: &Path, base: &Path) -> Result<(), String> {
+    let is_link = |path: &Path| {
+        fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    };
+    if is_link(path) {
+        return Err("refusing to replace a symbolic link".to_owned());
+    }
+    let directories = path
+        .ancestors()
+        .skip(1)
+        .take_while(|ancestor| *ancestor != base && !ancestor.as_os_str().is_empty());
+    for directory in directories {
+        if is_link(directory) {
+            return Err(format!(
+                "refusing to write through the symbolic link `{}`",
+                directory.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 /// Writes `text` to `path` with the BOM `original` had, unless `path` no longer holds `original`,
-/// the content `text` was computed from.
-pub fn replace(path: &Path, original: &Source, text: &str) -> Result<(), String> {
-    refuse_link(path)?;
+/// the content `text` was computed from, or a symbolic link leads to it below `base`
+/// (`refuse_link`).
+pub fn replace(path: &Path, base: &Path, original: &Source, text: &str) -> Result<(), String> {
+    refuse_link(path, base)?;
     let name = path
         .file_name()
         .ok_or("workflow has no filename")?

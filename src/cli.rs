@@ -404,6 +404,7 @@ fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String>
         match result {
             Ok(inspection) => files.push(FileReport {
                 path,
+                base: None,
                 inspection,
                 unwritten: None,
             }),
@@ -469,6 +470,10 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
             .map(|(path, input)| (path, owners[input]))
             .collect()
     };
+    let bases: Vec<PathBuf> = workflows
+        .iter()
+        .map(|(_, input)| filesystem::base(&paths[*input]))
+        .collect();
     let workflows = owned(workflows);
     let mut settings = policy::Settings {
         persona: if args.pedantic {
@@ -496,8 +501,8 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         files: &mut files,
         errors: &mut errors,
     };
-    for ((path, _), inspected) in workflows.into_iter().zip(inspections) {
-        found.add(path, inspected);
+    for (((path, _), base), inspected) in workflows.into_iter().zip(bases).zip(inspections) {
+        found.add(path, &base, inspected);
     }
     let roots = owned(repository_roots(paths));
     repository_actions(
@@ -622,10 +627,11 @@ struct Found<'a> {
 }
 
 impl Found<'_> {
-    fn add(&mut self, path: PathBuf, inspected: Result<engine::Inspection, String>) {
+    fn add(&mut self, path: PathBuf, base: &Path, inspected: Result<engine::Inspection, String>) {
         match inspected {
             Ok(inspection) => self.files.push(FileReport {
                 path,
+                base: Some(base.to_path_buf()),
                 inspection,
                 unwritten: None,
             }),
@@ -662,6 +668,7 @@ fn repository_actions(
         .collect();
     // Directories that may hold an action, with the root they resolve from and its config.
     let mut pending: Vec<(PathBuf, PathBuf, usize)> = Vec::new();
+    let mut warned = HashSet::new();
     for (root, owner) in roots {
         pending.push((root.clone(), root.clone(), *owner));
         let resolved = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
@@ -681,6 +688,18 @@ fn repository_actions(
             let Some(path) = filesystem::action_file(&directory) else {
                 continue;
             };
+            // `..` or a symbolic link may lead out of the repository, to files it does not own.
+            let resolved = fs::canonicalize(&path).ok();
+            let inside = fs::canonicalize(&root).ok().zip(resolved.as_ref());
+            if !inside.is_some_and(|(root, resolved)| resolved.starts_with(root)) {
+                if warned.insert(path.clone()) {
+                    report::warning(format_args!(
+                        "{}: the local action resolves outside its repository and is not scanned",
+                        path.display()
+                    ));
+                }
+                continue;
+            }
             // A link to an action already scanned is that action.
             let linked =
                 filesystem::link_target(&path).is_some_and(|target| seen.contains(&target));
@@ -700,7 +719,7 @@ fn repository_actions(
                     pending.push((root.join(called), root.clone(), owner));
                 }
             }
-            found.add(path, inspected);
+            found.add(path, &root, inspected);
         }
     }
 }
@@ -778,12 +797,17 @@ fn write_fixes(files: &mut [FileReport], errors: &[RunError]) {
         };
         file.unwritten = match blocked {
             Some(reason) => Some(Unwritten::Blocked(reason.to_owned())),
-            None => filesystem::replace(&file.path, &file.inspection.source, &outcome.source)
-                .err()
-                .map(|error| {
-                    report::error(format_args!("{}: {error}", file.path.display()));
-                    Unwritten::Failed(error)
-                }),
+            None => filesystem::replace(
+                &file.path,
+                file.base.as_deref().unwrap_or(Path::new("")),
+                &file.inspection.source,
+                &outcome.source,
+            )
+            .err()
+            .map(|error| {
+                report::error(format_args!("{}: {error}", file.path.display()));
+                Unwritten::Failed(error)
+            }),
         };
     }
 }

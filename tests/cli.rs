@@ -508,6 +508,84 @@ fn a_repository_scan_follows_its_workflows_into_local_actions() {
 }
 
 #[test]
+fn fix_never_writes_outside_the_repository_or_through_a_symlinked_directory() {
+    let temp = TempDir::new("escape");
+    let action = "name: Outside\ndescription: Another repository's action.\nruns:\n  using: composite\n  \
+                  steps:\n    - run: echo hi\n      shell: bash\n      env: {}\n";
+    let workflow = "on: push\npermissions: {}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \
+                    timeout-minutes: 5\n    env: {}\n    steps:\n      - uses: ./linked\n      \
+                    - uses: ./../outside\n";
+    let outside = temp.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("action.yml"), action).unwrap();
+    let shared = temp.join("shared/workflows");
+    fs::create_dir_all(&shared).unwrap();
+    fs::write(shared.join("ci.yml"), workflow).unwrap();
+    let repository = temp.join("repository");
+    fs::create_dir_all(repository.join(".github/workflows")).unwrap();
+    fs::write(repository.join(".github/workflows/ci.yml"), workflow).unwrap();
+    std::os::unix::fs::symlink("../outside", repository.join("linked")).unwrap();
+    let linked = temp.join("linked");
+    fs::create_dir_all(&linked).unwrap();
+    std::os::unix::fs::symlink("../shared", linked.join(".github")).unwrap();
+    let fix = |input: &std::path::Path| {
+        bin()
+            .args([
+                "--offline",
+                "--no-config",
+                "--persona",
+                "auditor",
+                "--format",
+                "json",
+            ])
+            .args(["--fix", "--fail-on", "none"])
+            .arg(input)
+            .output()
+            .unwrap()
+    };
+
+    // Both `uses` resolve to another repository's action: skipped with a warning, never read.
+    let escaped = fix(&repository);
+    let stderr = String::from_utf8_lossy(&escaped.stderr);
+    assert!(escaped.status.success(), "{stderr}");
+    for path in ["linked/action.yml", "../outside/action.yml"] {
+        assert!(
+            stderr.contains(&format!(
+                "{path}: the local action resolves outside its repository and is not scanned"
+            )),
+            "{stderr}"
+        );
+    }
+    let report: serde_json::Value = serde_json::from_slice(&escaped.stdout).unwrap();
+    assert_eq!(report["summary"]["files"], 1, "{report}");
+    assert_eq!(
+        fs::read_to_string(outside.join("action.yml")).unwrap(),
+        action
+    );
+    let own = fs::read_to_string(repository.join(".github/workflows/ci.yml")).unwrap();
+    assert!(!own.contains("env: {}"), "{own}");
+
+    // A workflow reached through a symlinked `.github` is reported, but its fix is not written.
+    let through = fix(&linked);
+    let stderr = String::from_utf8_lossy(&through.stderr);
+    assert_eq!(through.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("refusing to write through the symbolic link"),
+        "{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_slice(&through.stdout).unwrap();
+    assert!(
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["rule"] == "redundant-setting"),
+        "{report}"
+    );
+    assert_eq!(fs::read_to_string(shared.join("ci.yml")).unwrap(), workflow);
+}
+
+#[test]
 fn action_files_are_told_from_workflows_by_name_and_directory() {
     let temp = TempDir::new("action-names");
     let workflows = temp.join("repository/.github/workflows");

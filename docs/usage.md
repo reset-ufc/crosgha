@@ -5,8 +5,9 @@
 Each `PATH` may be a workflow file, an action file, a directory of workflows, a repository root, or its `.github`; the
 last two are scanned through `.github/workflows` as zizmor does with `.`. Subdirectories are never scanned: GitHub does
 not load workflows from them. Without a `PATH`, crosgha scans `.github/workflows`. A `dependabot.yml` path gets only the
-Dependabot cooldown check. Symlinked files are scanned but never rewritten; a symlink to another scanned workflow or
-action is reported and fixed once, through its target.
+Dependabot cooldown check. Symlinked files, and files reached through a symlinked directory below the `PATH`, are
+scanned but never rewritten; a symlink to another scanned workflow or action is reported and fixed once, through its
+target.
 
 ### Actions
 
@@ -20,7 +21,8 @@ file](https://docs.github.com/en/actions/reference/workflows-and-actions/metadat
   actions the repository runs or publishes: the root `action.yml` (or `action.yaml`), and each local action a scanned
   workflow calls with `uses: ./path`, followed through the composite actions it calls in turn. Paths resolve from the
   repository root, the caller's checkout. Each action is scanned once, a cycle included; a `uses: ./path` without a
-  metadata file (a missing directory, or a Docker action with only a `Dockerfile`) is skipped. crosgha does not walk
+  metadata file (a missing directory, or a Docker action with only a `Dockerfile`) is skipped, and so, with a warning,
+  is one that resolves outside the repository through `..` or a symbolic link. crosgha does not walk
   the other directories as zizmor does, so an action that no workflow calls, such as one published from a
   subdirectory, is scanned only when given as a `PATH`. A repository with a root action and no workflows is not an
   empty input.

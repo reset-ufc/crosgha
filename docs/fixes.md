@@ -8,7 +8,8 @@
 
 A fix that fails a check is skipped: its finding stays in the report with the reason ("Not fixed" in text, `fixes` in
 JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
-workflow is never rewritten; its fixes are reported as not written. Action files get the same fixes, checked the same
+workflow, or one reached through a symlinked directory below the scanned path, is never rewritten; its fixes are
+reported as not written. Action files get the same fixes, checked the same
 way, on their composite steps ([which actions are scanned](usage.md#actions)).
 
 Eight rules have fixes:

@@ -20,7 +20,7 @@ CLI (directly, from the pre-push hook, or from the Action)
     -> discover workflow and action files and the config
     -> parse and validate each file as a workflow or an action
     -> run the rules enabled by persona and config that read that kind of file (online rules only with a token)
-    -> add each repository's root action and the local actions its files call, until none is new
+    -> add each repository's root action and the local actions its files call that resolve inside it, until none is new
     -> drop ignored findings, remap severities, apply --min-severity
     -> validate every proposed patch
     -> run repository rules for the .github directory next to the scanned workflows
@@ -32,7 +32,7 @@ The stages have these interfaces:
 
 | Module | Input | Output and responsibility |
 |---|---|---|
-| `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, whether each is a workflow or an action (`kind`: `action.yml`/`action.yaml` outside `.github/workflows`), the metadata file of an action directory (`action.yml` before `action.yaml`, as the runner reads them), the repository root and `.github` directory of an input, file contents without a BOM (`Source`), and per-file verified writes that put the BOM back and refuse a file changed since it was read. |
+| `filesystem` | File or directory path | Sorted `.yml`/`.yaml` paths, whether each is a workflow or an action (`kind`: `action.yml`/`action.yaml` outside `.github/workflows`), the metadata file of an action directory (`action.yml` before `action.yaml`, as the runner reads them), the repository root and `.github` directory of an input, file contents without a BOM (`Source`), and per-file verified writes that put the BOM back and refuse a file changed since it was read or reached through a symbolic link below the scanned path. |
 | `workflow` | YAML source | A `yamlpath::Document`, the semantic YAML value, and its `Kind`; `parse` validates a workflow's `on`/`jobs` structure and `parse_action` an action's `runs` mapping and string `runs.using`. A parse error is reported for that file, the other files are still checked, and the run exits with status 2 without writing. |
 | `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order. |
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
@@ -119,7 +119,8 @@ unchanged under `--fix` and remain visible in the report.
    the line before it.
 4. Prepare all files before writing any file. Write each changed file through
    a same-directory temporary file, preserving permissions and renaming it
-   over the original. A symbolic link is never replaced, nor a file whose content changed
+   over the original. A symbolic link is never replaced or written through (any
+   directory between the scanned path and the file), nor a file whose content changed
    since it was read (an edit saved during the scan). A failed write is
    reported, exits with status 2, and leaves the other files fixed; there is no
    cross-file transaction.

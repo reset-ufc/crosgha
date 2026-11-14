@@ -44,6 +44,9 @@ pub fn render(
 
 pub struct FileReport {
     pub path: PathBuf,
+    /// The directory the scan reached `path` from; a fix is never written through a symbolic link
+    /// below it. `None` for a remote file, which is never written.
+    pub base: Option<PathBuf>,
     pub inspection: Inspection,
     /// Why the verified fixes of this file are not on disk.
     pub unwritten: Option<Unwritten>,
