@@ -11,7 +11,7 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 | Fix validation | Runnable for add, replace, and remove proposals; `persist-credentials` and `error-suppression` propose adds of a step input, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, `unsafe-if-condition` the new source of an `if` scalar, `readability` the new source of a step value, and `redundant-setting` removals of a key. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
 | Composite Action | Report mode works: zizmor-action's inputs, a sha256-verified release binary, SARIF upload, job summary, then `fail-on`. |
-| PR and auto-merge | Mode contract and guards exist; repository operations are pending. |
+| PR and auto-merge | PR mode works: `crosgha --fix`, a commit of only the fixed files to `crosgha/fix-<run_id>`, and a PR opened with `fix-token`. Auto-merge is validated and refused (#73). |
 
 ## Execution path
 
@@ -193,16 +193,19 @@ over this CLI. Its inputs are a superset of `zizmorcore/zizmor-action`'s, so
 3. Run the CLI once and produce findings, job summary, and SARIF output.
 4. With `advanced-security: true`, upload SARIF using a SHA-pinned upload
    action; the caller grants `security-events: write`.
-5. In requested PR mode, run verified fixes, then create a branch and a PR with
-   the supplied `fix-token` (GitHub App token or fine-grained PAT) that lists
-   each rule and fix. Auto-merge is a separate explicit opt-in that fails fast when the
+5. In requested PR mode, after the report, run verified fixes, commit only the
+   files they wrote through a separate index (the caller's HEAD and index stay),
+   push `crosgha/fix-<run_id>`, and open a PR with the supplied `fix-token`
+   (GitHub App token or fine-grained PAT) that lists each rule and fix. Auto-merge is a separate explicit opt-in that fails fast when the
    base branch has no required status checks. The Action never merges directly.
 
-Steps 1-4 are implemented in `action/entrypoint.sh` and `action.yml`. The release version comes
+Steps 1-5 are implemented in `action/entrypoint.sh` and `action.yml`. The release version comes
 from the Action's own `Cargo.toml`, which release-please bumps in the tagged commit, and tags are
 `vX.Y.Z` (`include-component-in-tag: false`). The entry point never fails on findings: it records
-`exit-code`, the upload step runs, and a last step applies it. Step 5 (PR and auto-merge modes) is
-validated and then refused until its repository operations have end-to-end fixtures.
+`exit-code`, the upload step runs, and a last step applies it. Step 5 runs in
+`action/entrypoint.sh` too, so it precedes the upload; `tests/action.rs` runs it against a local
+bare repository and a stand-in for the pull request API. Auto-merge is validated and then refused
+until its merge operations have end-to-end fixtures.
 
 ## Verification surface
 
