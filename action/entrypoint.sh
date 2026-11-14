@@ -67,14 +67,15 @@ fi
 if [[ "${CROSGHA_AUTO_MERGE:-false}" == true && "${CROSGHA_FIX:-none}" != pull-request ]]; then
     fail "dangerously-auto-merge requires fix: pull-request"
 fi
-# ponytail: auto-merge lands once its merge operations have end-to-end fixtures (#73).
-if [[ "${CROSGHA_AUTO_MERGE:-false}" == true ]]; then
-    fail "dangerously-auto-merge is not implemented yet"
-fi
 if [[ "${CROSGHA_FIX:-none}" == pull-request ]]; then
     [[ "${GITHUB_REF:-}" == refs/heads/* ]] \
         || fail "fix: pull-request proposes fixes against a branch, and ${GITHUB_REF:-this run} is not one; run it on push, schedule, or workflow_dispatch"
     command -v jq > /dev/null || fail "fix: pull-request needs jq on the runner"
+fi
+# First, so that every run with the flag shows it, however it ends.
+if [[ "${CROSGHA_AUTO_MERGE:-false}" == true ]]; then
+    printf '> [!WARNING]\n> `dangerously-auto-merge` is on: the fix pull request merges itself once its required reviews and status checks pass.\n\n' \
+        >> "$GITHUB_STEP_SUMMARY"
 fi
 
 # The release matching this Action revision: release-please bumps Cargo.toml in the tagged
@@ -217,6 +218,52 @@ quoted() {
     cat "$@"
     echo "::$token::"
 }
+branch="crosgha/fix-${GITHUB_RUN_ID:?}"
+base_branch="${GITHUB_REF#refs/heads/}"
+server="${GITHUB_SERVER_URL:-https://github.com}"
+api="${GITHUB_API_URL:-https://api.github.com}"
+# A header file keeps the token off the command line; the trap removes it however the step ends.
+authorization="$RUNNER_TEMP/crosgha-authorization"
+(umask 077 && printf 'Authorization: Bearer %s\n' "$CROSGHA_FIX_TOKEN" > "$authorization")
+trap 'rm -f "$authorization"' EXIT
+# Prints the HTTP status of METHOD URL with fix-token, saving the answer to OUT and sending the
+# optional file BODY.
+call() {
+    local protocol='=https' status data=()
+    # Tests serve the API over plain HTTP; nothing else may.
+    [[ "$2" =~ ^http://127\.0\.0\.1:[0-9]+/ ]] && protocol='=http'
+    [[ -n "${4:-}" ]] && data=(--data-binary "@$4")
+    status="$(curl --proto "$protocol" --tlsv1.2 -sS -o "$3" -w '%{http_code}' -X "$1" \
+        -H @"$authorization" -H 'Accept: application/vnd.github+json' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' "${data[@]}" "$2")" || status=000
+    echo "$status"
+}
+# GitHub's error message in the answer FILE, REST or GraphQL.
+message() {
+    jq -r '[.message // empty, (.errors[]?.message // empty)] | join("; ")' "$1" 2> /dev/null \
+        || echo "no message"
+}
+
+# Auto-merge would merge an unchecked workflow change on a branch that requires no check, so the
+# run stops before anything is pushed. The Action only enables auto-merge; GitHub merges.
+if [[ "${CROSGHA_AUTO_MERGE:-false}" == true ]]; then
+    encoded="$(jq -rn --arg branch "$base_branch" '$branch | @uri')"
+    rules="$RUNNER_TEMP/crosgha-rules.json"
+    protection="$RUNNER_TEMP/crosgha-branch.json"
+    status="$(call GET "$api/repos/$GITHUB_REPOSITORY/rules/branches/$encoded" "$rules")"
+    [[ "$status" == 200 ]] \
+        || fail "cannot read the rules of $base_branch (HTTP $status): $(message "$rules")"
+    status="$(call GET "$api/repos/$GITHUB_REPOSITORY/branches/$encoded" "$protection")"
+    [[ "$status" == 200 ]] \
+        || fail "cannot read the protection of $base_branch (HTTP $status): $(message "$protection")"
+    required="$(jq -n --slurpfile rules "$rules" --slurpfile branch "$protection" \
+        '[($rules[0][] | select(.type == "required_status_checks") | .parameters.required_status_checks[]),
+          ($branch[0].protection.required_status_checks // {} | .contexts[]?, .checks[]?)] | length')" \
+        || fail "cannot read the required status checks of $base_branch"
+    (( required > 0 )) \
+        || fail "dangerously-auto-merge needs required status checks, and $base_branch has no required status checks; the Action never merges an unchecked workflow change"
+fi
+
 # The checkout as the earlier steps left it, to tell their edits from crosgha's.
 snapshot="$RUNNER_TEMP/crosgha-snapshot-index"
 GIT_INDEX_FILE="$snapshot" git read-tree HEAD
@@ -245,9 +292,6 @@ if [[ -s "$RUNNER_TEMP/crosgha-edited" ]]; then
     fail "fix: pull-request commits only crosgha's fixes, and the files above already differed from HEAD before them"
 fi
 
-branch="crosgha/fix-${GITHUB_RUN_ID:?}"
-base_branch="${GITHUB_REF#refs/heads/}"
-server="${GITHUB_SERVER_URL:-https://github.com}"
 title="Fix GitHub Actions smells found by crosgha"
 summary="$(jq -r '[.fixes[] | select(.status == "applied") | "- `\(.path):\(.line)` \(.rule): \(.location)"] | join("\n")' "$fixes")"
 export GIT_AUTHOR_NAME='github-actions[bot]' GIT_COMMITTER_NAME='github-actions[bot]'
@@ -271,27 +315,26 @@ if ! GIT_CONFIG_COUNT=2 \
     fail "cannot push $branch; fix-token needs Contents and Workflows: write, and the branch must not exist yet"
 fi
 
-api="${GITHUB_API_URL:-https://api.github.com}"
-api_protocol='=https'
-# Tests serve the API over plain HTTP; nothing else may.
-[[ "$api" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] && api_protocol='=http'
 request="$RUNNER_TEMP/crosgha-pull-request.json"
 jq --arg title "$title" --arg head "$branch" --arg base "$base_branch" --arg version "$version" \
     '{title: $title, head: $head, base: $base, body: ("crosgha v\($version) fixed these findings, each checked to re-parse, to remove its finding without adding one, and to change only its own YAML node:\n\n" + ([.fixes[] | select(.status == "applied") | "- `\(.path):\(.line)` \(.rule): \(.location)"] | join("\n")))}' \
     "$fixes" > "$request"
-# A header file keeps the token off the command line.
-authorization="$RUNNER_TEMP/crosgha-authorization"
-(umask 077 && printf 'Authorization: Bearer %s\n' "$CROSGHA_FIX_TOKEN" > "$authorization")
 response="$RUNNER_TEMP/crosgha-pull-response.json"
-status="$(curl --proto "$api_protocol" --tlsv1.2 -sS -o "$response" -w '%{http_code}' -X POST \
-    -H @"$authorization" -H 'Accept: application/vnd.github+json' \
-    -H 'X-GitHub-Api-Version: 2022-11-28' --data-binary @"$request" \
-    "$api/repos/$GITHUB_REPOSITORY/pulls")" || status=000
-rm -f "$authorization"
-if [[ "$status" != 201 ]]; then
-    message="$(jq -r '.message // empty' "$response" 2> /dev/null || true)"
-    fail "cannot open the pull request for $branch (HTTP $status): ${message:-no message}"
-fi
+status="$(call POST "$api/repos/$GITHUB_REPOSITORY/pulls" "$response" "$request")"
+[[ "$status" == 201 ]] \
+    || fail "cannot open the pull request for $branch (HTTP $status): $(message "$response")"
 url="$(jq -r '.html_url' "$response")"
 echo "pull-request-url=$url" >> "$GITHUB_OUTPUT"
 printf '\nProposed %s fix(es) in %s\n' "$(grep -c '^- ' <<< "$summary")" "$url" >> "$GITHUB_STEP_SUMMARY"
+
+[[ "${CROSGHA_AUTO_MERGE:-false}" == true ]] || exit 0
+mutation="$RUNNER_TEMP/crosgha-auto-merge.json"
+jq --arg query 'mutation($id: ID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id}) { pullRequest { url } } }' \
+    '{query: $query, variables: {id: .node_id}}' "$response" > "$mutation"
+answer="$RUNNER_TEMP/crosgha-auto-merge-response.json"
+status="$(call POST "${GITHUB_GRAPHQL_URL:-$api/graphql}" "$answer" "$mutation")"
+if [[ "$status" != 200 ]] \
+    || ! jq -e '(.errors // []) == [] and .data.enablePullRequestAutoMerge != null' "$answer" > /dev/null 2>&1; then
+    fail "opened $url, but GitHub did not enable auto-merge on it (HTTP $status): $(message "$answer")"
+fi
+printf 'Auto-merge is on for %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"

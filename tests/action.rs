@@ -536,16 +536,22 @@ fn job_summary_is_plain_markdown_in_every_mode() {
 /// The fix token of pull-request mode; no log, output, or summary may show it.
 const FIX_TOKEN: &str = "fix-token-secret";
 
-/// One request to the pull request stand-in.
+/// One request to the GitHub API stand-in.
 struct Request {
     line: String,
     authorization: String,
     body: String,
 }
 
-/// A stand-in for GitHub's create-pull-request endpoint: it records each request and answers every
-/// one with `status` and `body`.
-fn pulls_api(status: &'static str, body: &'static str) -> (String, Arc<Mutex<Vec<Request>>>) {
+/// An answer of the GitHub API stand-in: the method and path it answers, its status line, and its
+/// body.
+type Answer = (&'static str, &'static str, &'static str);
+
+const NOT_FOUND: (&str, &str) = ("404 Not Found", r#"{"message":"Not Found"}"#);
+
+/// A stand-in for the GitHub API that pull-request mode calls: it records each request and gives
+/// the matching answer, or 404.
+fn github_stand_in(answers: &'static [Answer]) -> (String, Arc<Mutex<Vec<Request>>>) {
     let log = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::clone(&log);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -573,8 +579,14 @@ fn pulls_api(status: &'static str, body: &'static str) -> (String, Arc<Mutex<Vec
             }
             let mut content = vec![0; length];
             reader.read_exact(&mut content).unwrap();
+            let mut words = line.split_whitespace();
+            let request = format!("{} {}", words.next().unwrap(), words.next().unwrap());
+            let (status, body) = answers
+                .iter()
+                .find(|(answered, ..)| *answered == request)
+                .map_or(NOT_FOUND, |(_, status, body)| (*status, *body));
             requests.lock().unwrap().push(Request {
-                line: line.trim().to_owned(),
+                line: request,
                 authorization,
                 body: String::from_utf8(content).unwrap(),
             });
@@ -702,10 +714,11 @@ fn pull_request_mode_commits_only_the_fixes_and_opens_a_pull_request_listing_the
         .collect();
     assert!(applied.len() > 1, "{report}");
 
-    let (api, requests) = pulls_api(
+    let (api, requests) = github_stand_in(&[(
+        "POST /repos/owner/repo/pulls",
         "201 Created",
-        r#"{"number":7,"html_url":"https://github.com/owner/repo/pull/7"}"#,
-    );
+        r#"{"number":7,"node_id":"PR_7","html_url":"https://github.com/owner/repo/pull/7"}"#,
+    )]);
     let env = pull_request_env(&server, &api);
     let run = run_in(&work, &base, ".", &borrowed(&env));
     let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
@@ -751,7 +764,7 @@ fn pull_request_mode_commits_only_the_fixes_and_opens_a_pull_request_listing_the
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     let request = &requests[0];
-    assert_eq!(request.line, "POST /repos/owner/repo/pulls HTTP/1.1");
+    assert_eq!(request.line, "POST /repos/owner/repo/pulls");
     assert_eq!(request.authorization, format!("Bearer {FIX_TOKEN}"));
     let pull: serde_json::Value = serde_json::from_str(&request.body).unwrap();
     assert_eq!(pull["head"], branch);
@@ -776,10 +789,11 @@ fn pull_request_mode_commits_only_the_fixes_and_opens_a_pull_request_listing_the
 fn pull_request_mode_opens_nothing_without_a_fix_a_branch_or_an_accepted_push() {
     let root = release(env!("CARGO_PKG_VERSION"), false);
     let base = serve(root.clone());
-    let (api, requests) = pulls_api(
+    let (api, requests) = github_stand_in(&[(
+        "POST /repos/owner/repo/pulls",
         "422 Unprocessable Entity",
         r#"{"message":"Validation Failed"}"#,
-    );
+    )]);
     let mut runs = Vec::new();
 
     // Findings whose only fix validation refuses leave nothing to propose.
@@ -874,6 +888,209 @@ fn pull_request_mode_opens_nothing_without_a_fix_a_branch_or_an_accepted_push() 
     assert!(!run.output.status.success());
     assert!(stdout.contains("Validation Failed"), "{stdout}");
     assert_eq!(requests.lock().unwrap().len(), 1);
+    runs.push(run);
+
+    for run in runs {
+        assert_hidden(&run);
+        fs::remove_dir_all(&run.temp).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A ruleset on `main` that requires the `test` check.
+const REQUIRED_BY_RULESET: Answer = (
+    "GET /repos/owner/repo/rules/branches/main",
+    "200 OK",
+    r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}],"strict_required_status_checks_policy":false}}]"#,
+);
+/// Classic branch protection on `main` that requires the `ci` check.
+const REQUIRED_BY_PROTECTION: Answer = (
+    "GET /repos/owner/repo/branches/main",
+    "200 OK",
+    r#"{"name":"main","protected":true,"protection":{"enabled":true,"required_status_checks":{"enforcement_level":"non_admins","contexts":["ci"],"checks":[{"context":"ci","app_id":null}]}}}"#,
+);
+const NO_RULES: Answer = ("GET /repos/owner/repo/rules/branches/main", "200 OK", "[]");
+const UNPROTECTED: Answer = (
+    "GET /repos/owner/repo/branches/main",
+    "200 OK",
+    r#"{"name":"main","protected":false}"#,
+);
+const OPENED: Answer = (
+    "POST /repos/owner/repo/pulls",
+    "201 Created",
+    r#"{"number":7,"node_id":"PR_7","html_url":"https://github.com/owner/repo/pull/7"}"#,
+);
+const ENABLED: Answer = (
+    "POST /graphql",
+    "200 OK",
+    r#"{"data":{"enablePullRequestAutoMerge":{"pullRequest":{"url":"https://github.com/owner/repo/pull/7"}}}}"#,
+);
+const AUTO_MERGE_WARNING: &str = "`dangerously-auto-merge` is on";
+
+fn auto_merge_env(server: &Path, api: &str) -> Vec<(&'static str, String)> {
+    let mut env = pull_request_env(server, api);
+    env.push(("CROSGHA_AUTO_MERGE", "true".to_owned()));
+    env
+}
+
+#[test]
+fn auto_merge_mode_enables_auto_merge_on_the_pull_request_it_opened() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+    let ci = fs::read_to_string(fixture("checkout-credentials.before.yml")).unwrap();
+    let mut runs = Vec::new();
+
+    // Required checks come from a ruleset or from classic branch protection.
+    let (by_ruleset, by_ruleset_log) =
+        github_stand_in(&[REQUIRED_BY_RULESET, UNPROTECTED, OPENED, ENABLED]);
+    let (by_protection, by_protection_log) =
+        github_stand_in(&[NO_RULES, REQUIRED_BY_PROTECTION, OPENED, ENABLED]);
+    for (api, log) in [
+        (by_ruleset, by_ruleset_log),
+        (by_protection, by_protection_log),
+    ] {
+        let (work, server) = checkout(&[(".github/workflows/ci.yml", &ci)]);
+        let env = auto_merge_env(&server, &api);
+        let run = run_in(&work, &base, ".", &borrowed(&env));
+        let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+        assert!(run.output.status.success(), "{stdout}");
+        assert_eq!(
+            output_value(&run.outputs, "pull-request-url"),
+            Some("https://github.com/owner/repo/pull/7")
+        );
+        assert!(run.summary.contains(AUTO_MERGE_WARNING), "{}", run.summary);
+
+        let requests = log.lock().unwrap();
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.authorization == format!("Bearer {FIX_TOKEN}")),
+        );
+        // The Action only turns auto-merge on; GitHub merges once the checks pass.
+        let enable: Vec<&Request> = requests
+            .iter()
+            .filter(|request| request.line == "POST /graphql")
+            .collect();
+        assert_eq!(enable.len(), 1);
+        let mutation: serde_json::Value = serde_json::from_str(&enable[0].body).unwrap();
+        assert!(
+            mutation["query"]
+                .as_str()
+                .unwrap()
+                .contains("enablePullRequestAutoMerge"),
+            "{mutation}"
+        );
+        assert_eq!(mutation["variables"]["id"], "PR_7");
+        assert!(
+            !requests
+                .iter()
+                .any(|request| request.line.ends_with("/merge")),
+            "{:?}",
+            requests
+                .iter()
+                .map(|request| &request.line)
+                .collect::<Vec<_>>()
+        );
+        drop(requests);
+        runs.push(run);
+    }
+
+    for run in runs {
+        assert_hidden(&run);
+        fs::remove_dir_all(&run.temp).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn auto_merge_mode_fails_fast_without_required_status_checks_or_when_github_refuses() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+    let ci = fs::read_to_string(fixture("checkout-credentials.before.yml")).unwrap();
+    let mut runs = Vec::new();
+
+    // No required check on the base branch: nothing is pushed or opened.
+    let (api, requests) = github_stand_in(&[NO_RULES, UNPROTECTED, OPENED, ENABLED]);
+    let (work, server) = checkout(&[(".github/workflows/ci.yml", &ci)]);
+    let env = auto_merge_env(&server, &api);
+    let run = run_in(&work, &base, ".", &borrowed(&env));
+    let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+    assert!(!run.output.status.success());
+    assert!(stdout.contains("no required status checks"), "{stdout}");
+    assert!(run.summary.contains(AUTO_MERGE_WARNING), "{}", run.summary);
+    assert_eq!(
+        git(
+            &server.join("owner/repo.git"),
+            &["branch", "--list", "crosgha/*"]
+        ),
+        ""
+    );
+    assert!(
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| request.line.starts_with("GET ")),
+    );
+    runs.push(run);
+
+    // The warning comes first, so a run that ends early still shows it.
+    let empty = TempDir::new("empty");
+    let mut env = auto_merge_env(&server, &api);
+    env.push(("CROSGHA_FAIL_ON_NO_INPUTS", "false".to_owned()));
+    let run = run_in(&work, &base, empty.to_str().unwrap(), &borrowed(&env));
+    assert!(run.output.status.success());
+    assert_eq!(output_value(&run.outputs, "findings"), Some("0"));
+    assert!(
+        run.summary.contains(AUTO_MERGE_WARNING),
+        "{:?}",
+        run.summary
+    );
+    runs.push(run);
+
+    // Branch rules the token cannot read leave the checks unknown, which is not a yes.
+    let (api, _) = github_stand_in(&[
+        (
+            "GET /repos/owner/repo/rules/branches/main",
+            "403 Forbidden",
+            r#"{"message":"Resource not accessible by integration"}"#,
+        ),
+        UNPROTECTED,
+        OPENED,
+        ENABLED,
+    ]);
+    let (work, server) = checkout(&[(".github/workflows/ci.yml", &ci)]);
+    let env = auto_merge_env(&server, &api);
+    let run = run_in(&work, &base, ".", &borrowed(&env));
+    let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+    assert!(!run.output.status.success());
+    assert!(
+        stdout.contains("Resource not accessible by integration"),
+        "{stdout}"
+    );
+    runs.push(run);
+
+    // GitHub refusing auto-merge fails the step and names the pull request it left open.
+    let (api, _) = github_stand_in(&[
+        REQUIRED_BY_RULESET,
+        UNPROTECTED,
+        OPENED,
+        (
+            "POST /graphql",
+            "200 OK",
+            r#"{"data":null,"errors":[{"message":"Auto merge is not allowed for this repository"}]}"#,
+        ),
+    ]);
+    let (work, server) = checkout(&[(".github/workflows/ci.yml", &ci)]);
+    let env = auto_merge_env(&server, &api);
+    let run = run_in(&work, &base, ".", &borrowed(&env));
+    let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+    assert!(!run.output.status.success());
+    assert!(
+        stdout.contains("Auto merge is not allowed for this repository")
+            && stdout.contains("https://github.com/owner/repo/pull/7"),
+        "{stdout}"
+    );
     runs.push(run);
 
     for run in runs {

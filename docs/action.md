@@ -28,7 +28,7 @@ A run goes like this:
 3. It uploads SARIF with `github/codeql-action/upload-sarif`, pinned by SHA.
 4. Only then does it fail according to `fail-on`.
 
-Linux X64 runners only. `dangerously-auto-merge` is validated but not implemented yet.
+Linux X64 runners only.
 
 ## Fix pull requests
 
@@ -76,3 +76,18 @@ jobs:
 When an earlier step of the job already changed a file that crosgha then fixes, the Action fails instead of
 committing that change with the fix. A re-run of the same workflow run finds `crosgha/fix-<run_id>` already pushed and fails; delete the branch or start a
 new run.
+
+## Auto-merge
+
+`dangerously-auto-merge: true` (with `fix: pull-request`) enables GitHub
+[auto-merge](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request)
+on the pull request it opened, through the GraphQL `enablePullRequestAutoMerge` mutation, so GitHub merges it once
+its required reviews and status checks pass. The Action never merges by itself. The name says it: a merged fix
+changes your workflows without a human reading it, at your own risk.
+
+- Before it pushes anything, the Action reads the base branch's rules and classic branch protection with `fix-token`.
+  When neither requires a status check, or it cannot read them, it fails instead of opening a pull request that
+  would merge unchecked.
+- Auto-merge must be allowed in the repository settings, and the pull request uses the repository's default merge
+  method. When GitHub refuses to enable it, the step fails and names the pull request it left open.
+- Every run with the flag puts a warning in the job summary.
