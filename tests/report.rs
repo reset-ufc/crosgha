@@ -113,6 +113,26 @@ fn every_format_reports_the_findings_of_the_text_report() {
         for field in ["shortDescription", "fullDescription", "help"] {
             assert!(!rule[field]["text"].as_str().unwrap().is_empty(), "{rule}");
         }
+        // Code scanning shows `help.markdown` next to the alert, so it carries the text and the
+        // rule's own fixtures as its non-compliant and compliant examples.
+        let id = rule["id"].as_str().unwrap();
+        let markdown = rule["help"]["markdown"].as_str().unwrap();
+        assert!(
+            markdown.starts_with(rule["help"]["text"].as_str().unwrap()),
+            "{id}"
+        );
+        assert!(
+            markdown.contains("**Non-compliant**") || id == "repo-org-settings",
+            "{id}"
+        );
+        for kind in ["before", "clean"] {
+            if let Ok(yaml) = fs::read_to_string(fixture(&format!("rules/{id}.{kind}.yml"))) {
+                assert!(
+                    markdown.contains(&format!("```yaml\n{yaml}```")),
+                    "{id}.{kind}"
+                );
+            }
+        }
     }
     let results = run["results"].as_array().unwrap();
     assert_eq!(results.len(), count);

@@ -760,6 +760,22 @@ const QUALITY_TAGS: &[&str] = &[
     "insecure-protocol",
 ];
 
+/// The non-compliant and compliant examples of the rule `id`: its section of
+/// `docs/rule-examples.md`, which `tests/report.rs` regenerates from the fixtures, without the
+/// heading and summary that SARIF already carries.
+fn examples(id: &str) -> &'static str {
+    let heading = format!("\n## `{id}`\n\n");
+    let examples = include_str!("../docs/rule-examples.md");
+    let Some(start) = examples.find(&heading) else {
+        return "";
+    };
+    let section = &examples[start + heading.len()..];
+    let section = &section[..section.find("\n## ").unwrap_or(section.len())];
+    section
+        .find("\n\n")
+        .map_or("", |summary| &section[summary..])
+}
+
 /// SARIF 2.1.0 with the fields GitHub code scanning requires:
 /// https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support
 /// `partialFingerprints` is left to `upload-sarif`, which computes GitHub's line hash.
@@ -805,7 +821,7 @@ pub fn sarif(files: &[FileReport], repository: &[Located], errors: &[RunError]) 
                 "name": rule.id,
                 "shortDescription": { "text": rule.summary },
                 "fullDescription": { "text": rule.summary },
-                "help": { "text": help },
+                "help": { "markdown": format!("{help}{}", examples(rule.id)), "text": help },
                 "defaultConfiguration": { "level": rule.severity.as_str() },
                 "properties": properties,
             })
