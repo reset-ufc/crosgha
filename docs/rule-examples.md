@@ -118,6 +118,9 @@ jobs:
           EOF
       - run: | # expect: unpinned-package
           echo "$(case "${RUNNER_OS}" in Linux) pip install requests;; esac)"
+      # Only an unquoted `esac` of the same substitution closes its `case`.
+      - run: | # expect: unpinned-package
+          echo "$(case "${RUNNER_OS}" in Windows) echo $('esac');; Linux) pip install requests;; esac)"
       - run: |
           cat <<'EOF' > INSTALL.md
           pip install requests

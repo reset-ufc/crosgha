@@ -30,7 +30,7 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
         words: Vec::new(),
         piped: false,
     }];
-    let mut nesting = vec![Nesting::Code { open: 0, from: 0 }];
+    let mut nesting = vec![Nesting::Code { open: 0, cases: 0 }];
     // Each pending heredoc, and the index of the command that reads it.
     let mut heredocs: Vec<(Heredoc, usize)> = Vec::new();
     let mut start = None;
@@ -47,16 +47,13 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
         if let Some(Nesting::Double) = nesting.last() {
             match rest {
                 [b'$', b'(', ..] => {
-                    end_word(&mut commands, script, &mut start, index);
+                    end_word(&mut commands, &mut nesting, script, &mut start, index);
                     index += 1;
                     separate(&mut commands, bytes, index);
-                    nesting.push(Nesting::Code {
-                        open: 1,
-                        from: commands.len() - 1,
-                    });
+                    nesting.push(Nesting::Code { open: 1, cases: 0 });
                 }
                 [b'`', ..] => {
-                    end_word(&mut commands, script, &mut start, index);
+                    end_word(&mut commands, &mut nesting, script, &mut start, index);
                     nesting.push(Nesting::Backtick);
                     separate(&mut commands, bytes, index);
                 }
@@ -76,7 +73,7 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
         }
         match rest {
             [b'\\', b'\n', ..] | [b' ' | b'\t' | b'\r', ..] => {
-                end_word(&mut commands, script, &mut start, index);
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
                 index += usize::from(rest[0] == b'\\');
             }
             [b'\\', ..] => {
@@ -104,13 +101,13 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
                 index += 2;
             }
             [b'<', b'<', ..] if let Some((heredoc, end)) = heredoc(script, index + 2) => {
-                end_word(&mut commands, script, &mut start, index);
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
                 heredocs.push((heredoc, commands.len() - 1));
                 index = end;
                 continue;
             }
             [b'\n', ..] if !heredocs.is_empty() => {
-                end_word(&mut commands, script, &mut start, index);
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
                 let mut scripts = Vec::new();
                 index += 1;
                 for (heredoc, reader) in heredocs.drain(..) {
@@ -136,22 +133,21 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
                 continue;
             }
             [b'(', ..] => {
-                end_word(&mut commands, script, &mut start, index);
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
                 separate(&mut commands, bytes, index);
                 match nesting.last_mut().expect(OPEN) {
-                    _ if index > 0 && bytes[index - 1] == b'$' => nesting.push(Nesting::Code {
-                        open: 1,
-                        from: commands.len() - 1,
-                    }),
+                    _ if index > 0 && bytes[index - 1] == b'$' => {
+                        nesting.push(Nesting::Code { open: 1, cases: 0 })
+                    }
                     Nesting::Code { open, .. } if inner => *open += 1,
                     _ => {}
                 }
             }
             [b')', ..] => {
-                end_word(&mut commands, script, &mut start, index);
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
                 match nesting.last_mut().expect(OPEN) {
                     // A pattern's `)` closes nothing; `(pattern)` opened its own parenthesis.
-                    Nesting::Code { open: 1, from } if inner && open_case(&commands[*from..]) => {}
+                    Nesting::Code { open: 1, cases } if inner && *cases > 0 => {}
                     Nesting::Code { open: 1, .. } if inner => {
                         nesting.pop();
                     }
@@ -161,7 +157,7 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
                 separate(&mut commands, bytes, index);
             }
             [b'`', ..] => {
-                end_word(&mut commands, script, &mut start, index);
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
                 match nesting.last() {
                     Some(Nesting::Backtick) => {
                         nesting.pop();
@@ -171,7 +167,7 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
                 separate(&mut commands, bytes, index);
             }
             [b'\n' | b';' | b'|' | b'&', ..] => {
-                end_word(&mut commands, script, &mut start, index);
+                end_word(&mut commands, &mut nesting, script, &mut start, index);
                 separate(&mut commands, bytes, index);
             }
             _ => {
@@ -180,35 +176,22 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
         }
         index += 1;
     }
-    end_word(&mut commands, script, &mut start, bytes.len());
+    end_word(&mut commands, &mut nesting, script, &mut start, bytes.len());
     commands.retain(|command| !command.words.is_empty());
     commands
 }
 
 /// Where `commands` reads, the innermost last.
 enum Nesting {
-    /// Shell code with the parentheses still open in it (`$(` opens one), whose commands start at
-    /// index `from`.
+    /// Shell code with the parentheses still open in it (`$(` opens one) and the `case` commands
+    /// in it that no `esac` closed yet.
     Code {
         open: usize,
-        from: usize,
+        cases: usize,
     },
     /// Shell code that the next backtick ends.
     Backtick,
     Double,
-}
-
-/// Whether `commands` open a `case` that no `esac` closes yet.
-fn open_case(commands: &[Command<'_>]) -> bool {
-    let mut open = 0usize;
-    for command in commands {
-        match command.words.iter().find(|word| !KEYWORDS.contains(word)) {
-            Some(&"case") => open += 1,
-            Some(&"esac") => open = open.saturating_sub(1),
-            _ => {}
-        }
-    }
-    open > 0
 }
 
 /// Shells that run a script read from standard input.
@@ -279,16 +262,29 @@ fn separate(commands: &mut Vec<Command<'_>>, bytes: &[u8], index: usize) {
     }
 }
 
+/// Ends the word that started at `start`. An unquoted `case` or `esac` that starts a command
+/// opens or closes a `case` in the shell code being read.
 fn end_word<'a>(
     commands: &mut [Command<'a>],
+    nesting: &mut [Nesting],
     script: &'a str,
     start: &mut Option<usize>,
     end: usize,
 ) {
-    if let Some(begin) = start.take() {
-        let word = script[begin..end].trim_matches(['"', '\'']);
-        if !word.is_empty() {
-            commands.last_mut().expect(NOT_EMPTY).words.push(word);
+    let Some(begin) = start.take() else { return };
+    let raw = &script[begin..end];
+    let word = raw.trim_matches(['"', '\'']);
+    if word.is_empty() {
+        return;
+    }
+    let words = &mut commands.last_mut().expect(NOT_EMPTY).words;
+    let first = words.iter().all(|word| KEYWORDS.contains(word));
+    words.push(word);
+    if let (true, Some(Nesting::Code { cases, .. })) = (first, nesting.last_mut()) {
+        match raw {
+            "case" => *cases += 1,
+            "esac" => *cases = cases.saturating_sub(1),
+            _ => {}
         }
     }
 }
