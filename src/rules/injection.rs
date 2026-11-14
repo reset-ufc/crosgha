@@ -7,13 +7,13 @@ use super::common::{self, EXTERNAL_TRIGGERS, PRIVILEGED_TRIGGERS};
 use super::expression::{self, Operator};
 use super::{ChangeKind, Edit, Finding, ProposedFix, Rule, shell};
 use crate::policy::{Persona, Severity};
-use crate::workflow::Workflow;
+use crate::workflow::{Kind, Workflow};
 
 // GitHub: untrusted context values expanded into scripts are a script injection risk.
 // https://docs.github.com/en/actions/concepts/security/script-injections
 pub const SCRIPT_INJECTION: Rule = Rule {
     id: "script-injection",
-    summary: "Untrusted event data must not be expanded into scripts with `${{ }}`.",
+    summary: "Untrusted event data and composite action inputs must not be expanded into scripts with `${{ }}`.",
     tag: "script-injection",
     severity: Severity::Error,
     persona: Persona::Regular,
@@ -139,7 +139,11 @@ pub fn script_injection(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 ));
             }
             for (route, script, concepts) in sinks {
-                if let Some(context) = expression::untrusted_in_text(script).first() {
+                let mut untrusted = expression::untrusted_in_text(script);
+                if workflow.kind == Kind::Action {
+                    untrusted.extend(expression::input_reads(script));
+                }
+                if let Some(context) = untrusted.first() {
                     let mut finding = common::finding(
                         workflow,
                         &SCRIPT_INJECTION,
@@ -630,7 +634,7 @@ pub fn obfuscation(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             workflow,
             &OBFUSCATION,
             route,
-            "workflow",
+            workflow.kind.noun(),
             "expression hides a literal or a context path",
         )?);
     }

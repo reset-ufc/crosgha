@@ -12,7 +12,7 @@ inputs:
     required: false
     default: .
   collect:
-    description: Accepted for zizmor-action compatibility; crosgha scans workflows only.
+    description: Accepted for zizmor-action compatibility; crosgha scans workflows and the actions they call.
     required: false
     default: default
   online-audits:
@@ -56,7 +56,7 @@ inputs:
     required: false
     default: ''
   fail-on-no-inputs:
-    description: Fail when an input has no workflow files. With false, such inputs are skipped with a warning and the others are still scanned.
+    description: Fail when an input has no workflow or action files. With false, such inputs are skipped with a warning and the others are still scanned.
     required: false
     default: 'true'
   fail-on:

@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{TempDir, bin, fixture};
+use common::{TempDir, bin, copy_tree, fixture};
 use std::fs;
 
 #[test]
@@ -62,19 +62,6 @@ fn migrate_replaces_other_scanners_with_the_crosgha_action() {
             migrated, unchanged,
             "{tool}: a second migration must be a no-op"
         );
-    }
-}
-
-fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).unwrap();
-        }
     }
 }
 

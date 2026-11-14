@@ -54,31 +54,13 @@ pub enum Place {
     Repository { anchor: Option<PathBuf> },
 }
 
-/// What the workflow scan already read from one file, so repository rules do not read and parse
-/// it again.
-pub struct Parsed<'a> {
-    pub source: &'a str,
-    pub local_actions: &'a [String],
-}
+/// The source of each file the scan already read, by `filesystem::identity` of its path, so
+/// repository rules do not read it again.
+pub type Scanned<'a> = HashMap<PathBuf, &'a str>;
 
-/// Parsed workflows by `filesystem::identity` of their path.
-pub type Scanned<'a> = HashMap<PathBuf, Parsed<'a>>;
-
-/// Paths of the local actions a workflow calls, such as `.github/actions/setup` for
-/// `uses: ./.github/actions/setup`.
-pub fn local_actions(workflow: &Workflow) -> Vec<String> {
-    common::all_uses(workflow)
-        .into_iter()
-        .filter_map(|(_, _, uses)| uses.strip_prefix("./").map(str::to_owned))
-        .collect()
-}
-
-/// Every entry of `github/workflows`, with what the scan parsed from it. Entries the scan skipped
-/// or failed to parse as a workflow come back as `None`.
-fn workflow_files<'a>(
-    github: &Path,
-    scanned: &'a Scanned,
-) -> Vec<(PathBuf, Option<&'a Parsed<'a>>)> {
+/// Every entry of `github/workflows`, with the source the scan read from it. Entries the scan
+/// skipped or failed to parse as a workflow come back as `None`.
+fn workflow_files<'a>(github: &Path, scanned: &'a Scanned) -> Vec<(PathBuf, Option<&'a str>)> {
     let directory = github.join("workflows");
     // `filesystem::identity` of each entry, resolving their shared directory once.
     let resolved = fs::canonicalize(&directory).ok();
@@ -92,8 +74,8 @@ fn workflow_files<'a>(
                 Some(directory) => directory.join(entry.file_name()),
                 None => path.clone(),
             };
-            let parsed = scanned.get(&key);
-            (path, parsed)
+            let source = scanned.get(&key).copied();
+            (path, source)
         })
         .collect()
 }
@@ -200,9 +182,9 @@ pub fn tooling(
 ) -> Result<Vec<Located>, String> {
     let root = github.parent().unwrap_or(github);
     let mut workflows = String::new();
-    for (path, parsed) in workflow_files(github, scanned) {
-        let source = match parsed {
-            Some(parsed) => parsed.source.to_ascii_lowercase(),
+    for (path, source) in workflow_files(github, scanned) {
+        let source = match source {
+            Some(source) => source.to_ascii_lowercase(),
             None => filesystem::read(&path)
                 .map(|source| source.text.to_ascii_lowercase())
                 .unwrap_or_default(),
@@ -241,85 +223,4 @@ pub fn tooling(
             },
         })
         .collect())
-}
-
-// GitHub retired these JavaScript action runtimes; runners now run such actions on Node 24:
-// https://github.blog/changelog/2023-05-04-github-actions-all-actions-will-run-on-node16-instead-of-node12/
-// https://github.blog/changelog/2024-09-25-end-of-life-for-actions-node16/
-// https://github.blog/changelog/2026-09-23-node-20-is-no-longer-available-in-github-actions/
-pub const RUNTIME: Rule = Rule {
-    id: "retired-runtime",
-    summary: "JavaScript actions must not declare a retired Node.js runtime.",
-    tag: "deprecated-command/feature",
-    severity: Severity::Warning,
-    persona: Persona::Regular,
-    equivalents: &[("actionlint", "action")],
-    configurable: false,
-    relational: false,
-};
-
-const RETIRED_RUNTIMES: &[&str] = &["node12", "node16", "node20"];
-
-/// Checks the action this repository publishes (`action.yml` at the root) and every local action
-/// its workflows use. Unparseable files are skipped: the workflow scan already reports them.
-pub fn runtime(
-    github: &Path,
-    scanned: &Scanned,
-    honor_ignores: bool,
-    _options: Options,
-) -> Result<Vec<Located>, String> {
-    let root = github.parent().unwrap_or(github);
-    let mut actions: Vec<PathBuf> = vec![root.to_path_buf()];
-    for (path, parsed) in workflow_files(github, scanned) {
-        let used = match parsed {
-            Some(parsed) => parsed.local_actions.to_vec(),
-            None => match filesystem::read(&path)
-                .ok()
-                .and_then(|source| Workflow::parse_yaml(source.text).ok())
-            {
-                Some(workflow) => local_actions(&workflow),
-                None => continue,
-            },
-        };
-        actions.extend(used.iter().map(|path| root.join(path)));
-    }
-    actions.sort();
-    actions.dedup();
-
-    let mut found = Vec::new();
-    for directory in actions {
-        let Some((path, action)) = ["action.yml", "action.yaml"].iter().find_map(|name| {
-            let path = directory.join(name);
-            let action = Workflow::parse_yaml(filesystem::read(&path).ok()?.text).ok()?;
-            Some((path, action))
-        }) else {
-            continue;
-        };
-        let Some(using) = action
-            .value
-            .get("runs")
-            .and_then(|runs| runs.get("using"))
-            .and_then(Value::as_str)
-            .filter(|using| RETIRED_RUNTIMES.contains(using))
-        else {
-            continue;
-        };
-        let finding = common::finding(
-            &action,
-            &RUNTIME,
-            Route::default().with_key("runs").with_key("using"),
-            "action",
-            format!(
-                "`{using}` is retired; runners run this action on Node 24, so declare `node24`"
-            ),
-        )?;
-        if !honor_ignores || !super::ignored(&action, &finding) {
-            found.push(Located {
-                path,
-                place: Place::File(action.document.source().to_owned()),
-                finding,
-            });
-        }
-    }
-    Ok(found)
 }

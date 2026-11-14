@@ -1,0 +1,18 @@
+# A composite action has no `defaults`, so every `run` step setting `shell: bash` is required.
+name: Release
+description: Builds and uploads the release archive.
+runs:
+  using: composite
+  steps:
+    - name: Build
+      shell: bash
+      run: make dist
+    - name: Checksum
+      shell: bash
+      run: sha256sum dist/* > dist/sha256.sum
+    - name: Upload
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: dist
+        path: dist/
+        if-no-files-found: error

@@ -1,0 +1,5 @@
+name: Changelog
+description: Checks that the pull request updates the changelog.
+runs:
+  using: node16
+  main: dist/index.js

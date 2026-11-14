@@ -1,0 +1,12 @@
+name: Cache
+description: Restores and saves the cargo cache, after setting up the toolchain once.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      with:
+        path: ~/.cargo
+        key: cargo-${{ hashFiles('Cargo.lock') }}
+    # Calls back into `setup`; each action is scanned once.
+    - if: ${{ false }}
+      uses: ./.github/actions/setup

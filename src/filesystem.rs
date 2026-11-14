@@ -3,17 +3,21 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::workflow::Kind;
+
 const BOM: &str = "\u{feff}";
 
-/// Workflow files of a file input, or the `.yml`/`.yaml` files directly inside a directory.
-/// GitHub reads workflows only from `.github/workflows` itself: "You must store workflow files in
-/// the `.github/workflows` directory of your repository"
+/// Workflow and action files of a file input, or the `.yml`/`.yaml` files directly inside a
+/// directory. GitHub reads workflows only from `.github/workflows` itself: "You must store
+/// workflow files in the `.github/workflows` directory of your repository"
 /// (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax), and
 /// "Subdirectories of the `workflows` directory are not supported"
 /// (https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows). So no
 /// directory is walked, and a repository root or its `.github` is scanned only through its
 /// workflows, as zizmor collects `.` inputs; the rest of a repository holds YAML that is not a
-/// workflow.
+/// workflow. The actions of a repository are found from its workflows instead
+/// (`repository_root`, `action_file`), so an input whose repository publishes an action at its
+/// root is not empty.
 pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mut workflows = Vec::new();
     let redirected = if is_github_dir(path) {
@@ -23,19 +27,76 @@ pub fn discover(path: &Path) -> Result<Vec<PathBuf>, String> {
     } else {
         None
     };
-    let path = redirected.as_deref().unwrap_or(path);
+    let directory = redirected.as_deref().unwrap_or(path);
     // A repository without `.github/workflows` has no workflow, which the error below says.
-    if redirected.is_none() || path.is_dir() {
-        collect(path, &mut workflows)?;
+    if redirected.is_none() || directory.is_dir() {
+        collect(directory, &mut workflows)?;
     }
     workflows.sort();
-    if workflows.is_empty() {
+    let root_action = repository_root(path).and_then(|root| action_file(&root));
+    if workflows.is_empty() && root_action.is_none() {
         return Err(format!(
             "no .yml or .yaml workflow files found in `{}`",
-            path.display()
+            directory.display()
         ));
     }
     Ok(workflows)
+}
+
+/// Whether `path` is an action metadata file. As in zizmor, a file named `action.yml` or
+/// `action.yaml` is an action unless it sits in `.github/workflows`, where it is a workflow
+/// (`collect_from_file` in `crates/zizmor/src/registry/input.rs` at
+/// dc2209b6b6d76781c43d2a09aa9d51b56627457c).
+pub fn kind(path: &Path) -> Kind {
+    let named = path
+        .file_name()
+        .is_some_and(|name| name == "action.yml" || name == "action.yaml");
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let in_workflows =
+        fs::canonicalize(parent).is_ok_and(|parent| parent.ends_with(".github/workflows"));
+    if named && !in_workflows {
+        Kind::Action
+    } else {
+        Kind::Workflow
+    }
+}
+
+/// The metadata file of the action in `directory`. The runner loads `action.yml` and reads
+/// `action.yaml` only when there is none (`ActionManager.cs` in actions/runner at
+/// 8cfa1049f86781d141056082d73802d56cd2b433); a directory with only a `Dockerfile` has none.
+pub fn action_file(directory: &Path) -> Option<PathBuf> {
+    ["action.yml", "action.yaml"]
+        .iter()
+        .map(|name| directory.join(name))
+        .find(|path| path.is_file())
+}
+
+/// The repository an input belongs to: the root above a `.github/workflows` directory or a
+/// `.github` directory, or a directory with `.github` or `.git`. `None` for files and other
+/// directories.
+pub fn repository_root(input: &Path) -> Option<PathBuf> {
+    let parent = |path: &Path| match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    if !input.is_dir() {
+        return None;
+    }
+    if is_github_dir(input) {
+        return Some(parent(input));
+    }
+    let workflows = input.file_name().is_some_and(|name| name == "workflows")
+        && input
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == ".github");
+    if workflows {
+        return Some(parent(&parent(input)));
+    }
+    (input.join(".github").is_dir() || input.join(".git").exists()).then(|| input.to_path_buf())
 }
 
 fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -66,7 +127,11 @@ fn collect(path: &Path, workflows: &mut Vec<PathBuf>) -> Result<(), String> {
         let is_file = entry_type.is_file()
             || (entry_type.is_symlink()
                 && entry.path().metadata().is_ok_and(|meta| meta.is_file()));
-        if is_file && is_yaml_file(&entry.path()) {
+        // The runner never reads an `action.yaml` next to an `action.yml` (`action_file`).
+        let shadowed = entry.file_name() == "action.yaml"
+            && path.join("action.yml").is_file()
+            && kind(&entry.path()) == Kind::Action;
+        if is_file && is_yaml_file(&entry.path()) && !shadowed {
             workflows.push(entry.path());
         }
     }
@@ -126,20 +191,49 @@ pub fn read(path: &Path) -> io::Result<Source> {
     })
 }
 
-/// Renaming over a link would replace it with a regular file and leave its target unfixed.
-pub fn refuse_link(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        true => Err("refusing to replace a symbolic link".to_owned()),
-        false => Ok(()),
+/// The directory a scan reaches files from when `input` is one of its paths: the input itself, or
+/// the directory of a file input.
+pub fn base(input: &Path) -> PathBuf {
+    match input.parent() {
+        _ if input.is_dir() => input.to_path_buf(),
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
     }
+}
+
+/// Refuses a write to `path` through a symbolic link: the file itself, which renaming would replace
+/// with a regular file and leave its target unfixed, or a directory between `base` and the file,
+/// which may lead out of the tree the scan started from (another repository, or a directory the
+/// user never named). A link above `base`, such as a symlinked home directory, is the user's.
+pub fn refuse_link(path: &Path, base: &Path) -> Result<(), String> {
+    let is_link = |path: &Path| {
+        fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    };
+    if is_link(path) {
+        return Err("refusing to replace a symbolic link".to_owned());
+    }
+    let directories = path
+        .ancestors()
+        .skip(1)
+        .take_while(|ancestor| *ancestor != base && !ancestor.as_os_str().is_empty());
+    for directory in directories {
+        if is_link(directory) {
+            return Err(format!(
+                "refusing to write through the symbolic link `{}`",
+                directory.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 /// Writes `text` to `path` with the BOM `original` had, unless `path` no longer holds `original`,
-/// the content `text` was computed from.
-pub fn replace(path: &Path, original: &Source, text: &str) -> Result<(), String> {
-    refuse_link(path)?;
+/// the content `text` was computed from, or a symbolic link leads to it below `base`
+/// (`refuse_link`).
+pub fn replace(path: &Path, base: &Path, original: &Source, text: &str) -> Result<(), String> {
+    refuse_link(path, base)?;
     let name = path
         .file_name()
         .ok_or("workflow has no filename")?

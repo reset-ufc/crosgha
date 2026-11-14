@@ -3,9 +3,12 @@
 Rust CLI and composite GitHub Action that detect smells in GitHub Actions workflows and fix them deterministically,
 preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
 
-- **Scan:** finds workflows directly inside `.github/workflows`, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
-- **Rules:** 51 cover every tag of the curated taxonomy: 42 per workflow, 4 per repository, and 5 that query the
-  GitHub API.
+- **Scan:** finds workflows directly inside `.github/workflows`, plus action files (`action.yml`/`action.yaml`) given
+  as inputs, at the repository root, or called as `uses: ./path` from scanned workflows and composite actions; parses
+  YAML with `yamlpath`, and validates top-level `on` and `jobs` (workflows) or `runs.using` (actions). Rules that read
+  only steps run on composite `runs.steps` (`Reads` in `src/rules/mod.rs`).
+- **Rules:** 51 cover every tag of the curated taxonomy: 43 per file (workflow or action), 3 per repository, and 5
+  that query the GitHub API.
 - **Fixes:** only `persist-credentials`, `removed-feature` (setup-java distributions), `deprecated-command`
   (workflow commands to environment files), `embedded-script-lint` (quotes and braces environment file paths,
   appends instead of overwriting), `unsafe-if-condition` (a condition mixing `${{ }}` with text becomes one
@@ -81,7 +84,8 @@ It is listed in `.git/info/exclude` and never committed.
 6. Bug fixes get a regression test only when existing behavior tests leave a real gap.
 7. Every rule ships with YAML fixtures. Workflow rules live in `tests/fixtures/rules/`,
    online rules live in `tests/fixtures/online/`, and each repository rule has a repository in
-   `tests/fixtures/repos/<rule>/` that must report it. `tests/rules.rs` checks each `.before.yml` against its
+   `tests/fixtures/repos/<rule>/` that must report it. Fixtures in `tests/fixtures/actions/` are scanned as an
+   `action.yml`; every rule with a `metadata` check needs one. `tests/rules.rs` checks each `.before.yml` against its
    `# expect: <rule>` markers and fails when a registered rule has no fixture. Markers count:
    `# expect: <rule>, <rule>` requires two findings of that rule on the line. The hand-written
    `.clean.yml` applies the remediation and must not be reported. `.after.yml` is never written by
@@ -96,7 +100,7 @@ It is listed in `.git/info/exclude` and never committed.
 ```
 src/main.rs                 CLI entry point
 src/cli.rs                  CLI options, orchestration, exit status
-src/workflow.rs             YAML parsing and workflow validation
+src/workflow.rs             YAML parsing and workflow or action validation
 src/engine.rs               Per-file inspection: parse, run rules, prepare the fix
 src/rules/                  Rules by dimension, repository and online rules; shared traversal (common.rs),
                             `${{ }}` expressions (expression.rs), and shell commands (shell.rs)
@@ -121,7 +125,7 @@ tests/rules.rs              fixture-driven rule checks, fake GitHub API server
 tests/action.rs             Action entry point against a local release server
 tests/install.rs            install.sh piped into sh against the same server
 tests/common/               shared test helpers: the binary, fixtures, TempDir, the release server
-tests/fixtures/             rules/, online/ (+ api.json), repos/, migrate/, and CLI inputs
+tests/fixtures/             rules/, actions/, online/ (+ api.json), repos/, migrate/, and CLI inputs
 .githooks/                  commit-msg (Conventional Commits), pre-push (full check)
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)
 release-please-config.json  release PR + changelog config (manifest: .release-please-manifest.json)

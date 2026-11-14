@@ -3,7 +3,7 @@ use yamlpath::Route;
 
 use super::{ChangeKind, Edit, Finding, ProposedFix, Rule, common, expression, shell};
 use crate::policy::{Persona, Severity};
-use crate::workflow::Workflow;
+use crate::workflow::{Kind, Workflow};
 
 // zizmor `anonymous-definition` and Khatami et al. (SCAM 2024), KZ-16 "Name run steps". The ghlint
 // concepts follow its rules at 74115a437cfa161c2fd2d72fc2ebcd83ac514b80
@@ -149,7 +149,8 @@ fn report(
 
 pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
-    if workflow.value.get("name").is_none() {
+    // An action's `name` is required, so `schema-validity` reports its absence.
+    if workflow.kind == Kind::Workflow && workflow.value.get("name").is_none() {
         findings.push(report(
             workflow,
             Route::default().with_key("on"),
@@ -160,7 +161,8 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     }
     let workflow_shell = shell::default_shell(&workflow.value);
     for job in common::jobs(workflow) {
-        if !kebab(job.name) {
+        // A composite action's `runs` has no ID or name of its own.
+        if job.kind == Kind::Workflow && !kebab(job.name) {
             findings.push(report(
                 workflow,
                 job.route.clone(),
@@ -173,7 +175,7 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         let named = job
             .get("name")
             .is_some_and(|name| name.as_str().is_none_or(|name| !name.trim().is_empty()));
-        if !named {
+        if job.kind == Kind::Workflow && !named {
             findings.push(report(
                 workflow,
                 job.route.clone(),
@@ -185,7 +187,21 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         let default_shell = shell::default_shell(job.value).or(workflow_shell);
         let mut ids: Vec<&str> = Vec::new();
         for step in common::steps(&job) {
-            findings.extend(step_findings(workflow, &step, default_shell)?);
+            findings.extend(step_findings(workflow, &step)?);
+            // A composite `run` step without `shell` is a `schema-validity` error, not a choice.
+            if job.kind == Kind::Workflow
+                && step.run().is_some()
+                && step.value.get("shell").is_none()
+                && default_shell.is_none()
+            {
+                findings.push(report(
+                    workflow,
+                    step.key("run"),
+                    step.location.clone(),
+                    "`run` step has no `shell`, in the step or in `defaults.run`",
+                    &["MissingShell"],
+                )?);
+            }
             // Each pair is reported once, at the later step; a repeated ID adds no pair.
             let Some(id) = step
                 .value
@@ -229,13 +245,8 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-/// Names, IDs, the shell, and token references of one step. `default_shell` is the job's or the
-/// workflow's `defaults.run.shell`.
-fn step_findings(
-    workflow: &Workflow,
-    step: &common::Step<'_>,
-    default_shell: Option<&str>,
-) -> Result<Vec<Finding>, String> {
+/// Names, IDs, and token references of one step.
+fn step_findings(workflow: &Workflow, step: &common::Step<'_>) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     if step.run().is_some() && step.value.get("name").is_none() {
         findings.push(report(
@@ -244,15 +255,6 @@ fn step_findings(
             step.location.clone(),
             "`run` step has no `name`",
             &["MissingStepName"],
-        )?);
-    }
-    if step.run().is_some() && step.value.get("shell").is_none() && default_shell.is_none() {
-        findings.push(report(
-            workflow,
-            step.key("run"),
-            step.location.clone(),
-            "`run` step has no `shell`, in the step or in `defaults.run`",
-            &["MissingShell"],
         )?);
     }
     if let Some(id) = step.value.get("id").and_then(Value::as_str)

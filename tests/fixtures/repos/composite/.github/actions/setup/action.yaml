@@ -1,0 +1,3 @@
+# The runner reads action.yml when both exist, so this file is never scanned; it has no `runs`.
+name: Unused copy
+description: Shadowed by action.yml.

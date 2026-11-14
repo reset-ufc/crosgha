@@ -1,0 +1,11 @@
+# No workflow uses this action and it is not at the root, so a repository scan skips it.
+name: Unused
+description: Echoes its input.
+inputs:
+  text:
+    description: Text to echo.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo ${{ inputs.text }}

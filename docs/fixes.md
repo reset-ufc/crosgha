@@ -8,13 +8,16 @@
 
 A fix that fails a check is skipped: its finding stays in the report with the reason ("Not fixed" in text, `fixes` in
 JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
-workflow is never rewritten; its fixes are reported as not written.
+workflow, or one reached through a symlinked directory below the scanned path, is never rewritten; its fixes are
+reported as not written. Action files get the same fixes, checked the same
+way, on their composite steps ([which actions are scanned](usage.md#actions)).
 
 Eight rules have fixes:
 
 - `persist-credentials` adds `persist-credentials: false`. It leaves the finding unfixed, with the reason in its
   message, when `true` is explicit, when a later step of the job pushes with the persisted token (`git push` or
-  `stefanzweifel/git-auto-commit-action`), or for actions/checkout before v2.
+  `stefanzweifel/git-auto-commit-action`), for actions/checkout before v2, and in an action file, whose later steps
+  are in the caller's workflow.
 - `removed-feature` replaces the AdoptOpenJDK distributions that setup-java v6 removed with the successor its README
   names.
 - `deprecated-command` rewrites each workflow command of a `run` script into the environment file write that

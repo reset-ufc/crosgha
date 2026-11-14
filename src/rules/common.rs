@@ -6,9 +6,12 @@ use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
 use super::{ChangeKind, Edit, Finding, ProposedFix, Rule, online};
-use crate::workflow::Workflow;
+use crate::workflow::{Kind, Workflow};
 
+/// A workflow job, or the `runs` of a composite action, whose steps run inside the caller's job.
 pub struct Job<'a> {
+    pub kind: Kind,
+    /// The job ID; `runs` for a composite action.
     pub name: &'a str,
     pub value: &'a Value,
     pub route: Route<'static>,
@@ -16,7 +19,18 @@ pub struct Job<'a> {
 
 impl<'a> Job<'a> {
     pub fn location(&self) -> String {
-        format!("job `{}`", self.name)
+        match self.kind {
+            Kind::Workflow => format!("job `{}`", self.name),
+            Kind::Action => "action".to_owned(),
+        }
+    }
+
+    /// What a message calls the owner of the steps.
+    pub fn noun(&self) -> &'static str {
+        match self.kind {
+            Kind::Workflow => "job",
+            Kind::Action => "action",
+        }
     }
 
     pub fn get(&self, key: &str) -> Option<&'a Value> {
@@ -24,7 +38,23 @@ impl<'a> Job<'a> {
     }
 }
 
+/// The jobs of a workflow, or the one step list of a composite action. Rules registered as
+/// reading steps (`Reads::Steps` in `rules/mod.rs`) see an action through this; a JavaScript or
+/// Docker action has no steps, so it has no job. `runs` holds none of a job's keys (`runs-on`,
+/// `env`, `if`, ...), so checks of those find nothing there.
 pub fn jobs(workflow: &Workflow) -> Vec<Job<'_>> {
+    if workflow.kind == Kind::Action {
+        let runs = Route::default().with_key("runs");
+        return match workflow.value.get("runs") {
+            Some(value) if workflow.using().as_deref() == Some("composite") => vec![Job {
+                kind: Kind::Action,
+                name: "runs",
+                value,
+                route: runs,
+            }],
+            _ => Vec::new(),
+        };
+    }
     let Some(jobs) = workflow.value.get("jobs").and_then(Value::as_mapping) else {
         return Vec::new();
     };
@@ -32,6 +62,7 @@ pub fn jobs(workflow: &Workflow) -> Vec<Job<'_>> {
         .filter_map(|(name, value)| {
             let name = name.as_str()?;
             Some(Job {
+                kind: Kind::Workflow,
                 name,
                 value,
                 route: Route::default().with_key("jobs").with_key(name.to_owned()),
@@ -162,7 +193,10 @@ pub fn steps<'a>(job: &Job<'a>) -> Vec<Step<'a>> {
     };
     for (index, value) in steps.iter().enumerate() {
         let route = job.route.with_key("steps").with_key(index);
-        let location = format!("job `{}`, step {}", job.name, index + 1);
+        let location = match job.kind {
+            Kind::Workflow => format!("job `{}`, step {}", job.name, index + 1),
+            Kind::Action => format!("step {}", index + 1),
+        };
         if let Some(group) = value.get("parallel").and_then(Value::as_sequence) {
             for (inner, nested) in group.iter().enumerate() {
                 found.push(Step {
@@ -366,6 +400,15 @@ pub fn all_uses(workflow: &Workflow) -> Vec<(Route<'static>, String, &str)> {
         }
     }
     found
+}
+
+/// Paths of the local actions a workflow calls, such as `.github/actions/setup` for
+/// `uses: ./.github/actions/setup`.
+pub fn local_actions(workflow: &Workflow) -> Vec<String> {
+    all_uses(workflow)
+        .into_iter()
+        .filter_map(|(_, _, uses)| uses.strip_prefix("./").map(str::to_owned))
+        .collect()
 }
 
 /// 1-based start and end of the key a route ends with, or of the node for index routes. The

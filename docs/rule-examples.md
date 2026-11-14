@@ -345,7 +345,7 @@ jobs:
 
 ## `script-injection`
 
-Untrusted event data must not be expanded into scripts with `${{ }}`.
+Untrusted event data and composite action inputs must not be expanded into scripts with `${{ }}`.
 
 **Non-compliant**
 
@@ -419,6 +419,59 @@ jobs:
       - run: echo "${{ format('{0}', github.event.issue.title == 'x') }} ${{ github.event.issue.title }}" # expect: script-injection
 ```
 
+`tests/fixtures/actions/script-injection.before.yml`
+
+```yaml
+name: Pull request report
+description: Runs a caller's command, then summarizes and labels the pull request.
+inputs:
+  command:
+    description: Command to run after the build.
+    required: true
+  title:
+    description: Title of the summary.
+    default: Build report
+  dry-run:
+    description: Print the label instead of adding it.
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Run the command
+      shell: bash
+      run: ${{ inputs.command }} # expect: script-injection
+    - name: Write the summary
+      shell: bash
+      env:
+        TITLE: ${{ inputs.title }}
+      run: echo "## $TITLE" >> "${GITHUB_STEP_SUMMARY}"
+    # Comparisons evaluate to true or false, so no input text reaches the script.
+    - name: Report the dry run
+      if: ${{ inputs.dry-run == 'true' }}
+      shell: bash
+      run: echo "dry run=${{ inputs.dry-run == 'true' }}"
+    - name: Comment
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      with:
+        script: | # expect: script-injection
+          await github.rest.issues.createComment({
+            ...context.repo,
+            issue_number: context.issue.number,
+            body: '${{ inputs.title }}',
+          })
+    # An input passed to another action is not expanded into a script here.
+    - name: Upload
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.title }}
+        path: report/
+        if-no-files-found: error
+    - name: Label
+      shell: bash
+      run: | # expect: script-injection
+        gh pr edit --add-label "${{ github.event.pull_request.head.ref }}"
+```
+
 **Compliant**
 
 `tests/fixtures/rules/script-injection.clean.yml`
@@ -450,6 +503,44 @@ jobs:
       - env:
           ISSUE: ${{ toJSON(github.event.issue) }}
         run: echo "$ISSUE" | jq .labels
+```
+
+`tests/fixtures/actions/script-injection.clean.yml`
+
+```yaml
+name: Pull request report
+description: Runs a caller's command, then summarizes and labels the pull request.
+inputs:
+  command:
+    description: Command to run after the build.
+    required: true
+  title:
+    description: Title of the summary.
+    default: Build report
+runs:
+  using: composite
+  steps:
+    - name: Run the command
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+      run: bash -c "$COMMAND"
+    - name: Comment
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      env:
+        TITLE: ${{ inputs.title }}
+      with:
+        script: |
+          await github.rest.issues.createComment({
+            ...context.repo,
+            issue_number: context.issue.number,
+            body: process.env.TITLE,
+          })
+    - name: Label
+      shell: bash
+      env:
+        HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      run: gh pr edit --add-label "$HEAD_REF"
 ```
 
 ## `github-env-injection`
@@ -1383,6 +1474,23 @@ jobs:
       - run: git log -1 --format=%H
 ```
 
+`tests/fixtures/actions/persist-credentials.before.yml`
+
+```yaml
+name: Check out with tags
+description: Checks out the repository with its tags for version detection.
+runs:
+  using: composite
+  steps:
+    # Not fixed: the steps that run after the action are in the caller's workflow.
+    - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0 # expect: persist-credentials
+      with:
+        fetch-depth: 0
+    - name: Describe
+      shell: bash
+      run: git describe --tags
+```
+
 **Compliant**
 
 `tests/fixtures/rules/persist-credentials.clean.yml`
@@ -1443,6 +1551,23 @@ jobs:
       - name: Print the tag command
         run: echo "Tag ready; publish it with git push origin v1.2.3"
       - run: git log -1 --format=%H
+```
+
+`tests/fixtures/actions/persist-credentials.clean.yml`
+
+```yaml
+name: Check out with tags
+description: Checks out the repository with its tags for version detection.
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Describe
+      shell: bash
+      run: git describe --tags
 ```
 
 ## `oidc-misconfig`
@@ -2268,6 +2393,31 @@ jobs:
         run: make
 ```
 
+`tests/fixtures/actions/redundant-setting.before.yml`
+
+```yaml
+# A composite action has no `defaults`, so every `run` step setting `shell: bash` is required.
+name: Release
+description: Builds and uploads the release archive.
+runs:
+  using: composite
+  steps:
+    - name: Build
+      shell: bash
+      env: {} # expect: redundant-setting
+      run: make dist
+    - name: Checksum
+      shell: bash
+      run: sha256sum dist/* > dist/sha256.sum
+    - name: Upload
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      env: {} # expect: redundant-setting
+      with:
+        name: dist
+        path: dist/
+        if-no-files-found: error
+```
+
 **Compliant**
 
 `tests/fixtures/rules/redundant-setting.clean.yml`
@@ -2306,6 +2456,28 @@ jobs:
         shell: bash
       - name: Pwsh
         run: Get-ChildItem
+```
+
+`tests/fixtures/actions/redundant-setting.clean.yml`
+
+```yaml
+name: Release
+description: Builds and uploads the release archive.
+runs:
+  using: composite
+  steps:
+    - name: Build
+      shell: bash
+      run: make dist
+    - name: Checksum
+      shell: bash
+      run: sha256sum dist/* > dist/sha256.sum
+    - name: Upload
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: dist
+        path: dist/
+        if-no-files-found: error
 ```
 
 ## `complex-job`
@@ -2569,6 +2741,35 @@ jobs:
         run: make
 ```
 
+`tests/fixtures/actions/readability.before.yml`
+
+```yaml
+# An action has no workflow name, job ID, or job name to check, and its `run` steps must set
+# `shell`, which `schema-validity` reports.
+name: Build
+description: Builds the project and reports its size.
+runs:
+  using: composite
+  steps:
+    - id: Build_Step # expect: readability
+      name: Build
+      shell: bash
+      run: make build
+    - run: du -sh build # expect: readability
+      shell: bash
+    - id: size
+      name: Size
+      run: du -sh dist
+    - id: sizes # expect: readability
+      name: Sizes
+      shell: bash
+      run: du -h dist
+    - name: Report
+      if: always() # expect: readability, readability
+      shell: bash
+      run: echo done
+```
+
 **Compliant**
 
 `tests/fixtures/rules/readability.clean.yml`
@@ -2618,6 +2819,28 @@ jobs:
   reuse:
     name: Reuse
     uses: ./.github/workflows/reusable.yml
+```
+
+`tests/fixtures/actions/readability.clean.yml`
+
+```yaml
+name: Build
+description: Builds the project and reports its size.
+runs:
+  using: composite
+  steps:
+    - id: build
+      name: Build
+      shell: bash
+      run: make build
+    - name: Size
+      shell: bash
+      run: du -sh build
+    - id: report-sizes
+      name: Report sizes
+      if: ${{ success() || failure() }}
+      shell: bash
+      run: du -h dist
 ```
 
 ## `deprecated-command`
@@ -2684,6 +2907,29 @@ jobs:
       - run: echo "::set-output name=os::windows" # expect: deprecated-command
 ```
 
+`tests/fixtures/actions/deprecated-command.before.yml`
+
+```yaml
+name: Version
+description: Reads the version from Cargo.toml and exports it.
+outputs:
+  version:
+    description: The crate version.
+    value: ${{ steps.read.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - id: read
+      name: Read the version
+      shell: bash
+      run: | # expect: deprecated-command
+        version="$(cargo pkgid | cut -d@ -f2)"
+        echo "::set-output name=version::$version"
+    - name: Export
+      shell: bash
+      run: echo "::set-env name=CRATE_VERSION::${{ steps.read.outputs.version }}" # expect: deprecated-command
+```
+
 **Compliant**
 
 `tests/fixtures/rules/deprecated-command.clean.yml`
@@ -2724,6 +2970,29 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: '"os=windows" >> $env:GITHUB_OUTPUT'
+```
+
+`tests/fixtures/actions/deprecated-command.clean.yml`
+
+```yaml
+name: Version
+description: Reads the version from Cargo.toml and exports it.
+outputs:
+  version:
+    description: The crate version.
+    value: ${{ steps.read.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - id: read
+      name: Read the version
+      shell: bash
+      run: |
+        version="$(cargo pkgid | cut -d@ -f2)"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+    - name: Export
+      shell: bash
+      run: echo "CRATE_VERSION=${{ steps.read.outputs.version }}" >> "$GITHUB_ENV"
 ```
 
 ## `removed-feature`
@@ -2872,7 +3141,7 @@ jobs:
 
 ## `schema-validity`
 
-Workflows must use only the keys GitHub's workflow syntax defines.
+Workflows and actions must use only the keys GitHub's syntax defines.
 
 **Non-compliant**
 
@@ -2909,6 +3178,41 @@ jobs:
       - run: echo orphan
 ```
 
+`tests/fixtures/actions/schema-validity.before.yml`
+
+```yaml
+name: Build and test
+runs: # expect: schema-validity
+  using: composite
+  steps:
+    - name: Build
+      run: make build # expect: schema-validity
+    - name: Test
+      shell: bash
+      run: make test
+      with: # expect: schema-validity
+        target: all
+    - name: Restore the cache
+      uses: ./.github/actions/cache
+      working-directory: build # expect: schema-validity
+      timeout-minutes: 5 # expect: schema-validity
+    - name: Lint # expect: schema-validity
+      shell: bash
+    - name: Package # expect: schema-validity
+      shell: bash
+      run: make package
+      uses: ./.github/actions/package
+    - name: Publish
+      id: publish
+      if: ${{ github.ref == 'refs/heads/main' }}
+      shell: bash
+      env:
+        TARGET: dist
+      working-directory: build
+      continue-on-error: true
+      run: make publish
+```
+
 **Compliant**
 
 `tests/fixtures/rules/schema-validity.clean.yml`
@@ -2933,6 +3237,27 @@ jobs:
         id: sleeper
         background: true
       - wait: [sleeper]
+```
+
+`tests/fixtures/actions/schema-validity.clean.yml`
+
+```yaml
+name: Build and test
+description: Builds, tests, and packages the project.
+runs:
+  using: composite
+  steps:
+    - name: Build
+      shell: bash
+      run: make build
+    - name: Restore the cache
+      uses: ./.github/actions/cache
+      with:
+        path: build
+    - name: Package
+      shell: bash
+      working-directory: build
+      run: make package
 ```
 
 ## `embedded-script-lint`
@@ -3393,6 +3718,108 @@ jobs:
       - run: gh issue list
 ```
 
+## `retired-runtime`
+
+JavaScript actions must not declare a retired Node.js runtime.
+
+**Non-compliant**
+
+`tests/fixtures/rules/retired-runtime.before.yml`
+
+```yaml
+name: Retired runtimes
+on: [push]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4 # expect: retired-runtime
+        with: { persist-credentials: false }
+      - uses: Actions/Setup-Node@v3 # expect: retired-runtime
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0 # expect: retired-runtime
+      - uses: actions/cache/restore@v4.2.0 # expect: retired-runtime
+        with: { path: ~/.npm, key: npm }
+      - uses: actions/github-script@v7 # expect: retired-runtime
+        with: { script: "core.info('x')" }
+      - uses: actions/upload-artifact@v4 # expect: retired-runtime
+        with: { name: dist, path: dist, if-no-files-found: error }
+      - uses: actions/create-release@v1 # expect: retired-runtime
+      # v1 of checkout ran as a runner plugin, not on Node.js.
+      - uses: actions/checkout@v1
+        with: { persist-credentials: false }
+      # Latest v3 artifact releases were rebuilt on node24; removed-feature reports the shutdown.
+      - uses: actions/upload-artifact@v3
+        with: { name: logs, path: logs, if-no-files-found: error }
+      - uses: actions/checkout@main
+        with: { persist-credentials: false }
+      - uses: actions/upload-pages-artifact@v3
+      - uses: ./.github/actions/local
+      - uses: docker://alpine:3.20
+```
+
+`tests/fixtures/actions/retired-runtime.before.yml`
+
+```yaml
+name: Release notes
+description: Drafts release notes from the pull requests merged since the last tag.
+inputs:
+  token:
+    description: Token that reads pull requests.
+    default: ${{ github.token }}
+outputs:
+  notes:
+    description: The drafted notes.
+runs:
+  using: Node20 # expect: retired-runtime
+  main: dist/index.js
+  post: dist/cleanup.js
+```
+
+**Compliant**
+
+`tests/fixtures/rules/retired-runtime.clean.yml`
+
+```yaml
+name: Current runtimes
+on: [push]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v5
+      - uses: actions/setup-python@v6
+      - uses: actions/cache/restore@v5
+        with: { path: ~/.npm, key: npm }
+      - uses: actions/github-script@v8
+        with: { script: "core.info('x')" }
+      - uses: actions/upload-artifact@v6
+        with: { name: dist, path: dist, if-no-files-found: error }
+```
+
+`tests/fixtures/actions/retired-runtime.clean.yml`
+
+```yaml
+name: Release notes
+description: Drafts release notes from the pull requests merged since the last tag.
+inputs:
+  token:
+    description: Token that reads pull requests.
+    default: ${{ github.token }}
+outputs:
+  notes:
+    description: The drafted notes.
+runs:
+  using: node24
+  main: dist/index.js
+  post: dist/cleanup.js
+```
+
 ## `unpinned-action`
 
 Actions, reusable workflows, and container images must be pinned to a full commit SHA or image digest.
@@ -3430,6 +3857,18 @@ jobs:
     uses: example/shared/.github/workflows/build.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 ```
 
+`tests/fixtures/actions/unpinned-action.before.yml`
+
+```yaml
+name: Lint
+description: Runs the linter image from the registry.
+runs:
+  using: docker
+  image: docker://ghcr.io/example/linter:1.4 # expect: unpinned-action
+  args:
+    - --format=github
+```
+
 **Compliant**
 
 `tests/fixtures/rules/unpinned-action.clean.yml`
@@ -3461,6 +3900,18 @@ jobs:
     uses: ./.github/workflows/build.yml
   pinned-reuse:
     uses: example/shared/.github/workflows/build.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+```
+
+`tests/fixtures/actions/unpinned-action.clean.yml`
+
+```yaml
+name: Lint
+description: Runs the linter image from the registry.
+runs:
+  using: docker
+  image: docker://ghcr.io/example/linter@sha256:0f5ab2d1c3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0
+  args:
+    - --format=github
 ```
 
 ## `forbidden-action`
@@ -3844,6 +4295,24 @@ jobs:
         with: { persist-credentials: false }
 ```
 
+`tests/fixtures/online/archived-action.before.yml`
+
+```yaml
+name: Online
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: example/abandoned-release@v1 # expect: archived-action
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+```
+
 **Compliant**
 
 `tests/fixtures/rules/archived-action.clean.yml`
@@ -3862,6 +4331,23 @@ jobs:
       - run: cargo build --locked
       - uses: actions/checkout@v5
         with: { persist-credentials: false }
+```
+
+`tests/fixtures/online/archived-action.clean.yml`
+
+```yaml
+name: Online
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: gh release create "$GITHUB_REF_NAME"
 ```
 
 ## `missing-release-cooldown`
@@ -3967,72 +4453,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: ossf/scorecard-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-```
-
-## `retired-runtime`
-
-JavaScript actions must not declare a retired Node.js runtime.
-
-**Non-compliant**
-
-`tests/fixtures/rules/retired-runtime.before.yml`
-
-```yaml
-name: Retired runtimes
-on: [push]
-permissions: {}
-jobs:
-  build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4 # expect: retired-runtime
-        with: { persist-credentials: false }
-      - uses: Actions/Setup-Node@v3 # expect: retired-runtime
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0 # expect: retired-runtime
-      - uses: actions/cache/restore@v4.2.0 # expect: retired-runtime
-        with: { path: ~/.npm, key: npm }
-      - uses: actions/github-script@v7 # expect: retired-runtime
-        with: { script: "core.info('x')" }
-      - uses: actions/upload-artifact@v4 # expect: retired-runtime
-        with: { name: dist, path: dist, if-no-files-found: error }
-      - uses: actions/create-release@v1 # expect: retired-runtime
-      # v1 of checkout ran as a runner plugin, not on Node.js.
-      - uses: actions/checkout@v1
-        with: { persist-credentials: false }
-      # Latest v3 artifact releases were rebuilt on node24; removed-feature reports the shutdown.
-      - uses: actions/upload-artifact@v3
-        with: { name: logs, path: logs, if-no-files-found: error }
-      - uses: actions/checkout@main
-        with: { persist-credentials: false }
-      - uses: actions/upload-pages-artifact@v3
-      - uses: ./.github/actions/local
-      - uses: docker://alpine:3.20
-```
-
-**Compliant**
-
-`tests/fixtures/rules/retired-runtime.clean.yml`
-
-```yaml
-name: Current runtimes
-on: [push]
-permissions: {}
-jobs:
-  build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-        with: { persist-credentials: false }
-      - uses: actions/setup-node@v5
-      - uses: actions/setup-python@v6
-      - uses: actions/cache/restore@v5
-        with: { path: ~/.npm, key: npm }
-      - uses: actions/github-script@v8
-        with: { script: "core.info('x')" }
-      - uses: actions/upload-artifact@v6
-        with: { name: dist, path: dist, if-no-files-found: error }
 ```
 
 ## `repo-org-settings`

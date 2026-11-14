@@ -1,0 +1,14 @@
+name: Set up the project
+description: Checks out the code and installs Node.js and Python.
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4 # expect: retired-runtime
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@v3 # expect: retired-runtime
+      with:
+        node-version: 22
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'

@@ -1,0 +1,13 @@
+name: Release notes
+description: Drafts release notes from the pull requests merged since the last tag.
+inputs:
+  token:
+    description: Token that reads pull requests.
+    default: ${{ github.token }}
+outputs:
+  notes:
+    description: The drafted notes.
+runs:
+  using: Node20 # expect: retired-runtime
+  main: dist/index.js
+  post: dist/cleanup.js

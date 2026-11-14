@@ -7,24 +7,28 @@ use crate::filesystem::{self, Source};
 use crate::fix::{self, FixOutcome};
 use crate::policy::Settings;
 use crate::rules::{self, Finding};
-use crate::workflow::Workflow;
+use crate::workflow::Kind;
 
 pub struct Inspection {
+    pub kind: Kind,
     /// The source the findings' lines point into.
     pub source: Source,
     pub findings: Vec<Finding>,
     pub fix: Option<FixOutcome>,
-    /// Local actions the workflow calls, for the repository rules.
+    /// Local actions the file calls (`uses: ./path`), which the scan inspects next.
     pub local_actions: Vec<String>,
 }
 
+/// Parses `source` as `kind` and runs the rules that read that kind of file, wherever the source
+/// came from.
 pub fn inspect(
     source: Source,
+    kind: Kind,
     apply_fixes: bool,
     settings: &Settings,
     file: &str,
 ) -> Result<Inspection, String> {
-    let workflow = Workflow::parse(source.text.clone())?;
+    let workflow = kind.parse(source.text.clone())?;
     let findings = rules::detect_all(&workflow, settings, file)?;
     let local_actions = rules::local_actions(&workflow);
     // Without a proposal the fix pass would only scan the same source again.
@@ -34,6 +38,7 @@ pub fn inspect(
         None
     };
     Ok(Inspection {
+        kind,
         source,
         findings,
         fix,
@@ -41,7 +46,7 @@ pub fn inspect(
     })
 }
 
-/// Reads and inspects `paths` in parallel.
+/// Reads and inspects `paths` in parallel, each as the kind its name says (`filesystem::kind`).
 pub fn inspect_files(
     paths: &[PathBuf],
     apply_fixes: bool,
@@ -52,10 +57,11 @@ pub fn inspect_files(
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let kind = filesystem::kind(path);
         // A symbolic link is refused only if a fix has to be written through it.
         filesystem::read(path)
-            .map_err(|error| format!("cannot read workflow: {error}"))
-            .and_then(|source| inspect(source, apply_fixes, settings, &file))
+            .map_err(|error| format!("cannot read {}: {error}", kind.noun()))
+            .and_then(|source| inspect(source, kind, apply_fixes, settings, &file))
     })
 }
 

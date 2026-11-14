@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{TempDir, bin, fixture};
+use common::{TempDir, bin, copy_tree, fixture};
 use std::fs;
 
 #[test]
@@ -347,12 +347,26 @@ fn only_files_directly_in_the_workflows_directory_are_scanned() {
         assert_eq!(stdout, "✓ Checked 1 workflow file: no findings.\n");
     }
 
-    // A repository root without workflows is not searched for other YAML (action.yml, compose).
+    // A repository root without workflows scans the action it publishes and no other YAML
+    // (`examples/docker-compose.yml`).
     let output = bin()
         .arg("--offline")
         .arg(fixture("repos/action-only"))
         .output()
         .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(stdout, "✓ Checked 1 action file: no findings.\n");
+
+    // Without workflows or a root action, the input is still an error.
+    let temp = TempDir::new("empty-repository");
+    fs::create_dir_all(temp.join(".github")).unwrap();
+    let output = bin().arg("--offline").arg(&*temp).output().unwrap();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
@@ -360,9 +374,268 @@ fn only_files_directly_in_the_workflows_directory_are_scanned() {
             && stderr.contains(".github/workflows"),
         "{stderr}"
     );
+}
+
+/// `(path below repos/composite, line, rule)` of every finding in a JSON report, sorted.
+fn composite_findings(report: &[u8], root: &std::path::Path) -> Vec<(String, u64, String)> {
+    let report: serde_json::Value = serde_json::from_slice(report).unwrap();
+    let root = root.to_str().unwrap();
+    let mut found: Vec<(String, u64, String)> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| {
+            let path = finding["path"].as_str().unwrap();
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .trim_start_matches('/');
+            (
+                relative.to_owned(),
+                finding["line"].as_u64().unwrap(),
+                finding["rule"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn a_repository_scan_follows_its_workflows_into_local_actions() {
+    let repository = fixture("repos/composite");
+    let scan = |input: &std::path::Path, extra: &[&str]| {
+        bin()
+            .args(["--offline", "--no-config", "--format", "json"])
+            .args(extra)
+            .arg(input)
+            .output()
+            .unwrap()
+    };
+    let expected: Vec<(String, u64, String)> = [
+        (".github/actions/cache/action.yml", 6, "retired-runtime"),
+        (".github/actions/node/action.yml", 4, "retired-runtime"),
+        (".github/actions/setup/action.yml", 17, "deprecated-command"),
+        (".github/actions/setup/action.yml", 17, "script-injection"),
+    ]
+    .iter()
+    .map(|(path, line, rule)| ((*path).to_owned(), *line, (*rule).to_owned()))
+    .collect();
+    // The published root action is clean; `tools/unused` is called by nothing, the `setup` ->
+    // `cache` -> `setup` cycle is followed once, `setup/action.yaml` is shadowed by `action.yml`,
+    // and `missing`, `alias`, and the Dockerfile-only `docker` have no metadata file.
+    for input in [
+        repository.clone(),
+        repository.join(".github"),
+        repository.join(".github/workflows"),
+    ] {
+        let output = scan(&input, &[]);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{input:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            composite_findings(&output.stdout, &repository),
+            expected,
+            "{input:?}"
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["summary"]["files"], 5, "{input:?}: {report}");
+    }
+    let text = bin()
+        .args(["--offline", "--no-config"])
+        .arg(&repository)
+        .output()
+        .unwrap();
+    let text = String::from_utf8(text.stdout).unwrap();
     assert!(
-        !stderr.contains("missing required top-level key"),
+        text.contains("Checked 1 workflow file and 4 action files: 4 findings"),
+        "{text}"
+    );
+
+    // A symbolic link to an action already found is that action, reported once through its target.
+    let temp = TempDir::new("composite");
+    let copy = temp.join("repository");
+    copy_tree(&repository, &copy);
+    std::os::unix::fs::symlink("setup", copy.join(".github/actions/alias")).unwrap();
+    let linked = scan(&copy, &[]);
+    assert_eq!(composite_findings(&linked.stdout, &copy), expected);
+
+    // `--fix` writes a discovered action like a workflow, and leaves the shadowed file alone.
+    let shadowed = fs::read_to_string(copy.join(".github/actions/setup/action.yaml")).unwrap();
+    let fixed = scan(&copy, &["--fix", "--fail-on", "none"]);
+    assert!(
+        fixed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fixed.stderr)
+    );
+    let setup = fs::read_to_string(copy.join(".github/actions/setup/action.yml")).unwrap();
+    assert!(
+        setup.contains(r#"echo "version=$(rustc --version)" >> "${GITHUB_OUTPUT}""#),
+        "{setup}"
+    );
+    assert_eq!(
+        fs::read_to_string(copy.join(".github/actions/setup/action.yaml")).unwrap(),
+        shadowed
+    );
+    assert!(
+        !composite_findings(&scan(&copy, &[]).stdout, &copy)
+            .iter()
+            .any(|(_, _, rule)| rule == "deprecated-command")
+    );
+
+    // An action the runner would refuse is a parse error, like a broken workflow: the rest is
+    // still reported, and the run exits 2.
+    fs::write(
+        copy.join(".github/actions/node/action.yml"),
+        "name: Changelog\ndescription: No runs.\n",
+    )
+    .unwrap();
+    let broken = scan(&copy, &[]);
+    let stderr = String::from_utf8_lossy(&broken.stderr);
+    assert_eq!(broken.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("node/action.yml: missing required top-level key `runs`"),
         "{stderr}"
+    );
+    assert!(
+        composite_findings(&broken.stdout, &copy)
+            .iter()
+            .any(|(path, _, rule)| path.ends_with("cache/action.yml") && rule == "retired-runtime")
+    );
+}
+
+#[test]
+fn fix_never_writes_outside_the_repository_or_through_a_symlinked_directory() {
+    let temp = TempDir::new("escape");
+    let action = "name: Outside\ndescription: Another repository's action.\nruns:\n  using: composite\n  \
+                  steps:\n    - run: echo hi\n      shell: bash\n      env: {}\n";
+    let workflow = "on: push\npermissions: {}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \
+                    timeout-minutes: 5\n    env: {}\n    steps:\n      - uses: ./linked\n      \
+                    - uses: ./../outside\n";
+    let outside = temp.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("action.yml"), action).unwrap();
+    let shared = temp.join("shared/workflows");
+    fs::create_dir_all(&shared).unwrap();
+    fs::write(shared.join("ci.yml"), workflow).unwrap();
+    let repository = temp.join("repository");
+    fs::create_dir_all(repository.join(".github/workflows")).unwrap();
+    fs::write(repository.join(".github/workflows/ci.yml"), workflow).unwrap();
+    std::os::unix::fs::symlink("../outside", repository.join("linked")).unwrap();
+    let linked = temp.join("linked");
+    fs::create_dir_all(&linked).unwrap();
+    std::os::unix::fs::symlink("../shared", linked.join(".github")).unwrap();
+    let fix = |input: &std::path::Path| {
+        bin()
+            .args([
+                "--offline",
+                "--no-config",
+                "--persona",
+                "auditor",
+                "--format",
+                "json",
+            ])
+            .args(["--fix", "--fail-on", "none"])
+            .arg(input)
+            .output()
+            .unwrap()
+    };
+
+    // Both `uses` resolve to another repository's action: skipped with a warning, never read.
+    let escaped = fix(&repository);
+    let stderr = String::from_utf8_lossy(&escaped.stderr);
+    assert!(escaped.status.success(), "{stderr}");
+    for path in ["linked/action.yml", "../outside/action.yml"] {
+        assert!(
+            stderr.contains(&format!(
+                "{path}: the local action resolves outside its repository and is not scanned"
+            )),
+            "{stderr}"
+        );
+    }
+    let report: serde_json::Value = serde_json::from_slice(&escaped.stdout).unwrap();
+    assert_eq!(report["summary"]["files"], 1, "{report}");
+    assert_eq!(
+        fs::read_to_string(outside.join("action.yml")).unwrap(),
+        action
+    );
+    let own = fs::read_to_string(repository.join(".github/workflows/ci.yml")).unwrap();
+    assert!(!own.contains("env: {}"), "{own}");
+
+    // A workflow reached through a symlinked `.github` is reported, but its fix is not written.
+    let through = fix(&linked);
+    let stderr = String::from_utf8_lossy(&through.stderr);
+    assert_eq!(through.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("refusing to write through the symbolic link"),
+        "{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_slice(&through.stdout).unwrap();
+    assert!(
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["rule"] == "redundant-setting"),
+        "{report}"
+    );
+    assert_eq!(fs::read_to_string(shared.join("ci.yml")).unwrap(), workflow);
+}
+
+#[test]
+fn action_files_are_told_from_workflows_by_name_and_directory() {
+    let temp = TempDir::new("action-names");
+    let workflows = temp.join("repository/.github/workflows");
+    fs::create_dir_all(&workflows).unwrap();
+    // In `.github/workflows`, `action.yml` is a workflow file name like any other, as in zizmor.
+    fs::copy(fixture("workflows/ci.yml"), workflows.join("action.yml")).unwrap();
+    let output = bin()
+        .args(["--offline", "--no-config"])
+        .arg(workflows.join("action.yml"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(stdout, "✓ Checked 1 workflow file: no findings.\n");
+
+    // Elsewhere both names are actions, and a directory input lists only the one the runner reads.
+    let action = temp.join("action");
+    fs::create_dir_all(&action).unwrap();
+    fs::copy(
+        fixture("repos/action-only/action.yml"),
+        action.join("action.yml"),
+    )
+    .unwrap();
+    fs::write(action.join("action.yaml"), "name: Shadowed\n").unwrap();
+    for input in [action.clone(), action.join("action.yml")] {
+        let output = bin()
+            .args(["--offline", "--no-config"])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            "✓ Checked 1 action file: no findings.\n",
+            "{input:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    // Named explicitly, the shadowed file is scanned, and it is not a valid action.
+    let output = bin()
+        .args(["--offline", "--no-config"])
+        .arg(action.join("action.yaml"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("missing required top-level key `runs`")
     );
 }
 

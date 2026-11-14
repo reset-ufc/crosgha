@@ -1,0 +1,24 @@
+# An action has no workflow name, job ID, or job name to check, and its `run` steps must set
+# `shell`, which `schema-validity` reports.
+name: Build
+description: Builds the project and reports its size.
+runs:
+  using: composite
+  steps:
+    - id: Build_Step # expect: readability
+      name: Build
+      shell: bash
+      run: make build
+    - run: du -sh build # expect: readability
+      shell: bash
+    - id: size
+      name: Size
+      run: du -sh dist
+    - id: sizes # expect: readability
+      name: Sizes
+      shell: bash
+      run: du -h dist
+    - name: Report
+      if: always() # expect: readability, readability
+      shell: bash
+      run: echo done

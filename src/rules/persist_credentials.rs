@@ -2,7 +2,7 @@ use yaml_serde::Value;
 
 use super::{Finding, Rule, common, shell};
 use crate::policy::{Persona, Severity};
-use crate::workflow::Workflow;
+use crate::workflow::{Kind, Workflow};
 
 // actions/checkout documents the true default and the false opt-out, and that the persisted token
 // "enables your scripts to run authenticated git commands":
@@ -47,6 +47,9 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 )
             } else if steps[index + 1..].iter().any(pushes) {
                 Some("a later step pushes with the persisted token; give that step its own token")
+            } else if job.kind == Kind::Action {
+                // The caller's steps that run after the action are in another file.
+                Some("the caller's later steps may push with the persisted token")
             } else {
                 None
             };

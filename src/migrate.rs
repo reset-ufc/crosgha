@@ -75,6 +75,7 @@ pub fn run(
         notes: Vec::new(),
     };
     let mut rewrites = Vec::new();
+    let base = filesystem::base(path);
     for file in filesystem::discover(path)? {
         let located = |error: String| format!("{}: {error}", file.display());
         // A symbolic link is refused only when it needs an edit, below.
@@ -162,7 +163,7 @@ pub fn run(
         if edits.is_empty() {
             continue;
         }
-        filesystem::refuse_link(&file).map_err(located)?;
+        filesystem::refuse_link(&file, &base).map_err(located)?;
         summary.steps += steps;
         summary.files += 1;
         let migrated = apply(workflow.document.source(), edits);
@@ -181,7 +182,7 @@ pub fn run(
 
     // Every file is migrated in memory before any is written.
     for (file, source, migrated) in rewrites {
-        filesystem::replace(&file, &source, &migrated)
+        filesystem::replace(&file, &base, &source, &migrated)
             .map_err(|error| format!("{}: {error}", file.display()))?;
     }
     if let Some((target, text)) = config {

@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fmt::Display;
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -9,6 +10,7 @@ use clap::{ColorChoice, Parser, Subcommand};
 use crate::github::GitHub;
 use crate::report::{self, FileReport, RunError, Unwritten};
 use crate::rules::{self, Located, Place};
+use crate::workflow::Kind;
 use crate::{config, engine, filesystem, hook, migrate, policy};
 
 #[derive(Debug, Parser)]
@@ -397,11 +399,12 @@ fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String>
                     text: text.trim_start_matches('\u{feff}').to_owned(),
                     bom,
                 };
-                engine::inspect(source, false, &settings, name)
+                engine::inspect(source, Kind::Workflow, false, &settings, name)
             });
         match result {
             Ok(inspection) => files.push(FileReport {
                 path,
+                base: None,
                 inspection,
                 unwritten: None,
             }),
@@ -467,6 +470,10 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
             .map(|(path, input)| (path, owners[input]))
             .collect()
     };
+    let bases: Vec<PathBuf> = workflows
+        .iter()
+        .map(|(_, input)| filesystem::base(&paths[*input]))
+        .collect();
     let workflows = owned(workflows);
     let mut settings = policy::Settings {
         persona: if args.pedantic {
@@ -490,30 +497,31 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
     );
     let mut files = Vec::new();
     let mut errors = Vec::new();
-    for ((path, _), inspected) in workflows.into_iter().zip(inspections) {
-        match inspected {
-            Ok(inspection) => files.push(FileReport {
-                path,
-                inspection,
-                unwritten: None,
-            }),
-            Err(message) => {
-                report::error(format_args!("{}: {message}", path.display()));
-                errors.push(RunError::File { path, message });
-            }
-        }
+    let mut found = Found {
+        files: &mut files,
+        errors: &mut errors,
+    };
+    for (((path, _), base), inspected) in workflows.into_iter().zip(bases).zip(inspections) {
+        found.add(path, &base, inspected);
     }
+    let roots = owned(repository_roots(paths));
+    repository_actions(
+        &roots,
+        &mut found,
+        &mut configs,
+        &mut settings,
+        args.modes.fix,
+    );
     let github_dirs = owned(github_dirs(paths));
     let dependabot = outside(owned(dependabot), &github_dirs);
-    // Repository rules read the workflows parsed above instead of reading them again.
+    // Repository rules read the files parsed above instead of reading them again.
     let parsed: rules::Scanned = files
         .iter()
         .map(|file| {
-            let parsed = rules::Parsed {
-                source: &file.inspection.source.text,
-                local_actions: &file.inspection.local_actions,
-            };
-            (filesystem::identity(&file.path), parsed)
+            (
+                filesystem::identity(&file.path),
+                file.inspection.source.text.as_str(),
+            )
         })
         .collect();
     let mut repository = per_config(
@@ -599,6 +607,123 @@ fn discover(inputs: &[(PathBuf, usize)]) -> Result<Vec<(PathBuf, usize)>, String
     Ok(workflows)
 }
 
+/// The repository root of each input that has one (`filesystem::repository_root`), each once.
+fn repository_roots(paths: &[PathBuf]) -> Vec<(PathBuf, usize)> {
+    let mut roots: Vec<(PathBuf, usize)> = paths
+        .iter()
+        .zip(0..)
+        .filter_map(|(path, input)| filesystem::repository_root(path).map(|root| (root, input)))
+        .collect();
+    roots.sort();
+    let mut seen = HashSet::new();
+    roots.retain(|(root, _)| seen.insert(fs::canonicalize(root).unwrap_or_else(|_| root.clone())));
+    roots
+}
+
+/// The files a scan reported and the ones it could not read or parse.
+struct Found<'a> {
+    files: &'a mut Vec<FileReport>,
+    errors: &'a mut Vec<RunError>,
+}
+
+impl Found<'_> {
+    fn add(&mut self, path: PathBuf, base: &Path, inspected: Result<engine::Inspection, String>) {
+        match inspected {
+            Ok(inspection) => self.files.push(FileReport {
+                path,
+                base: Some(base.to_path_buf()),
+                inspection,
+                unwritten: None,
+            }),
+            Err(message) => {
+                report::error(format_args!("{}: {message}", path.display()));
+                self.errors.push(RunError::File { path, message });
+            }
+        }
+    }
+}
+
+/// Inspects the actions each repository root runs, with the config of the input that owns the
+/// root: the action it publishes (`action.yml` at the root) and every local action (`uses:
+/// ./path`) a scanned file calls, followed through composite actions until none is new. Paths
+/// resolve from the root, the caller's checkout: "an action defined in the same repository as the
+/// workflow" (https://docs.github.com/en/actions/reference/workflows-and-actions/metadata-syntax).
+/// zizmor walks every directory for `action.yml` instead; this finds only actions the repository
+/// runs or publishes, and others are scanned when given as inputs.
+fn repository_actions(
+    roots: &[(PathBuf, usize)],
+    found: &mut Found,
+    configs: &mut [config::Config],
+    settings: &mut policy::Settings,
+    apply_fixes: bool,
+) {
+    let mut seen: HashSet<PathBuf> = found
+        .files
+        .iter()
+        .map(|file| filesystem::identity(&file.path))
+        .chain(found.errors.iter().filter_map(|error| match error {
+            RunError::File { path, .. } => Some(filesystem::identity(path)),
+            _ => None,
+        }))
+        .collect();
+    // Directories that may hold an action, with the root they resolve from and its config.
+    let mut pending: Vec<(PathBuf, PathBuf, usize)> = Vec::new();
+    let mut warned = HashSet::new();
+    for (root, owner) in roots {
+        pending.push((root.clone(), root.clone(), *owner));
+        let resolved = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+        let called = found
+            .files
+            .iter()
+            .filter(|file| filesystem::identity(&file.path).starts_with(&resolved))
+            .flat_map(|file| &file.inspection.local_actions);
+        for path in called {
+            pending.push((root.join(path), root.clone(), *owner));
+        }
+    }
+    while !pending.is_empty() {
+        let mut batch: Vec<(PathBuf, usize)> = Vec::new();
+        let mut batch_roots: Vec<PathBuf> = Vec::new();
+        for (directory, root, owner) in pending.drain(..) {
+            let Some(path) = filesystem::action_file(&directory) else {
+                continue;
+            };
+            // `..` or a symbolic link may lead out of the repository, to files it does not own.
+            let resolved = fs::canonicalize(&path).ok();
+            let inside = fs::canonicalize(&root).ok().zip(resolved.as_ref());
+            if !inside.is_some_and(|(root, resolved)| resolved.starts_with(root)) {
+                if warned.insert(path.clone()) {
+                    report::warning(format_args!(
+                        "{}: the local action resolves outside its repository and is not scanned",
+                        path.display()
+                    ));
+                }
+                continue;
+            }
+            // A link to an action already scanned is that action.
+            let linked =
+                filesystem::link_target(&path).is_some_and(|target| seen.contains(&target));
+            if !linked && seen.insert(filesystem::identity(&path)) {
+                batch.push((path, owner));
+                batch_roots.push(root);
+            }
+        }
+        let inspections = per_config(&batch, configs, settings, |paths, settings| {
+            engine::inspect_files(paths, apply_fixes, settings)
+        });
+        for (((path, owner), root), inspected) in
+            batch.into_iter().zip(batch_roots).zip(inspections)
+        {
+            if let Ok(inspection) = &inspected {
+                for called in &inspection.local_actions {
+                    pending.push((root.join(called), root.clone(), owner));
+                }
+            }
+            found.add(path, &root, inspected);
+        }
+    }
+}
+
 /// The `.github` directory of each input that has one, each once.
 fn github_dirs(paths: &[PathBuf]) -> Vec<(PathBuf, usize)> {
     let mut github_dirs: Vec<(PathBuf, usize)> = paths
@@ -672,12 +797,17 @@ fn write_fixes(files: &mut [FileReport], errors: &[RunError]) {
         };
         file.unwritten = match blocked {
             Some(reason) => Some(Unwritten::Blocked(reason.to_owned())),
-            None => filesystem::replace(&file.path, &file.inspection.source, &outcome.source)
-                .err()
-                .map(|error| {
-                    report::error(format_args!("{}: {error}", file.path.display()));
-                    Unwritten::Failed(error)
-                }),
+            None => filesystem::replace(
+                &file.path,
+                file.base.as_deref().unwrap_or(Path::new("")),
+                &file.inspection.source,
+                &outcome.source,
+            )
+            .err()
+            .map(|error| {
+                report::error(format_args!("{}: {error}", file.path.display()));
+                Unwritten::Failed(error)
+            }),
         };
     }
 }

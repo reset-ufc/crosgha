@@ -1,0 +1,30 @@
+name: Build and test
+runs: # expect: schema-validity
+  using: composite
+  steps:
+    - name: Build
+      run: make build # expect: schema-validity
+    - name: Test
+      shell: bash
+      run: make test
+      with: # expect: schema-validity
+        target: all
+    - name: Restore the cache
+      uses: ./.github/actions/cache
+      working-directory: build # expect: schema-validity
+      timeout-minutes: 5 # expect: schema-validity
+    - name: Lint # expect: schema-validity
+      shell: bash
+    - name: Package # expect: schema-validity
+      shell: bash
+      run: make package
+      uses: ./.github/actions/package
+    - name: Publish
+      id: publish
+      if: ${{ github.ref == 'refs/heads/main' }}
+      shell: bash
+      env:
+        TARGET: dist
+      working-directory: build
+      continue-on-error: true
+      run: make publish

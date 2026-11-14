@@ -259,6 +259,21 @@ pub fn untrusted_in_text(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `inputs.<name>` paths that `text` expands, lowercased, outside expressions that can only be
+/// `true` or `false`. In a composite action the caller sets every input, possibly from event data
+/// the caller's file passes on without expanding it, so zizmor's `template-injection` treats them
+/// as arbitrary text (`HasInputs for Action` in `crates/zizmor/src/models/action.rs` at
+/// dc2209b6b6d76781c43d2a09aa9d51b56627457c).
+pub fn input_reads(text: &str) -> Vec<String> {
+    expressions(text)
+        .into_iter()
+        .map(|expression| dotted(&expression.to_ascii_lowercase()))
+        .filter(|expression| !only_boolean(expression))
+        .flat_map(|expression| super::correctness::context_names(&expression, "inputs"))
+        .map(|name| format!("inputs.{name}"))
+        .collect()
+}
+
 /// Whether `expression` reads one named secret, in any casing and in property or index syntax. The
 /// text between single quotes is a literal (`''` reads as closing and reopening one), so it is skipped.
 pub fn reads_named_secret(expression: &str) -> bool {

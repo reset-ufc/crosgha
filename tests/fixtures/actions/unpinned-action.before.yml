@@ -1,0 +1,7 @@
+name: Lint
+description: Runs the linter image from the registry.
+runs:
+  using: docker
+  image: docker://ghcr.io/example/linter:1.4 # expect: unpinned-action
+  args:
+    - --format=github
