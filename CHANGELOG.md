@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/reset-ufc/crosgha/compare/v0.20.0...v0.21.0) (2026-11-14)
+
+
+### Added
+
+* **rules:** report gh steps without the token, host, or repository they need ([#158](https://github.com/reset-ufc/crosgha/issues/158)) ([52368c6](https://github.com/reset-ufc/crosgha/commit/52368c678d2c94399c15f8f1771b8d896bd2ab81)), closes [#88](https://github.com/reset-ufc/crosgha/issues/88)
+
 ## [0.20.0](https://github.com/reset-ufc/crosgha/compare/v0.19.0...v0.20.0) (2026-11-14)
 
 
