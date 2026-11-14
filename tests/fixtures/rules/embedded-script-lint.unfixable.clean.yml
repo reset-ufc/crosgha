@@ -26,5 +26,19 @@ jobs:
       - run: "echo \"a=1\" >> \"$GITHUB_ENV\""
       - {run: echo a=1 >> "$GITHUB_ENV"}
       - run: |
+          [[ foo == "${GITHUB_OUTPUT}" ]] && echo matched
+      - run: |
+          [[ foo = "${GITHUB_OUTPUT}" || -f "${GITHUB_ENV}" ]] && echo matched
+      - run: |
+          [[ $file =~ "${GITHUB_ENV}" ]] && echo matched
+      - run: |
+          case foo in "${GITHUB_OUTPUT}") echo matched;; esac
+      - run: |
+          case "${GITHUB_ENV}" in
+            /tmp/*) echo temporary ;;
+          esac
+      - run: suffix="${GITHUB_ENV}"; echo "${file%"$suffix"}"
+      - run: echo "${GITHUB_ENV:-${GITHUB_OUTPUT}}"
+      - run: |
           echo "a=1" >> "$GITHUB_ENV"
           echo 'b=1' >> "$GITHUB_ENV"

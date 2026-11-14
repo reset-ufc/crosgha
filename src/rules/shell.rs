@@ -360,6 +360,8 @@ enum Frame {
     Arithmetic(usize),
     Backtick,
     Double,
+    /// `${...}` of another variable, whose `#`, `%`, and `/` operands are patterns.
+    Parameter,
 }
 
 /// A heredoc whose body starts on the next line.
@@ -373,15 +375,19 @@ const OPEN: &str = "the script's own frame is never closed";
 
 /// The `$NAME` and `${NAME}` expansions in `script`, for a name in `names`, that the shell reads
 /// unquoted: outside quotes, comments, heredoc bodies, backticks, and arithmetic, where quoting
-/// them keeps the path one word. `None` when the script holds quoting this reader does not
-/// follow: `$'...'`, an unclosed quote or `$(`, or a heredoc without its delimiter line.
-// ponytail: `)` closes `$(` without parsing `case` patterns inside it; parse the shell grammar if
-// that misreads real scripts.
+/// them keeps the path one word. `None` when one of them may be a pattern, which quoting turns
+/// into a literal: inside `[[ ]]`, `case ... esac`, or another variable's `${...}`. Also `None`
+/// when the script holds quoting this reader does not follow: `$'...'`, an unclosed quote, `$(`,
+/// or `${`, or a heredoc without its delimiter line.
+// ponytail: `)` closes `$(` without parsing `case` patterns inside it, and any `[[ ]]` or `case`
+// operand counts as a pattern; parse the shell grammar if that misreads real scripts.
 pub fn unquoted_expansions(script: &str, names: &[&str]) -> Option<Vec<Range<usize>>> {
     let bytes = script.as_bytes();
     let mut frames = vec![Frame::Code(0)];
     let mut heredocs: Vec<Heredoc> = Vec::new();
     let mut found = Vec::new();
+    // Open `[[` and `case` constructs.
+    let mut patterns = 0_usize;
     let mut index = 0;
     while index < bytes.len() {
         let rest = &bytes[index..];
@@ -412,6 +418,18 @@ pub fn unquoted_expansions(script: &str, names: &[&str]) -> Option<Vec<Range<usi
                 [b'\\', ..] => index += 1,
                 [b'`', ..] => {
                     frames.pop();
+                }
+                _ => {}
+            },
+            Frame::Parameter => match rest {
+                [b'\\', ..] => index += 1,
+                [b'}', ..] => {
+                    frames.pop();
+                }
+                [b'$', ..] if expansion_length(&script[index..], names).is_some() => return None,
+                [b'$', b'{', ..] => {
+                    frames.push(Frame::Parameter);
+                    index += 1;
                 }
                 _ => {}
             },
@@ -449,11 +467,28 @@ pub fn unquoted_expansions(script: &str, names: &[&str]) -> Option<Vec<Range<usi
                 [b')', ..] => *depth = depth.saturating_sub(1),
                 [b'$', b'\'', ..] => return None,
                 [b'$', b'$' | b'#', ..] => index += 1,
-                [b'$', ..] => {
-                    if let Some(length) = expansion_length(&script[index..], names) {
-                        found.push(index..index + length);
-                        index += length - 1;
+                [b'$', ..] if let Some(length) = expansion_length(&script[index..], names) => {
+                    if patterns > 0 {
+                        return None;
                     }
+                    found.push(index..index + length);
+                    index += length - 1;
+                }
+                [b'$', b'{', ..] => {
+                    frames.push(Frame::Parameter);
+                    index += 1;
+                }
+                [b'[', b'[', ..] if keyword(bytes, index, b"[[") => {
+                    patterns += 1;
+                    index += 1;
+                }
+                [b'c', ..] if keyword(bytes, index, b"case") => patterns += 1,
+                [b']', b']', ..] if keyword(bytes, index, b"]]") => {
+                    patterns = patterns.saturating_sub(1);
+                    index += 1;
+                }
+                [b'e', ..] if keyword(bytes, index, b"esac") => {
+                    patterns = patterns.saturating_sub(1);
                 }
                 [b'<', b'<', b'<', ..] => index += 2,
                 [b'<', b'<', ..] => {
@@ -482,6 +517,15 @@ fn starts_word(bytes: &[u8], index: usize) -> bool {
             bytes[index - 1],
             b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'('
         )
+}
+
+/// Whether `word` stands as a word of its own at `index`.
+fn keyword(bytes: &[u8], index: usize, word: &[u8]) -> bool {
+    starts_word(bytes, index)
+        && bytes[index..].starts_with(word)
+        && bytes
+            .get(index + word.len())
+            .is_none_or(|next| matches!(next, b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b')'))
 }
 
 /// The length of `$NAME` or `${NAME}` at the start of `text`, for a name in `names` that is not

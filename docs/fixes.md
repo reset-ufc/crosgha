@@ -70,6 +70,9 @@ Four rules have fixes:
 
   - the path is text: inside single quotes, escaped (`\$GITHUB_ENV`), in a comment, in a heredoc body, or in a
     double-quoted string that spans lines;
+  - the path may be a pattern, which quoting would turn into a literal: any operand inside `[[ ]]` (`==`, `=`,
+    `!=`, `=~`, and the rest), inside `case ... esac` (subject and patterns), or inside another variable's
+    `${...}` (`${file#$GITHUB_ENV}`, `${X:-$GITHUB_ENV}`). Single-bracket `[ ]` compares strings and is fixed;
   - the path sits in backticks, or the script uses `$'...'` quoting, leaves a quote or `$(` open, or has a heredoc
     without its delimiter line;
   - the script is a folded (`>`) or quoted YAML scalar, which YAML rewrites before the shell sees it, or a plain

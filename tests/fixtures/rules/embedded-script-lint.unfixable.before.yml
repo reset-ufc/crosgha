@@ -30,6 +30,22 @@ jobs:
       - run: "echo \"a=1\" >> $GITHUB_ENV" # expect: embedded-script-lint
       # In a flow mapping, the braces of `${GITHUB_ENV}` would end the plain scalar.
       - {run: echo a=1 >> $GITHUB_ENV} # expect: embedded-script-lint
+      # Quoting a pattern makes it literal: with GITHUB_OUTPUT='f*', `foo` matches only unquoted.
+      # Every operand of `[[ ]]` and `case ... esac`, and of another variable's `${...}`, is left.
+      - run: | # expect: embedded-script-lint
+          [[ foo == $GITHUB_OUTPUT ]] && echo matched
+      - run: | # expect: embedded-script-lint
+          [[ foo = $GITHUB_OUTPUT || -f $GITHUB_ENV ]] && echo matched
+      - run: | # expect: embedded-script-lint
+          [[ $file =~ $GITHUB_ENV ]] && echo matched
+      - run: | # expect: embedded-script-lint
+          case foo in $GITHUB_OUTPUT) echo matched;; esac
+      - run: | # expect: embedded-script-lint
+          case $GITHUB_ENV in
+            /tmp/*) echo temporary ;;
+          esac
+      - run: echo "${file#$GITHUB_ENV}" > out.txt; echo ${file%$GITHUB_ENV} # expect: embedded-script-lint
+      - run: echo ${GITHUB_ENV:-$GITHUB_OUTPUT} # expect: embedded-script-lint
       # One path left as text leaves the whole step unfixed.
       - run: | # expect: embedded-script-lint
           echo "a=1" >> $GITHUB_ENV
