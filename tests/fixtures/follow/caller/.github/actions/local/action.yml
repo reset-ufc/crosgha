@@ -1,0 +1,7 @@
+name: local
+description: A local action of the caller.
+runs:
+  using: composite
+  steps:
+    - run: echo local
+      shell: bash

@@ -1,0 +1,6 @@
+name: yamlonly
+description: Read from action.yaml, since there is no action.yml.
+runs:
+  using: composite
+  steps:
+    - uses: octo-org/lint@main

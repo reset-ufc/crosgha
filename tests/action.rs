@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::{broken_release, release, serve, temp_dir};
+use common::{Api, TOKEN, broken_release, fixture, github_api, release, serve, temp_dir};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -149,6 +149,70 @@ fn action_installs_the_verified_release_and_reports_sarif() {
     // Online audits were requested without a token, so the run stays offline.
     assert!(!stderr.contains("GitHub API"), "{stderr}");
     fs::remove_dir_all(&run.temp).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// `follow-actions: true` checks the actions the workflows call and needs the API.
+#[test]
+fn action_follows_called_actions_only_when_online() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+    let (api, _) = github_api(Api {
+        repositories: fixture("follow"),
+        ..Api::default()
+    });
+    let workflows = fixture("follow/caller/.github/workflows");
+    let inputs = workflows.to_str().unwrap();
+    let online = [
+        ("CROSGHA_FOLLOW_ACTIONS", "true"),
+        ("CROSGHA_TOKEN", TOKEN),
+        ("GH_HOST", api.as_str()),
+    ];
+    let followed = run_action(&base, inputs, &online);
+    let log = String::from_utf8_lossy(&followed.output.stdout).into_owned();
+    assert!(followed.output.status.success(), "{log}");
+    let sarif: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_value(&followed.outputs, "output-file").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    let injection = results
+        .iter()
+        .find(|result| {
+            result["ruleId"] == "script-injection"
+                && result["message"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("fixture/inner@")
+        })
+        .unwrap_or_else(|| panic!("{sarif:#}"));
+    let location = &injection["locations"][0]["physicalLocation"];
+    assert!(
+        location["artifactLocation"]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("follow/caller/.github/workflows/ci.yml"),
+        "{location}"
+    );
+    assert_eq!(location["region"]["startLine"], 12, "{location}");
+
+    let offline = run_action(
+        &base,
+        inputs,
+        &[
+            ("CROSGHA_FOLLOW_ACTIONS", "true"),
+            ("CROSGHA_ONLINE_AUDITS", "false"),
+            ("CROSGHA_TOKEN", TOKEN),
+        ],
+    );
+    assert!(!offline.output.status.success());
+    assert!(
+        String::from_utf8_lossy(&offline.output.stdout)
+            .contains("::error::follow-actions requires online-audits: true and a token")
+    );
+    for run in [followed, offline] {
+        fs::remove_dir_all(&run.temp).unwrap();
+    }
     fs::remove_dir_all(root).unwrap();
 }
 

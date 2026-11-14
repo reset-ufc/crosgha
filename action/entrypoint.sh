@@ -52,12 +52,17 @@ boolean advanced-security "${CROSGHA_ADVANCED_SECURITY:-true}"
 boolean annotations "${CROSGHA_ANNOTATIONS:-false}"
 boolean dangerously-auto-merge "${CROSGHA_AUTO_MERGE:-false}"
 boolean fail-on-no-inputs "${CROSGHA_FAIL_ON_NO_INPUTS:-true}"
+boolean follow-actions "${CROSGHA_FOLLOW_ACTIONS:-false}"
 
 if [[ "${CROSGHA_ANNOTATIONS:-false}" == true && "${CROSGHA_ADVANCED_SECURITY:-true}" == true ]]; then
     fail "annotations requires advanced-security: false"
 fi
 if [[ "${CROSGHA_FIX:-none}" == pull-request && -z "${CROSGHA_FIX_TOKEN:-}" ]]; then
     fail "fix: pull-request requires fix-token: a GitHub App token or fine-grained PAT with Contents, Pull requests, and Workflows: write"
+fi
+if [[ "${CROSGHA_FOLLOW_ACTIONS:-false}" == true \
+    && ( "${CROSGHA_ONLINE_AUDITS:-true}" != true || -z "${CROSGHA_TOKEN:-}" ) ]]; then
+    fail "follow-actions requires online-audits: true and a token"
 fi
 if [[ "${CROSGHA_AUTO_MERGE:-false}" == true && "${CROSGHA_FIX:-none}" != pull-request ]]; then
     fail "dangerously-auto-merge requires fix: pull-request"
@@ -110,6 +115,7 @@ args=(--color never --persona "${CROSGHA_PERSONA:-regular}" --fail-on "${CROSGHA
 [[ -n "${CROSGHA_CONFIG_FILE:-}" ]] && args+=(--config "$CROSGHA_CONFIG_FILE")
 if [[ "${CROSGHA_ONLINE_AUDITS:-true}" == true && -n "${CROSGHA_TOKEN:-}" ]]; then
     export GH_TOKEN="$CROSGHA_TOKEN"
+    [[ "${CROSGHA_FOLLOW_ACTIONS:-false}" == true ]] && args+=(--follow-actions)
 else
     unset GH_TOKEN GITHUB_TOKEN
     args+=(--offline)

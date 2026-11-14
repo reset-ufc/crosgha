@@ -6,7 +6,9 @@ preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSco
 - **Scan:** finds workflows directly inside `.github/workflows`, plus action files (`action.yml`/`action.yaml`) given
   as inputs, at the repository root, or called as `uses: ./path` from scanned workflows and composite actions; parses
   YAML with `yamlpath`, and validates top-level `on` and `jobs` (workflows) or `runs.using` (actions). Rules that read
-  only steps run on composite `runs.steps` (`Reads` in `src/rules/mod.rs`).
+  only steps run on composite `runs.steps` (`Reads` in `src/rules/mod.rs`). With `--follow-actions` (opt-in, needs a
+  token), actions called from other repositories are read at their commit through the GitHub API and checked too,
+  followed through composite actions; findings name the chain of `uses:` lines and are never fixed.
 - **Rules:** 51 cover every tag of the curated taxonomy: 43 per file (workflow or action), 3 per repository, and 5
   that query the GitHub API.
 - **Fixes:** only `persist-credentials`, `removed-feature` (setup-java distributions), `deprecated-command`
@@ -111,6 +113,7 @@ src/policy.rs               Personas, severity, settings, and failure threshold
 src/config.rs               crosgha.yml / zizmor.yml discovery and rule settings
 src/github.rs               Cached read-only GitHub REST client for online rules and remote inputs
 src/tree.rs                 Repository read interface (local directory or GitHub commit) and action discovery
+src/follow.rs               `--follow-actions`: actions of other repositories, read at their commit and followed
 src/migrate.rs              `migrate --from zizmor|actionlint` step rewrites
 src/hook.rs                 `hook install|uninstall`: the git pre-push hook
 action.yml                  Composite Action metadata and inputs
@@ -123,10 +126,11 @@ docs/rule-examples.md       Generated from tests/fixtures/: `CROSGHA_BLESS=1 car
 tests/cli.rs                end-to-end scans: inputs, discovery, exit status, flags
 tests/{fix,config,report,repository,migrate,hook}.rs  end-to-end tests per feature
 tests/rules.rs              fixture-driven rule checks and remote inputs against the fake GitHub API
+tests/follow.rs             `--follow-actions` against the fake GitHub API serving tests/fixtures/follow/
 tests/action.rs             Action entry point against a local release server
 tests/install.rs            install.sh piped into sh against the same server
 tests/common/               shared test helpers: the binary, fixtures, TempDir, the fake GitHub API, the release server
-tests/fixtures/             rules/, actions/, online/ (+ api.json), repos/, migrate/, and CLI inputs
+tests/fixtures/             rules/, actions/, online/ (+ api.json), repos/, follow/, migrate/, and CLI inputs
 .githooks/                  commit-msg (Conventional Commits), pre-push (full check)
 .github/workflows/          ci.yml, release-please.yml (tags, draft release, dispatches release.yml), release.yml (cargo-dist, workflow_dispatch only)
 release-please-config.json  release PR + changelog config (manifest: .release-please-manifest.json)

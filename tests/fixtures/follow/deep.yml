@@ -1,0 +1,12 @@
+# fixture/deep/N calls fixture/deep/N+1. The runner refuses composite actions nested more than 9
+# levels below the job's step, so level 10 is the last one checked and level 11 is never read.
+name: Deep
+on:
+  pull_request:
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: fixture/deep/1@v1

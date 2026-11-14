@@ -63,6 +63,10 @@ inputs:
     description: Severity threshold for a failing result (any, note, warning, error, or none).
     required: false
     default: any
+  follow-actions:
+    description: Also check the actions that steps call from other repositories, at the commit their ref names; needs online-audits and a token, and spends API requests.
+    required: false
+    default: 'false'
   fix:
     description: Fix mode (none or pull-request).
     required: false
@@ -103,6 +107,7 @@ runs:
         CROSGHA_CONFIG_FILE: ${{ inputs.config }}
         CROSGHA_FAIL_ON_NO_INPUTS: ${{ inputs['fail-on-no-inputs'] }}
         CROSGHA_FAIL_ON: ${{ inputs['fail-on'] }}
+        CROSGHA_FOLLOW_ACTIONS: ${{ inputs['follow-actions'] }}
         CROSGHA_FIX: ${{ inputs.fix }}
         CROSGHA_FIX_TOKEN: ${{ inputs['fix-token'] }}
         CROSGHA_AUTO_MERGE: ${{ inputs['dangerously-auto-merge'] }}

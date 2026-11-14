@@ -170,17 +170,22 @@ impl GitHub {
 
     /// The commit SHA that `reference` names in `slug` (`owner/repo`); `None` when the repository
     /// or the reference does not exist.
-    pub fn commit(&self, slug: &str, reference: &str) -> Result<Option<String>, String> {
+    pub fn commit(&self, slug: &str, reference: &str) -> Result<Option<String>, ApiError> {
         // https://docs.github.com/en/rest/commits/commits#get-a-commit
-        let path = format!("/repos/{slug}/commits/{reference}");
+        let encoded: Vec<String> = reference.split('/').map(url_segment).collect();
+        let path = format!("/repos/{slug}/commits/{}", encoded.join("/"));
         let Some(answer) = self.get_raw(&path, "application/vnd.github.sha")? else {
             return Ok(None);
         };
         let sha = answer.trim().trim_matches('"');
         if sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(format!("GitHub API {path}: expected a commit SHA"));
+            return Err(ApiError {
+                status: Some(200),
+                rate_limited: false,
+                message: format!("GitHub API {path}: expected a commit SHA"),
+            });
         }
-        Ok(Some(sha.to_owned()))
+        Ok(Some(sha.to_ascii_lowercase()))
     }
 
     /// The raw text of the file at `path` (relative to the root, `/`-separated) in `slug` at the

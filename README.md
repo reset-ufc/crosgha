@@ -6,7 +6,9 @@ workflows and fixes them deterministically, preserving comments and formatting.
 - 51 rules cover every tag of a curated smell taxonomy: 43 check workflow or action files, 3 check the repository,
   and 5 query the GitHub API.
 - Composite actions (`action.yml`) get the step rules, and JavaScript and Docker actions their metadata checks: the
-  repository's root action and the local actions its workflows call are found with the workflows.
+  repository's root action and the local actions its workflows call are found with the workflows. With
+  `--follow-actions`, so are the actions they call from other repositories, read at the pinned commit and followed
+  through composite actions; each finding names the chain of `uses:` lines that pulled it in.
 - It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
   actionlint rule in every finding, so switching tools does not mean rewriting configuration.
 - Output is text, JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), or brief lines for AI
@@ -35,6 +37,7 @@ crosgha --persona pedantic .github/workflows
 crosgha --fix .github/workflows
 crosgha -f sarif > results.sarif          # also: json, github, agent
 crosgha --sarif-file results.sarif .      # text on stdout, SARIF on disk
+crosgha --follow-actions                  # also check called actions of other repositories (needs a token)
 crosgha --list-rules                      # add -f json for summaries and equivalents
 ```
 

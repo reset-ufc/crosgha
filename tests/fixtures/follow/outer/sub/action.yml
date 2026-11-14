@@ -1,0 +1,5 @@
+name: sub
+description: A clean JavaScript action next to outer.
+runs:
+  using: node24
+  main: index.js

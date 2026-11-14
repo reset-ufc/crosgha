@@ -13,12 +13,12 @@ use crate::policy::Severity;
 use crate::rules::{Finding, Rule};
 use crate::tree::Tree;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Config {
     rules: Vec<(String, RuleConfig)>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct RuleConfig {
     disable: bool,
     /// `file.yml`, `file.yml:line`, or `file.yml:line:column` (the column is not checked).
@@ -268,11 +268,17 @@ impl Config {
     }
 
     pub fn ignores(&self, finding: &Finding, file: &str) -> bool {
+        self.ignores_at(finding, file, finding.line)
+    }
+
+    /// Whether an `ignore` entry names `finding` at `line` of `file`, which for a finding in
+    /// another repository's action is the scanned `uses:` line that pulled it in.
+    pub fn ignores_at(&self, finding: &Finding, file: &str, line: usize) -> bool {
         self.for_finding(finding).any(|settings| {
             settings
                 .ignore
                 .iter()
-                .any(|(name, at)| name == file && at.is_none_or(|at| at == finding.line))
+                .any(|(name, at)| name == file && at.is_none_or(|at| at == line))
         })
     }
 

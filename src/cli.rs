@@ -9,6 +9,7 @@ use clap::{ColorChoice, Parser, Subcommand};
 
 use crate::config::Config;
 use crate::filesystem::Source;
+use crate::follow::{self, Followed};
 use crate::github::{ApiError, GitHub};
 use crate::report::{self, FileReport, RunError, Unwritten};
 use crate::rules::{self, Located, Place};
@@ -55,6 +56,12 @@ struct Args {
     /// Skip online rules even when a token is available.
     #[arg(long)]
     no_online_audits: bool,
+
+    /// Also check the actions that steps call from other repositories, read through the GitHub
+    /// API at the commit their ref names and followed through composite actions. Needs a token;
+    /// costs 1 or 2 requests per distinct action and commit, plus 1 per ref that is not a SHA.
+    #[arg(long, conflicts_with_all = ["offline", "no_online_audits", "fix"])]
+    follow_actions: bool,
 
     /// Config file for every input; also read from CROSGHA_CONFIG or ZIZMOR_CONFIG.
     // The variables are read in `load_configs`, where an empty one counts as unset.
@@ -220,15 +227,19 @@ pub fn run() -> ExitCode {
     if !remote.is_empty() && args.offline {
         return fail("--offline does not support remote inputs");
     }
+    // One client for every input, so an action called from several inputs is read once.
+    let follower = match (args.follow_actions, token(&args)) {
+        (false, _) => None,
+        (true, Some(token)) => Some(GitHub::new(&api_url(&args.gh_hostname), token)),
+        (true, None) => {
+            return fail("--follow-actions requires --gh-token, GH_TOKEN, or GITHUB_TOKEN");
+        }
+    };
     let result = (|| {
         let mut scan = if local.is_empty() {
-            Scan {
-                files: Vec::new(),
-                repository: Vec::new(),
-                errors: Vec::new(),
-            }
+            Scan::default()
         } else {
-            scan(&args, &local)?
+            scan(&args, &local, follower.as_ref())?
         };
         let mut seen = HashSet::new();
         for path in remote {
@@ -237,12 +248,17 @@ pub fn run() -> ExitCode {
             if !seen.insert((slug.clone(), reference.clone())) {
                 continue;
             }
-            let added = scan_remote(&args, &slug, &reference)?;
+            let added = scan_remote(&args, &slug, &reference, follower.as_ref())?;
             scan.files.extend(added.files);
             scan.repository.extend(added.repository);
             scan.errors.extend(added.errors);
+            scan.followed.extend(added.followed);
         }
         anchor(&mut scan.repository, &scan.files);
+        // After every input's files, so no repository-wide finding is anchored on another
+        // repository's action.
+        let followed = std::mem::take(&mut scan.followed);
+        scan.files.extend(followed);
         Ok::<_, String>(scan)
     })();
     match result {
@@ -295,19 +311,19 @@ fn remote_input(path: &Path, host: &str) -> Option<(String, String)> {
 /// Scans `slug` at `reference` through the GitHub API: the workflows, the actions the
 /// repository runs or publishes, and the repository rules, all read at one commit, with the
 /// config found in the repository.
-fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String> {
+fn scan_remote(
+    args: &Args,
+    slug: &str,
+    reference: &str,
+    follower: Option<&GitHub>,
+) -> Result<Scan, String> {
     if args.modes.fix {
         return Err("--fix does not support remote inputs".to_owned());
     }
     if args.offline {
         return Err("--offline does not support remote inputs".to_owned());
     }
-    let token = args
-        .gh_token
-        .clone()
-        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-        .filter(|token| !token.is_empty())
-        .ok_or("remote inputs require --gh-token, GH_TOKEN, or GITHUB_TOKEN")?;
+    let token = token(args).ok_or("remote inputs require --gh-token, GH_TOKEN, or GITHUB_TOKEN")?;
     let github = GitHub::new(&api_url(&args.gh_hostname), token.clone());
     let sha = github
         .commit(slug, reference)?
@@ -346,13 +362,14 @@ fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String>
         config,
         ignores: !args.no_ignores,
         min_severity: args.min_severity.as_deref().and_then(config::severity),
-        hosted: api_url(&args.gh_hostname).eq_ignore_ascii_case("https://api.github.com"),
+        hosted: hosted(&args.gh_hostname),
     };
     let mut files = Vec::new();
     let mut errors = Vec::new();
     let mut found = Found {
         files: &mut files,
         errors: &mut errors,
+        owners: Vec::new(),
     };
     let mut seen: HashSet<PathBuf> = workflows
         .iter()
@@ -362,6 +379,11 @@ fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String>
     tree::actions(&tree, called, &mut seen, |paths| {
         inspect_remote(&tree, paths, &settings, &mut found)
     })?;
+    let followed = follower.map_or_else(Followed::default, |github| {
+        let roots: Vec<&FileReport> = files.iter().collect();
+        follow::follow(github, &roots, &settings)
+    });
+    errors.extend(followed.errors);
     let mut repository = if tree.entry(".github")? == Some(Entry::Directory) {
         rules::detect_repository(&tree, &settings)?
     } else {
@@ -382,6 +404,7 @@ fn scan_remote(args: &Args, slug: &str, reference: &str) -> Result<Scan, String>
         files,
         repository,
         errors,
+        followed: followed.files,
     })
 }
 
@@ -408,7 +431,7 @@ fn inspect_remote(
             .map(|inspection| inspection.local_actions.clone())
             .unwrap_or_default();
         called.push(calls);
-        found.add(tree.path(path), None, inspected);
+        found.add(tree.path(path), None, 0, inspected);
     }
     called
 }
@@ -442,13 +465,32 @@ fn fail(error: impl Display) -> ExitCode {
 }
 
 /// What a scan found, and what kept it from checking everything.
+#[derive(Default)]
 struct Scan {
     files: Vec<FileReport>,
     repository: Vec<Located>,
     errors: Vec<RunError>,
+    /// The actions of other repositories that `--follow-actions` reached from `files`.
+    followed: Vec<FileReport>,
 }
 
-fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
+/// The token from `--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`; an empty one counts as unset.
+fn token(args: &Args) -> Option<String> {
+    args.gh_token
+        .clone()
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .filter(|token| !token.is_empty())
+}
+
+/// Whether the workflows run on github.com, whose retirements the `HOSTED` checks state.
+/// Tests point `--gh-hostname` at a fake API, so debug builds also accept
+/// `CROSGHA_TEST_HOSTED` to run those checks there; release builds ignore it.
+fn hosted(host: &str) -> bool {
+    api_url(host).eq_ignore_ascii_case("https://api.github.com")
+        || (cfg!(debug_assertions) && std::env::var_os("CROSGHA_TEST_HOSTED").is_some())
+}
+
+fn scan(args: &Args, paths: &[PathBuf], follower: Option<&GitHub>) -> Result<Scan, String> {
     // Each workflow, `.github`, and Dependabot file is paired with the index of its input path.
     let (dependabot, inputs): (Vec<_>, Vec<_>) = paths
         .iter()
@@ -456,11 +498,7 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         .zip(0..)
         .partition(|(path, _)| filesystem::is_dependabot(path));
     let workflows = discover(&inputs)?;
-    let token = args
-        .gh_token
-        .clone()
-        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-        .filter(|token| !token.is_empty());
+    let token = token(args);
     let (mut configs, owners) = load_configs(args, paths)?;
     warn_unused(&configs);
     let owned = |items: Vec<(PathBuf, usize)>| -> Vec<(PathBuf, usize)> {
@@ -486,7 +524,7 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         config: Config::default(),
         ignores: !args.no_ignores,
         min_severity: args.min_severity.as_deref().and_then(config::severity),
-        hosted: api_url(&args.gh_hostname).eq_ignore_ascii_case("https://api.github.com"),
+        hosted: hosted(&args.gh_hostname),
     };
     let inspections = per_config(
         &workflows,
@@ -499,9 +537,10 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
     let mut found = Found {
         files: &mut files,
         errors: &mut errors,
+        owners: Vec::new(),
     };
-    for (((path, _), base), inspected) in workflows.into_iter().zip(bases).zip(inspections) {
-        found.add(path, Some(&base), inspected);
+    for (((path, owner), base), inspected) in workflows.into_iter().zip(bases).zip(inspections) {
+        found.add(path, Some(&base), owner, inspected);
     }
     let roots = owned(repository_roots(paths));
     repository_actions(
@@ -511,6 +550,11 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         &mut settings,
         args.modes.fix,
     )?;
+    let owners = std::mem::take(&mut found.owners);
+    let followed = follower.map_or_else(Followed::default, |github| {
+        follow_calls(github, &files, &owners, &mut configs, &mut settings)
+    });
+    errors.extend(followed.errors);
     let github_dirs = owned(github_dirs(paths));
     let dependabot = outside(owned(dependabot), &github_dirs);
     // Repository rules read the files parsed above instead of reading them again.
@@ -575,7 +619,36 @@ fn scan(args: &Args, paths: &[PathBuf]) -> Result<Scan, String> {
         files,
         repository,
         errors,
+        followed: followed.files,
     })
+}
+
+/// Follows the calls of each config's files with that config (`follow::follow`).
+fn follow_calls(
+    github: &GitHub,
+    files: &[FileReport],
+    owners: &[usize],
+    configs: &mut [Config],
+    settings: &mut policy::Settings,
+) -> Followed {
+    let mut followed = Followed::default();
+    for (owner, config) in configs.iter_mut().enumerate() {
+        let roots: Vec<&FileReport> = files
+            .iter()
+            .zip(owners)
+            .filter(|(_, of)| **of == owner)
+            .map(|(file, _)| file)
+            .collect();
+        if roots.is_empty() {
+            continue;
+        }
+        std::mem::swap(&mut settings.config, config);
+        let found = follow::follow(github, &roots, settings);
+        std::mem::swap(&mut settings.config, config);
+        followed.files.extend(found.files);
+        followed.errors.extend(found.errors);
+    }
+    followed
 }
 
 /// The workflows of every input, each scanned once.
@@ -612,6 +685,8 @@ fn repository_roots(paths: &[PathBuf]) -> Vec<(PathBuf, usize)> {
 struct Found<'a> {
     files: &'a mut Vec<FileReport>,
     errors: &'a mut Vec<RunError>,
+    /// The index of the config of each file in `files`.
+    owners: Vec<usize>,
 }
 
 impl Found<'_> {
@@ -621,15 +696,20 @@ impl Found<'_> {
         &mut self,
         path: PathBuf,
         base: Option<&Path>,
+        owner: usize,
         inspected: Result<engine::Inspection, String>,
     ) {
         match inspected {
-            Ok(inspection) => self.files.push(FileReport {
-                path,
-                base: base.map(Path::to_path_buf),
-                inspection,
-                unwritten: None,
-            }),
+            Ok(inspection) => {
+                self.files.push(FileReport {
+                    path,
+                    base: base.map(Path::to_path_buf),
+                    inspection,
+                    unwritten: None,
+                    reached: None,
+                });
+                self.owners.push(owner);
+            }
             Err(message) => {
                 report::error(format_args!("{}: {message}", path.display()));
                 self.errors.push(RunError::File { path, message });
@@ -683,7 +763,7 @@ fn repository_actions(
                     .map(|inspection| inspection.local_actions.clone())
                     .unwrap_or_default();
                 called.push(calls);
-                found.add(path, Some(root), inspected);
+                found.add(path, Some(root), *owner, inspected);
             }
             called
         })?;
@@ -789,10 +869,12 @@ fn write_fixes(files: &mut [FileReport], errors: &[RunError]) {
 /// Writes the reports and picks the exit status: 2 for a run failure, 1 for findings at the
 /// `--fail-on` level, 0 otherwise.
 fn finish(args: &Args, scan: &Scan) -> ExitCode {
+    // `followed` is empty by now: `run` moved it into `files`.
     let Scan {
         files,
         repository,
         errors,
+        followed: _,
     } = scan;
     #[allow(
         clippy::disallowed_methods,

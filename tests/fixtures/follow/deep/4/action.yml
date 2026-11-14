@@ -1,0 +1,6 @@
+name: level 4
+description: Calls the action one level deeper.
+runs:
+  using: composite
+  steps:
+    - uses: fixture/deep/5@v1

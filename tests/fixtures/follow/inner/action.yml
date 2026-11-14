@@ -1,0 +1,13 @@
+name: inner
+description: Greets someone, with the smells the chain must report.
+inputs:
+  name:
+    description: Who to greet.
+    required: true
+runs:
+  using: composite
+  steps:
+    # The author's ignore comment does not count: the scanned repository did not write it.
+    - uses: octo-org/setup-tool@v2 # crosgha: ignore[unpinned-action]
+    - run: echo "hello ${{ inputs.name }}"
+      shell: bash

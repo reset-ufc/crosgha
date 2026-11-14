@@ -1,0 +1,5 @@
+name: docker
+description: A Docker action whose image is not pinned by digest.
+runs:
+  using: docker
+  image: docker://alpine:3.20
