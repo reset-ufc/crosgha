@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/reset-ufc/crosgha/compare/v0.17.0...v0.18.0) (2026-11-14)
+
+
+### Added
+
+* **rules:** report environment file overwrites and unbraced paths ([#152](https://github.com/reset-ufc/crosgha/issues/152)) ([f909b30](https://github.com/reset-ufc/crosgha/commit/f909b30393b9d9f966e90d9bb511742f99e5e08e)), closes [#86](https://github.com/reset-ufc/crosgha/issues/86)
+
 ## [0.17.0](https://github.com/reset-ufc/crosgha/compare/v0.16.0...v0.17.0) (2026-11-14)
 
 
