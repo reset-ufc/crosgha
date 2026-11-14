@@ -2537,6 +2537,27 @@ jobs:
         run: echo "g=7" >> $GITHUB_ENV # expect: embedded-script-lint
       - shell: /usr/bin/env -S pwsh -File {0}
         run: echo "h=8" >> $env:GITHUB_ENV
+      # Every redirect target of a step is quoted, and the rest of the line keeps its bytes.
+      - run: | # expect: embedded-script-lint
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo 'name=a b' >>$GITHUB_OUTPUT # one word
+          echo "a=1" > $GITHUB_ENV; echo "b=2" >> ${GITHUB_ENV}
+          if [ -d "$HOME/bin" ]; then
+            printf '%s\n' "$HOME/bin" >> $GITHUB_PATH
+          fi
+          {
+            echo "x=$(( 1 + 2 ))"
+          } >> $GITHUB_OUTPUT
+          ./lint 2>> $GITHUB_STEP_SUMMARY || echo "lint=failed" >>$GITHUB_OUTPUT
+      # A heredoc body is data; the redirect on its first line is shell code.
+      - run: | # expect: embedded-script-lint
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          ## Build
+          Built $(git rev-parse --short HEAD) for ${{ github.ref_name }}.
+          EOF
+          cat <<'EOF' >> $GITHUB_STEP_SUMMARY
+          Done: "$GITHUB_ENV" unchanged, 'it's' literal
+          EOF
   # `run` defaults to pwsh on Windows runners, where `$GITHUB_ENV` word splitting does not apply:
   # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
   windows:
@@ -2584,6 +2605,18 @@ jobs:
         run: echo "d=4" >> "$GITHUB_ENV"
       - shell: /bin/sh -eu {0}
         run: echo "e=5" >> "$GITHUB_OUTPUT"
+      - run: |
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo 'name=a b' >>"${GITHUB_OUTPUT}" # one word
+          echo "a=1" > "${GITHUB_ENV}"; echo "b=2" >> "${GITHUB_ENV}"
+          if [ -d "$HOME/bin" ]; then
+            printf '%s\n' "$HOME/bin" >> "${GITHUB_PATH}"
+          fi
+          ./lint 2>> "${GITHUB_STEP_SUMMARY}" || echo "lint=failed" >>"${GITHUB_OUTPUT}"
+      - run: |
+          cat <<EOF >> "${GITHUB_STEP_SUMMARY}"
+          ## Build
+          EOF
 ```
 
 ## `insecure-protocol`

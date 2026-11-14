@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule, common, expression, shell};
+use super::{ChangeKind, Edit, Finding, LineRewrite, ProposedFix, Rule, common, expression, shell};
 use crate::policy::{Persona, Severity};
 use crate::workflow::Workflow;
 
@@ -572,6 +572,7 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     "quote environment file paths to prevent word splitting (SC2086)",
                 )?;
                 finding.concepts = &["SafeEnvironmentFileRedirect"];
+                finding.fix = quote_env_files(workflow, &step, script);
                 findings.push(finding);
             }
         }
@@ -593,6 +594,59 @@ fn unquoted_env_file(line: &str) -> bool {
                     quotes.is_multiple_of(2) && whole_name
                 })
             })
+    })
+}
+
+/// Quotes and braces each environment file path that `script` redirects to, so
+/// `>> $GITHUB_OUTPUT` becomes `>> "${GITHUB_OUTPUT}"`, the form ghlint's
+/// `SafeEnvironmentFileRedirect` asks for. `None` when the rule would still report a path that is
+/// not a redirect target (a command argument, a `for` list, a pattern, text in quotes), or when
+/// the YAML scalar is not the script as written.
+fn quote_env_files(workflow: &Workflow, step: &common::Step, script: &str) -> Option<ProposedFix> {
+    use std::fmt::Write as _;
+
+    if !shell::verbatim(workflow, step, script) {
+        return None;
+    }
+    let expansions = shell::redirect_targets(script, ENV_FILES)?;
+    let mut quoted = String::with_capacity(script.len() + 4 * expansions.len());
+    let mut copied = 0;
+    for expansion in &expansions {
+        let name = script[expansion.clone()].trim_matches(['$', '{', '}']);
+        let _ = write!(
+            quoted,
+            "{}\"${{{name}}}\"",
+            &script[copied..expansion.start]
+        );
+        copied = expansion.end;
+    }
+    quoted.push_str(&script[copied..]);
+    if expansions.is_empty() || quoted.lines().any(unquoted_env_file) {
+        return None;
+    }
+    // `Edit::Lines` rewrites the next line with the same text, so an unchanged copy of a changed
+    // line would take its rewrite.
+    let mut rewrites = Vec::new();
+    let mut unchanged = Vec::new();
+    for (before, after) in script.split('\n').zip(quoted.split('\n')) {
+        match before == after {
+            true => unchanged.push(before.trim()),
+            false => rewrites.push(LineRewrite {
+                from: before.trim().to_owned(),
+                to: after.trim().to_owned(),
+            }),
+        }
+    }
+    if rewrites
+        .iter()
+        .any(|rewrite| unchanged.contains(&rewrite.from.as_str()))
+    {
+        return None;
+    }
+    Some(ProposedFix {
+        edit: Edit::Lines(rewrites),
+        changed_route: step.key("run"),
+        change: ChangeKind::Replace,
     })
 }
 

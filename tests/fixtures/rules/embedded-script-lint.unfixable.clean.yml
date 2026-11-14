@@ -1,0 +1,56 @@
+name: Shell, unfixable
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo 'echo "a=1" >> "$GITHUB_ENV"' > setup.sh
+      - run: echo "\$GITHUB_OUTPUT"
+      - run: |
+          # Appends to the "$GITHUB_ENV" file
+          echo "a=1" >> "$GITHUB_ENV"
+      - run: |
+          cat <<EOF > notes.txt
+          Outputs go to "$GITHUB_OUTPUT"
+          EOF
+      - run: |
+          bash -c '
+          echo a=1 >> "$GITHUB_ENV"
+          '
+      - run: lines=$(wc -l < "$GITHUB_ENV")
+      - run: printf 'a=1\n' >> "$GITHUB_ENV"
+      - run: >
+          echo "a=1" >> "$GITHUB_ENV"
+      - run: "echo \"a=1\" >> \"$GITHUB_ENV\""
+      - {run: echo a=1 >> "$GITHUB_ENV"}
+      - run: |
+          echo "a=1" >> "${GITHUB_ENV}"
+          if [ -f "${GITHUB_PATH}" ]; then cat "${GITHUB_PATH}"; fi
+      - run: |
+          for file in "${GITHUB_OUTPUT}"; do echo "$file"; done
+      - run: |
+          while read -r line; do echo "$line"; done < "${GITHUB_ENV}"
+      - run: |
+          case foo in
+            bar) echo esac ;;
+            "${GITHUB_OUTPUT}") echo matched >> "${GITHUB_STEP_SUMMARY}" ;;
+          esac
+      - run: |
+          [[ foo == "${GITHUB_OUTPUT}" ]] && echo matched
+      - run: |
+          [[ foo = "${GITHUB_OUTPUT}" || -f "${GITHUB_ENV}" ]] && echo matched
+      - run: |
+          [[ $file =~ "${GITHUB_ENV}" ]] && echo matched
+      - run: |
+          case foo in "${GITHUB_OUTPUT}") echo matched;; esac
+      - run: |
+          case "${GITHUB_ENV}" in
+            /tmp/*) echo temporary ;;
+          esac
+      - run: suffix="${GITHUB_ENV}"; echo "${file%"$suffix"}"
+      - run: echo "${GITHUB_ENV:-${GITHUB_OUTPUT}}"
+      - run: |
+          echo "a=1" >> "$GITHUB_ENV"
+          echo 'b=1' >> "$GITHUB_ENV"

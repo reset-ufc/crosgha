@@ -10,7 +10,7 @@ A fix that fails a check is skipped: its finding stays in the report with the re
 JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
 workflow is never rewritten; its fixes are reported as not written.
 
-Three rules have fixes:
+Four rules have fixes:
 
 - `persist-credentials` adds `persist-credentials: false`. It leaves the finding unfixed, with the reason in its
   message, when `true` is explicit, when a later step of the job pushes with the persisted token (`git push` or
@@ -53,6 +53,33 @@ Three rules have fixes:
   while the runner rejects the extra lines of an environment file. Use the
   [multiline syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#multiline-strings)
   for such values.
+- `embedded-script-lint` quotes and braces each environment file path that a `run` script redirects to, the form
+  ShellCheck's [SC2086](https://www.shellcheck.net/wiki/SC2086) and [SC2250](https://www.shellcheck.net/wiki/SC2250)
+  ask for:
+
+  | Before | After |
+  |---|---|
+  | `echo "x=1" >> $GITHUB_OUTPUT` | `echo "x=1" >> "${GITHUB_OUTPUT}"` |
+  | `echo "X=1" >${GITHUB_ENV}` | `echo "X=1" >"${GITHUB_ENV}"` |
+  | `./lint 2>> $GITHUB_STEP_SUMMARY` | `./lint 2>> "${GITHUB_STEP_SUMMARY}"` |
+
+  The fix is a whitelist: a path is quoted only when it is the whole target word of a `>` or `>>` redirect in
+  shell code, also inside `$( )`, `if` blocks, `{ }` groups, and on the first line of a heredoc. Only the path
+  changes: `>` stays `>` and the rest of the line keeps its bytes. The shell then writes to the path as one
+  file name, as it did whenever the path held no spaces or glob characters. A step stays unfixed when the rule
+  reports any path that is not such a target:
+
+  - a command argument or an operand (`cat $GITHUB_ENV`, `[ -f $GITHUB_PATH ]`), a `for` list, a `case` subject or
+    pattern, a `[[ ]]` operand, another variable's `${...}`, or an input redirect (`< $GITHUB_ENV`). There quoting
+    can change what the script does: a `for` list and a pattern glob only unquoted;
+  - text: inside single quotes, escaped (`\$GITHUB_ENV`), in a comment, in a heredoc body, or in a double-quoted
+    string that spans lines;
+  - a path in backticks, or a script that uses `$'...'` quoting, leaves a quote, `$(`, or `${` open, or has a
+    heredoc without its delimiter line;
+  - a folded (`>`) or quoted YAML scalar, which YAML rewrites before the shell sees it, or a plain scalar in a
+    flow mapping (`{run: ...}`), where the added braces would end the scalar.
+
+  The rule reports only bash and sh steps, so other shells never get the fix.
 
 Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger filter needs project
 context.

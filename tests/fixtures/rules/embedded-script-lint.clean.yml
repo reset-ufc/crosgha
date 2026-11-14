@@ -16,3 +16,15 @@ jobs:
         run: echo "d=4" >> "$GITHUB_ENV"
       - shell: /bin/sh -eu {0}
         run: echo "e=5" >> "$GITHUB_OUTPUT"
+      - run: |
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo 'name=a b' >>"${GITHUB_OUTPUT}" # one word
+          echo "a=1" > "${GITHUB_ENV}"; echo "b=2" >> "${GITHUB_ENV}"
+          if [ -d "$HOME/bin" ]; then
+            printf '%s\n' "$HOME/bin" >> "${GITHUB_PATH}"
+          fi
+          ./lint 2>> "${GITHUB_STEP_SUMMARY}" || echo "lint=failed" >>"${GITHUB_OUTPUT}"
+      - run: |
+          cat <<EOF >> "${GITHUB_STEP_SUMMARY}"
+          ## Build
+          EOF

@@ -1,5 +1,7 @@
-//! `run` scripts read as simple commands: the program each one runs and its options, and the shell
-//! that runs the script.
+//! `run` scripts read as simple commands: the program each one runs and its options, where a
+//! variable expands unquoted, and the shell that runs the script.
+
+use std::ops::Range;
 
 use yaml_serde::Value;
 
@@ -333,4 +335,244 @@ pub fn runs_posix(workflow: &Workflow, job: &Job, step: &Step) -> bool {
         .unwrap_or("bash");
     let words: Vec<&str> = shell.split_whitespace().collect();
     program(&words).is_some_and(|program| matches!(program.name, "bash" | "sh"))
+}
+
+/// Whether the step's `run` scalar holds `script` as written, so a line of it can be rewritten in
+/// place: a literal block scalar, or a one-line plain scalar outside a flow mapping, where `{`,
+/// `}`, and `,` would end it. YAML folds `>` scalars and unescapes quoted ones.
+pub fn verbatim(workflow: &Workflow, step: &Step, script: &str) -> bool {
+    let document = &workflow.document;
+    let (Ok(Some(node)), Ok(Some(mapping))) = (
+        document.query_exact(&step.key("run")),
+        document.query_exact(&step.route),
+    ) else {
+        return false;
+    };
+    let source = document.extract(&node);
+    source.starts_with('|') || (source == script && !document.extract(&mapping).starts_with('{'))
+}
+
+/// Where the shell reads a `run` script, the innermost one last.
+enum Frame {
+    /// Shell code with the parentheses still open in it; `$(` opens one.
+    Code(usize),
+    /// `((` or `$((`, where quotes are not shell quoting.
+    Arithmetic(usize),
+    Backtick,
+    Double,
+    /// `${...}` of another variable.
+    Parameter,
+}
+
+/// A heredoc whose body starts on the next line.
+struct Heredoc {
+    delimiter: String,
+    /// `<<-`, whose delimiter line may start with tabs.
+    strip_tabs: bool,
+}
+
+const OPEN: &str = "the script's own frame is never closed";
+
+/// The `$NAME` and `${NAME}` expansions in `script`, for a name in `names`, that are the whole
+/// unquoted target word of a `>` or `>>` redirect in shell code: outside quotes, comments, heredoc
+/// bodies, backticks, arithmetic, and other `${...}`. Quoting such a word only stops splitting
+/// and globbing of the file name; anywhere else, such as a `for` list or a `case` pattern, it can
+/// change what the script does. `None` when the script holds quoting this reader does not follow:
+/// `$'...'`, an unclosed quote, `$(`, or `${`, or a heredoc without its delimiter line.
+// ponytail: `)` closes `$(` without parsing `case` patterns inside it; parse the shell grammar if
+// that misreads real scripts.
+pub fn redirect_targets(script: &str, names: &[&str]) -> Option<Vec<Range<usize>>> {
+    let bytes = script.as_bytes();
+    let mut frames = vec![Frame::Code(0)];
+    let mut heredocs: Vec<Heredoc> = Vec::new();
+    let mut found = Vec::new();
+    // Whether the code read so far ends with `>` and blanks, so a word starting here is its target.
+    let mut redirect = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = &bytes[index..];
+        if rest.starts_with(b"${{") {
+            index =
+                expression::end(&script[index + 3..]).map_or(bytes.len(), |end| index + end + 5);
+            continue;
+        }
+        let nested = frames.len() > 1;
+        let after_redirect = std::mem::take(&mut redirect);
+        match frames.last_mut().expect(OPEN) {
+            Frame::Double => match rest {
+                [b'\\', ..] => index += 1,
+                [b'"', ..] => {
+                    frames.pop();
+                }
+                [b'`', ..] => frames.push(Frame::Backtick),
+                [b'$', b'(', b'(', ..] => {
+                    frames.push(Frame::Arithmetic(2));
+                    index += 2;
+                }
+                [b'$', b'(', ..] => {
+                    frames.push(Frame::Code(1));
+                    index += 1;
+                }
+                _ => {}
+            },
+            Frame::Backtick => match rest {
+                [b'\\', ..] => index += 1,
+                [b'`', ..] => {
+                    frames.pop();
+                }
+                _ => {}
+            },
+            Frame::Parameter => match rest {
+                [b'\\', ..] => index += 1,
+                [b'}', ..] => {
+                    frames.pop();
+                }
+                [b'$', b'{', ..] => {
+                    frames.push(Frame::Parameter);
+                    index += 1;
+                }
+                _ => {}
+            },
+            Frame::Arithmetic(depth) => match rest {
+                [b'(', ..] => *depth += 1,
+                [b')', ..] if *depth == 1 => {
+                    frames.pop();
+                }
+                [b')', ..] => *depth -= 1,
+                _ => {}
+            },
+            Frame::Code(depth) => match rest {
+                [b'\\', ..] => index += 1,
+                [b'\'', ..] => index += script[index + 1..].find('\'')? + 1,
+                [b'"', ..] => frames.push(Frame::Double),
+                [b'`', ..] => frames.push(Frame::Backtick),
+                [b'#', ..] if starts_word(bytes, index) => {
+                    index = script[index..]
+                        .find('\n')
+                        .map_or(bytes.len(), |end| index + end);
+                    continue;
+                }
+                [b'(', b'(', ..] | [b'$', b'(', b'(', ..] => {
+                    index += usize::from(rest[0] == b'$') + 1;
+                    frames.push(Frame::Arithmetic(2));
+                }
+                [b'$', b'(', ..] => {
+                    frames.push(Frame::Code(1));
+                    index += 1;
+                }
+                [b'(', ..] => *depth += 1,
+                [b')', ..] if *depth == 1 && nested => {
+                    frames.pop();
+                }
+                [b')', ..] => *depth = depth.saturating_sub(1),
+                [b'$', b'\'', ..] => return None,
+                [b'$', b'$' | b'#', ..] => index += 1,
+                [b'>', ..] => redirect = true,
+                [b' ' | b'\t', ..] => redirect = after_redirect,
+                [b'$', ..] if let Some(length) = expansion_length(&script[index..], names) => {
+                    let word_end = bytes.get(index + length).is_none_or(|next| {
+                        matches!(next, b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b')')
+                    });
+                    if after_redirect && word_end {
+                        found.push(index..index + length);
+                    }
+                    index += length - 1;
+                }
+                [b'$', b'{', ..] => {
+                    frames.push(Frame::Parameter);
+                    index += 1;
+                }
+                [b'<', b'<', b'<', ..] => index += 2,
+                [b'<', b'<', ..] => {
+                    let (heredoc, end) = heredoc(script, index + 2)?;
+                    heredocs.push(heredoc);
+                    index = end;
+                    continue;
+                }
+                [b'\n', ..] if !heredocs.is_empty() => {
+                    index = heredoc_bodies_end(script, index + 1, &heredocs)?;
+                    heredocs.clear();
+                    continue;
+                }
+                _ => {}
+            },
+        }
+        index += 1;
+    }
+    (frames.len() == 1 && heredocs.is_empty()).then_some(found)
+}
+
+/// Whether a `#` at `index` starts a comment rather than sitting inside a word.
+fn starts_word(bytes: &[u8], index: usize) -> bool {
+    index == 0
+        || matches!(
+            bytes[index - 1],
+            b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'('
+        )
+}
+
+/// The length of `$NAME` or `${NAME}` at the start of `text`, for a name in `names` that is not
+/// the start of a longer name.
+fn expansion_length(text: &str, names: &[&str]) -> Option<usize> {
+    let rest = text.strip_prefix('$')?;
+    names.iter().find_map(|name| {
+        if rest
+            .strip_prefix('{')
+            .and_then(|braced| braced.strip_prefix(name))
+            .is_some_and(|after| after.starts_with('}'))
+        {
+            return Some(name.len() + 3);
+        }
+        let after = rest.strip_prefix(name)?;
+        let whole = !after.starts_with(|next: char| next.is_ascii_alphanumeric() || next == '_');
+        whole.then_some(name.len() + 1)
+    })
+}
+
+/// The heredoc whose `<<` ends right before `start`, and the index after its delimiter word.
+/// Quotes in the word only turn off expansion in the body, so the delimiter line omits them.
+fn heredoc(script: &str, start: usize) -> Option<(Heredoc, usize)> {
+    let strip_tabs = script[start..].starts_with('-');
+    let after = script[start + usize::from(strip_tabs)..].trim_start_matches([' ', '\t']);
+    let word_start = script.len() - after.len();
+    let word_end = word_start
+        + after
+            .find(|next: char| next.is_whitespace() || ";&|<>()".contains(next))
+            .unwrap_or(after.len());
+    let delimiter: String = script[word_start..word_end]
+        .chars()
+        .filter(|next| !matches!(next, '\'' | '"' | '\\'))
+        .collect();
+    if delimiter.is_empty() {
+        return None;
+    }
+    let heredoc = Heredoc {
+        delimiter,
+        strip_tabs,
+    };
+    Some((heredoc, word_end))
+}
+
+/// The index after the bodies of `heredocs`, which start at `start` one after another, or `None`
+/// when one has no delimiter line.
+fn heredoc_bodies_end(script: &str, mut start: usize, heredocs: &[Heredoc]) -> Option<usize> {
+    for heredoc in heredocs {
+        loop {
+            if start >= script.len() {
+                return None;
+            }
+            let end = script[start..]
+                .find('\n')
+                .map_or(script.len(), |at| start + at);
+            let line = match heredoc.strip_tabs {
+                true => script[start..end].trim_start_matches('\t'),
+                false => &script[start..end],
+            };
+            start = end + 1;
+            if line == heredoc.delimiter {
+                break;
+            }
+        }
+    }
+    Some(start.min(script.len()))
 }

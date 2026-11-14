@@ -145,11 +145,7 @@ fn environment_files(
     {
         return None;
     }
-    // Only a literal block scalar or a one-line plain scalar holds the script as written.
-    let route = step.key("run");
-    let node = workflow.document.query_exact(&route).ok()??;
-    let source = workflow.document.extract(&node);
-    if !source.starts_with('|') && source != script {
+    if !shell::verbatim(workflow, step, script) {
         return None;
     }
     let mut rewrites = Vec::new();
@@ -169,7 +165,7 @@ fn environment_files(
     }
     Some(ProposedFix {
         edit: Edit::Lines(rewrites),
-        changed_route: route,
+        changed_route: step.key("run"),
         change: ChangeKind::Replace,
     })
 }
