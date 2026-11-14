@@ -26,8 +26,10 @@ use std::path::Path;
 use yamlpatch::Patch;
 use yamlpath::Route;
 
+use crate::filesystem;
 use crate::github::GitHub;
 use crate::policy::{Persona, Settings, Severity};
+use crate::tree::Tree;
 use crate::workflow::{Kind, Workflow};
 
 pub struct Rule {
@@ -155,7 +157,7 @@ pub enum ChangeKind {
 }
 
 pub use common::local_actions;
-pub use repository::{Located, Place, Scanned};
+pub use repository::{Located, Place};
 
 /// The rule's `rules.<id>.config` block, if the config has one.
 pub type Options<'a> = Option<&'a yaml_serde::Value>;
@@ -163,7 +165,7 @@ pub type Options<'a> = Option<&'a yaml_serde::Value>;
 type Detect = fn(&Workflow) -> Result<Vec<Finding>, String>;
 type NamedDetect = fn(&Workflow, &str) -> Result<Vec<Finding>, String>;
 type ConfigurableDetect = fn(&Workflow, Options) -> Result<Vec<Finding>, String>;
-type RepositoryDetect = fn(&Path, &Scanned, bool, Options) -> Result<Vec<Located>, String>;
+type RepositoryDetect = fn(&dyn Tree, bool, Options) -> Result<Vec<Located>, String>;
 type OnlineDetect = fn(&Workflow, &GitHub, Options) -> Result<Vec<Finding>, String>;
 
 /// What a check reads, which decides the files it runs on. A composite action's `runs.steps` run
@@ -517,18 +519,13 @@ pub fn detect_settings(
     }
 }
 
-/// Repository-level rules for the `.github` directory next to the scanned workflows.
-pub fn detect_repository(
-    github: &Path,
-    scanned: &Scanned,
-    settings: &Settings,
-) -> Result<Vec<Located>, String> {
+/// Repository-level rules for `tree`, a repository with a `.github` directory.
+pub fn detect_repository(tree: &dyn Tree, settings: &Settings) -> Result<Vec<Located>, String> {
     let mut found = Vec::new();
     for (rule, detect) in REPOSITORY {
         if enabled(rule, settings) {
             found.extend(detect(
-                github,
-                scanned,
+                tree,
                 settings.ignores,
                 settings.config.options(rule),
             )?);
@@ -542,8 +539,12 @@ pub fn detect_dependabot(path: &Path, settings: &Settings) -> Result<Vec<Located
     if !enabled(&repository::COOLDOWN, settings) {
         return Ok(Vec::new());
     }
+    let Ok(source) = filesystem::read(path) else {
+        return Ok(Vec::new());
+    };
     let found = repository::cooldown_file(
         path,
+        source.text,
         settings.ignores,
         settings.config.options(&repository::COOLDOWN),
     )?;

@@ -11,6 +11,7 @@ use yaml_serde::Value;
 
 use crate::policy::Severity;
 use crate::rules::{Finding, Rule};
+use crate::tree::Tree;
 
 #[derive(Default)]
 pub struct Config {
@@ -202,11 +203,32 @@ impl Config {
         Ok(None)
     }
 
+    /// The first of `NAMES` at the root of a remote repository. zizmor reads
+    /// `.github/zizmor.ya?ml` or `zizmor.ya?ml` "in the root of the repository"
+    /// (https://docs.zizmor.sh/configuration/#discovery), in the order of `CONFIG_CANDIDATES`
+    /// (`discover_remote` in `crates/zizmor/src/config/mod.rs` at
+    /// dc2209b6b6d76781c43d2a09aa9d51b56627457c); crosgha's own names come first, as for local
+    /// inputs. The tree answers whether each name exists, so only the file found is requested.
+    pub fn discover_in(tree: &dyn Tree) -> Result<Option<Self>, String> {
+        for name in NAMES {
+            if let Some(source) = tree.read(name)? {
+                return Self::parse(&source, &tree.path(name)).map(Some);
+            }
+        }
+        Ok(None)
+    }
+
     pub fn load(path: &Path) -> Result<Self, String> {
+        let source = fs::read_to_string(path)
+            .map_err(|error| format!("config `{}`: {error}", path.display()))?;
+        Self::parse(&source, path)
+    }
+
+    /// Reads `source`, the text of the config file at `path`.
+    fn parse(source: &str, path: &Path) -> Result<Self, String> {
         let describe = |error: String| format!("config `{}`: {error}", path.display());
-        let source = fs::read_to_string(path).map_err(|error| describe(error.to_string()))?;
         let file: Option<File> =
-            yaml_serde::from_str(&source).map_err(|error| describe(error.to_string()))?;
+            yaml_serde::from_str(source).map_err(|error| describe(error.to_string()))?;
         let rules = file
             .and_then(|file| file.rules)
             .map_or_else(Vec::new, |Rules(rules)| rules);

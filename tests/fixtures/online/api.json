@@ -61,6 +61,10 @@
     "default_workflow_permissions": "write",
     "can_approve_pull_request_reviews": true
   },
+  "/repos/fixture/repo-org-settings/actions/permissions/workflow": {
+    "default_workflow_permissions": "write",
+    "can_approve_pull_request_reviews": false
+  },
   "/repos/reset-ufc/crosgha/releases/latest": {
     "tag_name": "v0.1.0"
   },
@@ -228,17 +232,37 @@
   ],
   "/repos/example/remote/commits/v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "/repos/example/empty/commits/v1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "/repos/example/empty/git/trees/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?recursive=1": {
+    "sha": "3333333333333333333333333333333333333333",
+    "truncated": false,
+    "tree": [
+      {"path": "README.md", "mode": "100644", "type": "blob", "sha": "2222222222222222222222222222222222222222"}
+    ]
+  },
   "/repos/example/clean/commits/HEAD": "cccccccccccccccccccccccccccccccccccccccc",
-  "/repos/example/clean/contents/.github/workflows?ref=cccccccccccccccccccccccccccccccccccccccc": [
-    {"type": "file", "name": "my ci.yml"}
-  ],
+  "/repos/example/clean/git/trees/cccccccccccccccccccccccccccccccccccccccc?recursive=1": {
+    "sha": "3333333333333333333333333333333333333333",
+    "truncated": false,
+    "tree": [
+      {"path": ".github", "mode": "040000", "type": "tree", "sha": "1111111111111111111111111111111111111111"},
+      {"path": ".github/workflows", "mode": "040000", "type": "tree", "sha": "1111111111111111111111111111111111111111"},
+      {"path": ".github/workflows/my ci.yml", "mode": "100644", "type": "blob", "sha": "2222222222222222222222222222222222222222"}
+    ]
+  },
   "/repos/example/clean/contents/.github/workflows/my%20ci.yml?ref=cccccccccccccccccccccccccccccccccccccccc": "name: Clean\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - run: echo ok\n",
-  "/repos/example/remote/contents/.github/workflows?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": [
-    {"type": "file", "name": "bad.yml"},
-    {"type": "file", "name": "clean.yaml"},
-    {"type": "file", "name": "README.md"},
-    {"type": "dir", "name": "nested"}
-  ],
+  "/repos/example/remote/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1": {
+    "sha": "3333333333333333333333333333333333333333",
+    "truncated": false,
+    "tree": [
+      {"path": ".github", "mode": "040000", "type": "tree", "sha": "1111111111111111111111111111111111111111"},
+      {"path": ".github/workflows", "mode": "040000", "type": "tree", "sha": "1111111111111111111111111111111111111111"},
+      {"path": ".github/workflows/README.md", "mode": "100644", "type": "blob", "sha": "2222222222222222222222222222222222222222"},
+      {"path": ".github/workflows/bad.yml", "mode": "100644", "type": "blob", "sha": "2222222222222222222222222222222222222222"},
+      {"path": ".github/workflows/clean.yaml", "mode": "100644", "type": "blob", "sha": "2222222222222222222222222222222222222222"},
+      {"path": ".github/workflows/nested", "mode": "040000", "type": "tree", "sha": "1111111111111111111111111111111111111111"},
+      {"path": ".github/workflows/nested/inner.yml", "mode": "100644", "type": "blob", "sha": "2222222222222222222222222222222222222222"}
+    ]
+  },
   "/repos/example/remote/contents/.github/workflows/bad.yml?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "name: Bad\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n",
   "/repos/example/remote/contents/.github/workflows/clean.yaml?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "name: Clean\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - run: echo ok\n",
   "/repos/example/many-tags/tags?per_page=100&page=2": [
