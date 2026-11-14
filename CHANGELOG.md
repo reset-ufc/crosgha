@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/reset-ufc/crosgha/compare/v0.15.1...v0.16.0) (2026-11-13)
+
+
+### Added
+
+* **report:** name ghlint equivalents in reports and the rule catalog ([6b0d821](https://github.com/reset-ufc/crosgha/commit/6b0d821f823a8fb82b29be810b4cbc1c7fe146c9))
+* **report:** name ghlint equivalents in reports and the rule catalog ([7becf33](https://github.com/reset-ufc/crosgha/commit/7becf33a783abfd07f53caf40046e1ca0bb18e7e)), closes [#92](https://github.com/reset-ufc/crosgha/issues/92)
+
 ## [0.15.1](https://github.com/reset-ufc/crosgha/compare/v0.15.0...v0.15.1) (2026-11-02)
 
 
