@@ -1,0 +1,53 @@
+name: Release housekeeping
+on: [push]
+permissions: { contents: write, pull-requests: write }
+# Every finding here stays unfixed: create-pull-request has no input that fails when there is no
+# diff, other actions predate their fail-fast input, and yamlpatch cannot add the input to an empty
+# `with:` or without re-quoting a flow mapping.
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: ./scripts/bump-version.sh
+      - uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3 # expect: error-suppression
+        with:
+          title: Bump the version
+          branch: bump-version
+      - name: Open the changelog pull request
+        uses: Peter-Evans/Create-Pull-Request@v7 # expect: error-suppression
+  legacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: make dist
+      - uses: actions/upload-artifact@v1 # expect: error-suppression
+        with:
+          name: dist
+          path: dist
+      - uses: actions/upload-artifact@5f948bc1f0a251f88bb4c9b1c3dfa6cbd1327dc5 # v2.1.1 # expect: error-suppression
+        with:
+          name: logs
+          path: logs/
+      - uses: softprops/action-gh-release@v0.1.5 # expect: error-suppression
+        with:
+          files: dist/*.zip
+      - uses: EnricoMi/publish-unit-test-result-action@v1 # expect: error-suppression
+        with:
+          files: build/test-results/**/*.xml
+      - uses: EnricoMi/publish-unit-test-result-action@v2.2.0 # expect: error-suppression
+        with:
+          check_name: Pinned results
+          files: build/pinned/*.xml
+  flow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: make coverage
+      - uses: actions/upload-artifact@v4 # expect: error-suppression
+        with: { name: coverage, path: coverage/ }
+      - { name: Upload the notes, uses: actions/upload-artifact@v4.6.2 } # expect: error-suppression
+      - name: Upload the docs
+        uses: actions/upload-artifact@v4.6.2 # expect: error-suppression
+        with:
+          # path: docs/

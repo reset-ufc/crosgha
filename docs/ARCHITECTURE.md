@@ -8,7 +8,7 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 | CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
 | Rule modules | 48 rules covering every taxonomy tag: 39 per workflow, 4 per repository, 5 online. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
-| Fix validation | Runnable for add and replace proposals; `persist-credentials` proposes adds, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, and `unsafe-if-condition` the new source of an `if` scalar. |
+| Fix validation | Runnable for add and replace proposals; `persist-credentials` and `error-suppression` propose adds of a step input, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, and `unsafe-if-condition` the new source of an `if` scalar. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
 | Composite Action | Report mode works: zizmor-action's inputs, a sha256-verified release binary, SARIF upload, job summary, then `fail-on`. |
 | PR and auto-merge | Mode contract and guards exist; repository operations are pending. |

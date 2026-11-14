@@ -30,7 +30,7 @@ non-compliant and compliant YAML, generated from its test fixtures.
 | `runtime-monitoring` | `runtime-monitoring` | note | auditor | workflow |  |  | [examples](rule-examples.md#runtime-monitoring) |
 | `runner-versioning` | `runner-versioning` | note | pedantic | workflow |  |  | [examples](rule-examples.md#runner-versioning) |
 | `missing-timeout` | `missing-timeout` | note | pedantic | workflow | ghlint: `MissingJobTimeout` |  | [examples](rule-examples.md#missing-timeout) |
-| `error-suppression` | `error-suppression` | note | pedantic | workflow |  |  | [examples](rule-examples.md#error-suppression) |
+| `error-suppression` | `error-suppression` | note | pedantic | workflow | ghlint: `FailFastUploadArtifact`, `FailFastSoftpropsGhRelease`, `FailFastPublishUnitTestResults`, `FailFastPeterEvansCreatePullRequest` |  | [examples](rule-examples.md#error-suppression) |
 | `missing-concurrency` | `missing-concurrency` | note | pedantic | workflow | zizmor: `concurrency-limits` |  | [examples](rule-examples.md#missing-concurrency) |
 | `broad-trigger` | `broad-trigger` | note | pedantic | workflow |  |  | [examples](rule-examples.md#broad-trigger) |
 | `missing-fork-guard` | `missing-fork-guard` | note | pedantic | workflow |  |  | [examples](rule-examples.md#missing-fork-guard) |

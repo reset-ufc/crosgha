@@ -1,9 +1,11 @@
-//! Workflow traversal shared by the rules: jobs, steps, triggers, and `uses` refs.
+//! Workflow traversal shared by the rules: jobs, steps, triggers, and `uses` refs, plus the fix that
+//! adds a step input.
 
-use yaml_serde::Value;
+use yaml_serde::{Mapping, Value};
+use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{Finding, Rule, online};
+use super::{ChangeKind, Edit, Finding, ProposedFix, Rule, online};
 use crate::workflow::Workflow;
 
 pub struct Job<'a> {
@@ -81,6 +83,44 @@ impl<'a> Step<'a> {
         self.uses()
             .and_then(|uses| uses.split_once('@'))
             .is_some_and(|(name, _)| name.eq_ignore_ascii_case(action))
+    }
+}
+
+/// A fix that sets the step input `key` to `value`, adding a `with` mapping when the step has none.
+pub fn add_input(step: &Step<'_>, key: &str, value: Value) -> ProposedFix {
+    let (patch, changed_route) = match step.value.get("with") {
+        None => {
+            let mut inputs = Mapping::new();
+            inputs.insert(Value::String(key.to_owned()), value);
+            (
+                Patch {
+                    route: step.route.clone(),
+                    operation: Op::Add {
+                        key: "with".to_owned(),
+                        value: Value::Mapping(inputs),
+                    },
+                },
+                step.key("with"),
+            )
+        }
+        Some(_) => {
+            let with = step.key("with");
+            (
+                Patch {
+                    route: with.clone(),
+                    operation: Op::Add {
+                        key: key.to_owned(),
+                        value,
+                    },
+                },
+                with.with_key(key.to_owned()),
+            )
+        }
+    };
+    ProposedFix {
+        edit: Edit::Patch(patch),
+        changed_route,
+        change: ChangeKind::Add,
     }
 }
 

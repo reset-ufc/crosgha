@@ -1,0 +1,95 @@
+name: Release
+on: [push]
+permissions: { contents: write }
+# Each reported step gets its fail-fast input from `--fix`: the step fails when it had nothing to
+# upload, attach, or publish.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: make dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 # expect: error-suppression
+        with:
+          name: dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@v4 # expect: error-suppression
+        with: { name: coverage, retention-days: 5 } # Flow mappings keep their style.
+      - name: Upload the logs
+        uses: Actions/Upload-Artifact@v2 # expect: error-suppression
+      - uses: actions/upload-artifact@main # expect: error-suppression
+        with:
+          name: sbom # The SBOM step may skip itself.
+          path: sbom.json
+          retention-days: 5
+      # A permissive value set on purpose is an opt-out, also through an expression.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optional
+          path: optional/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maybe
+          path: maybe/
+          If-No-Files-Found: ${{ inputs.missing-files }}
+      # Another action of the same repository, and a local copy, have their own inputs.
+      - uses: actions/upload-artifact/merge@v4
+        with:
+          name: all
+      - uses: ./.github/actions/upload-artifact
+      - uses: docker://ghcr.io/actions/upload-artifact:latest
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - run: make test
+      - uses: EnricoMi/publish-unit-test-result-action@v2 # expect: error-suppression
+        if: ${{ !cancelled() }}
+        with:
+          files: |
+            build/test-results/**/*.xml
+      - uses: enricomi/publish-unit-test-result-action/linux@v2.26.0 # expect: error-suppression
+        with:
+          check_name: Linux results
+          files: build/linux/*.xml
+      - uses: EnricoMi/publish-unit-test-result-action/windows/bash@v2 # expect: error-suppression
+        with:
+          files: build/windows/*.xml
+      - uses: EnricoMi/publish-unit-test-result-action@v2.3.0 # expect: error-suppression
+        with:
+          check_name: Oldest results
+          files: build/oldest/*.xml
+      - uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          check_name: Optional results
+          files: build/optional/*.xml
+          action_fail_on_inconclusive: false
+  release:
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4 # expect: error-suppression
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+          # Notes come from the tag.
+      - uses: softprops/action-gh-release@v0.1.6 # expect: error-suppression
+        with:
+          files: legacy/*.zip
+      # Without `files` there is nothing to match.
+      - uses: softprops/action-gh-release@v2
+        with:
+          body: Release notes only
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: optional/*.zip
+          fail_on_unmatched_files: false

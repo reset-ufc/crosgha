@@ -2,6 +2,7 @@ pub(crate) mod common;
 mod correctness;
 mod deprecation;
 mod env_injection;
+mod error_suppression;
 pub(crate) mod expression;
 mod immutable_references;
 mod inherited_secrets;
@@ -106,7 +107,8 @@ pub struct Finding {
     pub route: Route<'static>,
     pub fix: Option<ProposedFix>,
     /// The equivalent IDs this finding belongs to when another tool splits the rule, such as
-    /// `unpinned-images` for an image in `unpinned-action`.
+    /// `unpinned-images` for an image in `unpinned-action`. A part no tool names gets a label of its
+    /// own (`continue-on-error`), since an empty list answers to every partial ID.
     pub concepts: &'static [&'static str],
 }
 
@@ -195,10 +197,7 @@ const REGISTRY: &[(&Rule, Detect)] = &[
     (&runner::VERSIONING, runner::versioning),
     // Maintainability
     (&job_timeout::RULE, job_timeout::detect),
-    (
-        &maintainability::ERROR_SUPPRESSION,
-        maintainability::error_suppression,
-    ),
+    (&error_suppression::RULE, error_suppression::detect),
     (&maintainability::CONCURRENCY, maintainability::concurrency),
     (
         &maintainability::BROAD_TRIGGER,

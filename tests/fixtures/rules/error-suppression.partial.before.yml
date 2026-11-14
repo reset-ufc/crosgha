@@ -1,0 +1,19 @@
+name: Nightly
+on: [push]
+permissions: { contents: write, pull-requests: write }
+# The config turns off ghlint's FailFastUploadArtifact, so only that part of the rule goes quiet.
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Measure
+        run: make benchmark
+        continue-on-error: true # expect: error-suppression
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark
+          path: benchmark/
+      - uses: peter-evans/create-pull-request@v8 # expect: error-suppression
+        with:
+          title: Update the benchmark baseline

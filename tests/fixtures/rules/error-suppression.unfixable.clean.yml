@@ -1,0 +1,58 @@
+name: Release housekeeping
+on: [push]
+permissions: { contents: write, pull-requests: write }
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: ./scripts/bump-version.sh
+      - name: Open the version pull request
+        run: |
+          git switch -c bump-version
+          git commit -am "Bump the version"
+          git push origin bump-version
+          gh pr create --title "Bump the version" --body "Automated version bump."
+        env:
+          GH_TOKEN: ${{ github.token }}
+  legacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: make dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: logs/
+          if-no-files-found: error
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          fail_on_unmatched_files: true
+      - uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: build/test-results/**/*.xml
+          action_fail_on_inconclusive: true
+      - uses: EnricoMi/publish-unit-test-result-action@v2.26.0
+        with:
+          check_name: Pinned results
+          files: build/pinned/*.xml
+          action_fail_on_inconclusive: true
+  flow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: make coverage
+      - uses: actions/upload-artifact@v4
+        with: { name: coverage, path: coverage/, if-no-files-found: error }
+      - { name: Upload the notes, uses: actions/upload-artifact@v4.6.2, with: { if-no-files-found: error } }
+      - name: Upload the docs
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          path: docs/
+          if-no-files-found: error

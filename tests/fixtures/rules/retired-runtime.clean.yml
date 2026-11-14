@@ -15,4 +15,4 @@ jobs:
       - uses: actions/github-script@v8
         with: { script: "core.info('x')" }
       - uses: actions/upload-artifact@v6
-        with: { name: dist, path: dist }
+        with: { name: dist, path: dist, if-no-files-found: error }
