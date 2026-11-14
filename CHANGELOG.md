@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/reset-ufc/crosgha/compare/v0.18.0...v0.19.0) (2026-11-14)
+
+
+### Added
+
+* **rules:** fix mixed if conditions and report conditions that hide their intent ([#154](https://github.com/reset-ufc/crosgha/issues/154)) ([f7ccb8e](https://github.com/reset-ufc/crosgha/commit/f7ccb8ee8a8c286c6bf70594043f6c032ae6336b)), closes [#89](https://github.com/reset-ufc/crosgha/issues/89) [#75](https://github.com/reset-ufc/crosgha/issues/75)
+
 ## [0.18.0](https://github.com/reset-ufc/crosgha/compare/v0.17.0...v0.18.0) (2026-11-14)
 
 
