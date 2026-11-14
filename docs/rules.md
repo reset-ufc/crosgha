@@ -44,6 +44,7 @@ non-compliant and compliant YAML, generated from its test fixtures.
 | `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check`, `expression`; ghlint: `JsonSchemaValidation` |  | [examples](rule-examples.md#schema-validity) |
 | `embedded-script-lint` | `embedded-script-lint` | note | pedantic | workflow | actionlint: `shellcheck`; ghlint: `SafeEnvironmentFileRedirect`, `EnvironmentFileOverwritten` |  | [examples](rule-examples.md#embedded-script-lint) |
 | `insecure-protocol` | `insecure-protocol` | warning | regular | workflow | zizmor: `insecure-url-scheme` |  | [examples](rule-examples.md#insecure-protocol) |
+| `gh-cli-environment` | `embedded-script-lint` | warning | regular | workflow | ghlint: `MissingGhToken`, `MissingGhHost`, `MissingGhRepo` |  | [examples](rule-examples.md#gh-cli-environment) |
 | `unpinned-action` | `unpinned-action` | warning | pedantic | workflow | zizmor: `unpinned-uses`, `unpinned-images` | yes | [examples](rule-examples.md#unpinned-action) |
 | `forbidden-action` | `untrusted-3rd-party-action` | warning | regular | workflow | zizmor: `forbidden-uses` | yes | [examples](rule-examples.md#forbidden-action) |
 | `self-hosted-runner` | `self-hosted-runner` | warning | regular | workflow | zizmor: `self-hosted-runner` | yes | [examples](rule-examples.md#self-hosted-runner) |

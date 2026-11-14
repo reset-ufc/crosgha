@@ -175,7 +175,8 @@ pub fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-fn is_assignment(word: &str) -> bool {
+/// Whether `word` assigns a shell variable: `NAME=value`.
+pub fn is_assignment(word: &str) -> bool {
     word.split_once('=').is_some_and(|(name, _)| {
         name.starts_with(|char: char| char.is_ascii_alphabetic() || char == '_')
             && name
@@ -308,10 +309,16 @@ fn default_shell(scope: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-/// Whether bash or sh runs `step`'s script: its `shell`, else the job's or the workflow's
-/// `defaults.run.shell`, else the runner's default. A custom shell such as `/usr/bin/bash -e {0}`
-/// names it by path, and `/usr/bin/env [options] [NAME=value] bash {0}` looks it up.
+/// Whether bash or sh runs `step`'s script.
 pub fn runs_posix(workflow: &Workflow, job: &Job, step: &Step) -> bool {
+    name(workflow, job, step).is_some_and(|name| matches!(name, "bash" | "sh"))
+}
+
+/// The file name of the shell that runs `step`'s script: its `shell`, else the job's or the
+/// workflow's `defaults.run.shell`, else the runner's default. A custom shell such as
+/// `/usr/bin/bash -e {0}` names it by path, and `/usr/bin/env [options] [NAME=value] bash {0}`
+/// looks it up.
+pub fn name<'a>(workflow: &'a Workflow, job: &Job<'a>, step: &Step<'a>) -> Option<&'a str> {
     // `run` defaults to pwsh on Windows and to bash elsewhere, so a matrix over both OSes still
     // runs bash on some entries:
     // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
@@ -334,7 +341,7 @@ pub fn runs_posix(workflow: &Workflow, job: &Job, step: &Step) -> bool {
         .or(windows.then_some("pwsh"))
         .unwrap_or("bash");
     let words: Vec<&str> = shell.split_whitespace().collect();
-    program(&words).is_some_and(|program| matches!(program.name, "bash" | "sh"))
+    program(&words).map(|program| program.name)
 }
 
 /// Whether the step's `run` scalar holds `script` as written, so a line of it can be rewritten in
