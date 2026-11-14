@@ -14,6 +14,14 @@ jobs:
             git log -1 --format=%B
             echo 'NOTES_EOF'
           } >> "${GITHUB_OUTPUT}"
+      - shell: bash
+        run: &script |
+          echo "x=1" >> "${GITHUB_OUTPUT}"
+      - name: print the script text
+        shell: bash
+        env:
+          SCRIPT_TEXT: *script
+        run: printf '%s' "${SCRIPT_TEXT}" > script.txt
       - shell: pwsh
         run: '"x=1" >> $env:GITHUB_OUTPUT'
       - shell: python

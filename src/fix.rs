@@ -327,6 +327,9 @@ fn validate_change(
                 before.document.extract(&old),
                 &after.document.source()[end..]
             );
+            if changed_nodes(&before.value, &after.value) > 1 {
+                return Err("fix would also change the aliases of an anchored value".to_owned());
+            }
             restored == before.document.source()
         }
         ChangeKind::Remove => {
@@ -355,6 +358,29 @@ fn validate_change(
         return Err("fix changed YAML outside the intended node".to_owned());
     }
     Ok(())
+}
+
+/// How many nodes differ between `before` and `after`, counting a changed node once rather than
+/// each of its children. A rewrite of an anchored node also changes every alias of it, which the
+/// byte check of the rewritten span cannot see. ponytail: a changed mapping counts each changed
+/// entry, so a future fix that replaces a whole mapping would need the value at its route instead.
+fn changed_nodes(before: &Value, after: &Value) -> usize {
+    match (before, after) {
+        _ if before == after => 0,
+        (Value::Mapping(old), Value::Mapping(new))
+            if old.len() == new.len() && old.keys().all(|key| new.contains_key(key)) =>
+        {
+            old.iter()
+                .map(|(key, item)| changed_nodes(item, &new[key]))
+                .sum()
+        }
+        (Value::Sequence(old), Value::Sequence(new)) if old.len() == new.len() => old
+            .iter()
+            .zip(new)
+            .map(|(old, new)| changed_nodes(old, new))
+            .sum(),
+        _ => 1,
+    }
 }
 
 /// The source of `workflow` with each rewrite applied to the next matching line of the scalar at

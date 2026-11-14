@@ -53,6 +53,20 @@ jobs:
       - run: | # expect: deprecated-command
           echo "::set-output name=a::1"
           echo "::set-output name=b::2"; echo done
+      # A rewrite of an anchored script would also change every alias of it.
+      - shell: bash
+        run: &script | # expect: deprecated-command
+          echo "::set-output name=x::1"
+      - name: print the script text
+        shell: bash
+        env:
+          SCRIPT_TEXT: *script
+        run: printf '%s' "${SCRIPT_TEXT}" > script.txt
+      - shell: bash
+        run: &shared | # expect: deprecated-command
+          echo "::set-output name=y::2"
+      - shell: bash
+        run: *shared # expect: deprecated-command
       - shell: pwsh
         run: echo "::set-output name=x::1" # expect: deprecated-command
       - shell: python
