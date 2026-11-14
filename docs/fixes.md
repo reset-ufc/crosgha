@@ -53,21 +53,26 @@ Four rules have fixes:
   while the runner rejects the extra lines of an environment file. Use the
   [multiline syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#multiline-strings)
   for such values.
-- `embedded-script-lint` quotes and braces each environment file path that a `run` script redirects to, the form
-  ShellCheck's [SC2086](https://www.shellcheck.net/wiki/SC2086) and [SC2250](https://www.shellcheck.net/wiki/SC2250)
-  ask for:
+- `embedded-script-lint` makes two rewrites, one for each of its findings, which ghlint names
+  `SafeEnvironmentFileRedirect` and `EnvironmentFileOverwritten`. Turning one of them off in the config keeps the other
+  finding and its fix.
+
+  **Quotes and braces** each environment file path that a `run` script redirects to, the form ShellCheck's
+  [SC2086](https://www.shellcheck.net/wiki/SC2086) and [SC2250](https://www.shellcheck.net/wiki/SC2250) ask for:
 
   | Before | After |
   |---|---|
   | `echo "x=1" >> $GITHUB_OUTPUT` | `echo "x=1" >> "${GITHUB_OUTPUT}"` |
+  | `echo "x=1" >> "$GITHUB_OUTPUT"` | `echo "x=1" >> "${GITHUB_OUTPUT}"` |
   | `echo "X=1" >${GITHUB_ENV}` | `echo "X=1" >"${GITHUB_ENV}"` |
   | `./lint 2>> $GITHUB_STEP_SUMMARY` | `./lint 2>> "${GITHUB_STEP_SUMMARY}"` |
 
-  The fix is a whitelist: a path is quoted only when it is the whole target word of a `>` or `>>` redirect in
+  The fix is a whitelist: a path is rewritten only when it is the whole target word of a `>` or `>>` redirect in
   shell code, also inside `$( )`, `if` blocks, `{ }` groups, and on the first line of a heredoc. Only the path
-  changes: `>` stays `>` and the rest of the line keeps its bytes. The shell then writes to the path as one
-  file name, as it did whenever the path held no spaces or glob characters. A step stays unfixed when the rule
-  reports any path that is not such a target:
+  changes and the rest of the line keeps its bytes. The shell then writes to the path as one file name, as it did
+  whenever the path held no spaces or glob characters; the braces change nothing, because a quote follows the name.
+  A quoted path is reported only as a redirect target, as ghlint does. A step stays unfixed when the rule reports any
+  path that is not such a target:
 
   - a command argument or an operand (`cat $GITHUB_ENV`, `[ -f $GITHUB_PATH ]`), a `for` list, a `case` subject or
     pattern, a `[[ ]]` operand, another variable's `${...}`, or an input redirect (`< $GITHUB_ENV`). There quoting
@@ -79,7 +84,30 @@ Four rules have fixes:
   - a folded (`>`) or quoted YAML scalar, which YAML rewrites before the shell sees it, or a plain scalar in a
     flow mapping (`{run: ...}`), where the added braces would end the scalar.
 
-  The rule reports only bash and sh steps, so other shells never get the fix.
+  **Appends** where `>` truncates an environment file, after ghlint's
+  [`EnvironmentFileOverwritten`](https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/EnvironmentFileOverwriteRule.kt):
+
+  | Before | After |
+  |---|---|
+  | `echo "x=1" > "${GITHUB_OUTPUT}"` | `echo "x=1" >> "${GITHUB_OUTPUT}"` |
+  | `} > $GITHUB_ENV` | `} >> $GITHUB_ENV` |
+  | `printf 'v=%s\n' "$v" 1>"${GITHUB_STATE}"` | `printf 'v=%s\n' "$v" 1>>"${GITHUB_STATE}"` |
+
+  Only the operator changes; the quoting fix above handles the path. The runner
+  [gives each step new, empty environment files](https://github.com/actions/runner/blob/8cfa1049f86781d141056082d73802d56cd2b433/src/Runner.Worker/FileCommandManager.cs), so `>` and `>>` write the same file unless the step wrote to it before: an earlier line, an
+  earlier pass of a loop, or a program it ran. `>` dropped those writes and `>>` keeps them, so outputs, variables,
+  and `PATH` entries that the step wrote first now reach later steps. A key written twice keeps its last value. The
+  same reader decides what a redirect is, and a step stays unfixed when the rule still reports an overwrite:
+
+  - `GITHUB_STEP_SUMMARY`: GitHub
+    [documents `>`](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#overwriting-job-summaries)
+    as the way to clear the step's summary, so the fix cannot tell a mistake from intent;
+  - `&>`, which sh reads as `&` and then `>`, and `<>`, which opens the file without truncating it;
+  - a script with `[[` or `$[`, where `>` compares strings or numbers and the reader does not track the brackets;
+  - a `>` the reader does not take for a redirect: escaped, in quotes, a comment, a heredoc body, or `$(( ))`,
+    and every case of the quoting fix's list that hides the script.
+
+  The rule reports only bash and sh steps, so other shells never get either fix.
 
 Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger filter needs project
 context.

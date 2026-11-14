@@ -1,0 +1,4 @@
+# ghlint's two issues are separate findings, so turning one off keeps the other and its fix.
+rules:
+  EnvironmentFileOverwritten:
+    disable: true

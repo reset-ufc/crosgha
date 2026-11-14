@@ -63,9 +63,9 @@ pub fn apply(
     let mut known: Option<Vec<Finding>> = None;
     let mut attempts = Vec::new();
     for (index, finding) in findings.iter().enumerate() {
-        let Some(proposal) = &finding.fix else {
+        if finding.fix.is_none() {
             continue;
-        };
+        }
         if breaks.is_some() && known.is_none() {
             match rules::detect_all(&current, settings, file) {
                 Ok(found) => known = Some(found),
@@ -80,16 +80,25 @@ pub fn apply(
             }
         }
         let before = known.as_deref().unwrap_or(findings);
-        let rejected = match patch(&current, finding, proposal, before, &context) {
-            Ok((next, after)) => {
-                if let Some(breaks) = &mut breaks {
-                    breaks.carry(current.document.source(), next.document.source());
+        // An earlier fix may have rewritten the lines a proposal names, so the proposal comes from
+        // the source it patches.
+        let proposal = before
+            .iter()
+            .find(|current| same_target(current, finding))
+            .and_then(|current| current.fix.as_ref());
+        let rejected = match proposal {
+            None => Some("an earlier fix left nothing to propose".to_owned()),
+            Some(proposal) => match patch(&current, finding, proposal, before, &context) {
+                Ok((next, after)) => {
+                    if let Some(breaks) = &mut breaks {
+                        breaks.carry(current.document.source(), next.document.source());
+                    }
+                    current = next;
+                    known = Some(after);
+                    None
                 }
-                current = next;
-                known = Some(after);
-                None
-            }
-            Err(reason) => Some(reason),
+                Err(reason) => Some(reason),
+            },
         };
         attempts.push(Attempt {
             finding: index,
@@ -482,6 +491,9 @@ fn one_adds<'a>(
     changed == 1
 }
 
+/// Whether two findings report the same thing; a rule may report one finding per concept there.
 fn same_target(left: &Finding, right: &Finding) -> bool {
-    left.rule.id == right.rule.id && left.location == right.location
+    left.rule.id == right.rule.id
+        && left.location == right.location
+        && left.concepts == right.concepts
 }

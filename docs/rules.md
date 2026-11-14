@@ -42,7 +42,7 @@ non-compliant and compliant YAML, generated from its test fixtures.
 | `deprecated-command` | `deprecated-command/feature` | warning | regular | workflow | zizmor: `insecure-commands`; actionlint: `deprecated-commands` |  | [examples](rule-examples.md#deprecated-command) |
 | `removed-feature` | `deprecated-command/feature` | error | regular | workflow | actionlint: `runner-label`, `action`, `deprecated-inputs` |  | [examples](rule-examples.md#removed-feature) |
 | `schema-validity` | `syntax/schema-validity` | error | regular | workflow | actionlint: `syntax-check`, `expression`; ghlint: `JsonSchemaValidation` |  | [examples](rule-examples.md#schema-validity) |
-| `embedded-script-lint` | `embedded-script-lint` | note | pedantic | workflow | actionlint: `shellcheck`; ghlint: `SafeEnvironmentFileRedirect` |  | [examples](rule-examples.md#embedded-script-lint) |
+| `embedded-script-lint` | `embedded-script-lint` | note | pedantic | workflow | actionlint: `shellcheck`; ghlint: `SafeEnvironmentFileRedirect`, `EnvironmentFileOverwritten` |  | [examples](rule-examples.md#embedded-script-lint) |
 | `insecure-protocol` | `insecure-protocol` | warning | regular | workflow | zizmor: `insecure-url-scheme` |  | [examples](rule-examples.md#insecure-protocol) |
 | `unpinned-action` | `unpinned-action` | warning | pedantic | workflow | zizmor: `unpinned-uses`, `unpinned-images` | yes | [examples](rule-examples.md#unpinned-action) |
 | `forbidden-action` | `untrusted-3rd-party-action` | warning | regular | workflow | zizmor: `forbidden-uses` | yes | [examples](rule-examples.md#forbidden-action) |

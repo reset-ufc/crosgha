@@ -7,10 +7,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - run: echo "NAME=value" >> "$GITHUB_ENV" # expect: github-env-injection
+      - run: echo "NAME=value" >> "${GITHUB_ENV}" # expect: github-env-injection
       - run: | # expect: github-env-injection
           echo "$HOME/bin" >> "${GITHUB_PATH}"
-      - run: echo "out=1" >> "$GITHUB_OUTPUT"
+      - run: echo "out=1" >> "${GITHUB_OUTPUT}"
       # Reading the paths writes nothing.
       - run: |
           echo "$GITHUB_ENV" > debug.txt

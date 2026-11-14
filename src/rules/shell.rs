@@ -373,21 +373,30 @@ struct Heredoc {
 
 const OPEN: &str = "the script's own frame is never closed";
 
-/// The `$NAME` and `${NAME}` expansions in `script`, for a name in `names`, that are the whole
-/// unquoted target word of a `>` or `>>` redirect in shell code: outside quotes, comments, heredoc
-/// bodies, backticks, arithmetic, and other `${...}`. Quoting such a word only stops splitting
-/// and globbing of the file name; anywhere else, such as a `for` list or a `case` pattern, it can
-/// change what the script does. `None` when the script holds quoting this reader does not follow:
-/// `$'...'`, an unclosed quote, `$(`, or `${`, or a heredoc without its delimiter line.
+/// A `>` or `>>` redirect whose whole target word is one of the names given to `redirects`.
+pub struct Redirect {
+    /// The `>` bytes, without an fd number before them; blanks between two `>` are kept.
+    pub operator: Range<usize>,
+    /// `$NAME`, `${NAME}`, `"$NAME"`, or `"${NAME}"`.
+    pub target: Range<usize>,
+}
+
+/// The redirects in `script` whose target is a name in `names`, in shell code: outside quotes,
+/// comments, heredoc bodies, backticks, arithmetic, and other `${...}`. Quoting such a word only
+/// stops splitting and globbing of the file name; anywhere else, such as a `for` list or a `case`
+/// pattern, it can change what the script does. `None` when the script holds quoting this reader
+/// does not follow: `$'...'`, an unclosed quote, `$(`, or `${`, or a heredoc without its delimiter
+/// line.
 // ponytail: `)` closes `$(` without parsing `case` patterns inside it; parse the shell grammar if
 // that misreads real scripts.
-pub fn redirect_targets(script: &str, names: &[&str]) -> Option<Vec<Range<usize>>> {
+pub fn redirects(script: &str, names: &[&str]) -> Option<Vec<Redirect>> {
     let bytes = script.as_bytes();
     let mut frames = vec![Frame::Code(0)];
     let mut heredocs: Vec<Heredoc> = Vec::new();
     let mut found = Vec::new();
-    // Whether the code read so far ends with `>` and blanks, so a word starting here is its target.
-    let mut redirect = false;
+    // The `>` bytes when the code read so far ends with them and blanks, so a word starting here
+    // is their target.
+    let mut operator: Option<Range<usize>> = None;
     let mut index = 0;
     while index < bytes.len() {
         let rest = &bytes[index..];
@@ -397,7 +406,7 @@ pub fn redirect_targets(script: &str, names: &[&str]) -> Option<Vec<Range<usize>
             continue;
         }
         let nested = frames.len() > 1;
-        let after_redirect = std::mem::take(&mut redirect);
+        let after_operator = operator.take();
         match frames.last_mut().expect(OPEN) {
             Frame::Double => match rest {
                 [b'\\', ..] => index += 1,
@@ -444,7 +453,16 @@ pub fn redirect_targets(script: &str, names: &[&str]) -> Option<Vec<Range<usize>
             Frame::Code(depth) => match rest {
                 [b'\\', ..] => index += 1,
                 [b'\'', ..] => index += script[index + 1..].find('\'')? + 1,
-                [b'"', ..] => frames.push(Frame::Double),
+                [b'"', ..] => match after_operator.zip(quoted_expansion(script, index, names)) {
+                    Some((operator, length)) => {
+                        found.push(Redirect {
+                            operator,
+                            target: index..index + length,
+                        });
+                        index += length - 1;
+                    }
+                    None => frames.push(Frame::Double),
+                },
                 [b'`', ..] => frames.push(Frame::Backtick),
                 [b'#', ..] if starts_word(bytes, index) => {
                     index = script[index..]
@@ -467,14 +485,19 @@ pub fn redirect_targets(script: &str, names: &[&str]) -> Option<Vec<Range<usize>
                 [b')', ..] => *depth = depth.saturating_sub(1),
                 [b'$', b'\'', ..] => return None,
                 [b'$', b'$' | b'#', ..] => index += 1,
-                [b'>', ..] => redirect = true,
-                [b' ' | b'\t', ..] => redirect = after_redirect,
+                [b'>', ..] => {
+                    let start = after_operator.map_or(index, |operator| operator.start);
+                    operator = Some(start..index + 1);
+                }
+                [b' ' | b'\t', ..] => operator = after_operator,
                 [b'$', ..] if let Some(length) = expansion_length(&script[index..], names) => {
-                    let word_end = bytes.get(index + length).is_none_or(|next| {
-                        matches!(next, b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b')')
-                    });
-                    if after_redirect && word_end {
-                        found.push(index..index + length);
+                    if let Some(operator) = after_operator
+                        && ends_word(bytes, index + length)
+                    {
+                        found.push(Redirect {
+                            operator,
+                            target: index..index + length,
+                        });
                     }
                     index += length - 1;
                 }
@@ -509,6 +532,20 @@ fn starts_word(bytes: &[u8], index: usize) -> bool {
             bytes[index - 1],
             b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'('
         )
+}
+
+/// Whether a word that runs up to `index` ends there.
+fn ends_word(bytes: &[u8], index: usize) -> bool {
+    bytes
+        .get(index)
+        .is_none_or(|next| matches!(next, b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b')'))
+}
+
+/// The length of `"$NAME"` or `"${NAME}"` at `index` when it is a whole word.
+fn quoted_expansion(script: &str, index: usize, names: &[&str]) -> Option<usize> {
+    let inner = expansion_length(&script[index + 1..], names)?;
+    let closed = script[index + 1 + inner..].starts_with('"');
+    (closed && ends_word(script.as_bytes(), index + inner + 2)).then_some(inner + 2)
 }
 
 /// The length of `$NAME` or `${NAME}` at the start of `text`, for a name in `names` that is not

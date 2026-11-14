@@ -372,7 +372,7 @@ jobs:
       # A comparison, `!`, or boolean function returns only true or false, so no text reaches the script.
       - run: |
           if [ "${{ startsWith(github.event.comment.body, '/deploy') }}" = "true" ]; then echo deploy; fi
-      - run: echo "is-bug=${{ contains(github.event.issue.labels.*.name, 'bug') }}" >> "$GITHUB_OUTPUT"
+      - run: echo "is-bug=${{ contains(github.event.issue.labels.*.name, 'bug') }}" >> "${GITHUB_OUTPUT}"
       - run: echo "${{ endsWith(github.event.issue.title, '!') }}"
       - run: echo "${{ github.event.issue.body == '' }}"
       - run: echo "${{ github.event.issue.title != 'a && b' }}"
@@ -1990,14 +1990,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - id: before
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
       - run: make generate
       - id: after
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
       - if: steps.before.outputs.sha != steps.after.outputs.sha
         run: echo "generate moved HEAD"
       - name: Snapshot again
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT" # expect: duplicated-steps
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}" # expect: duplicated-steps
   bench:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -2047,10 +2047,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - id: before
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
       - run: make generate
       - id: after
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
       - if: steps.before.outputs.sha != steps.after.outputs.sha
         run: echo "generate moved HEAD"
 ```
@@ -2215,14 +2215,14 @@ jobs:
       # echo would read this path as its `-n` option and write nothing.
       - run: echo "::add-path::-n" # expect: deprecated-command
       - run: echo '::add-path::/opt/$tool' # expect: deprecated-command
-      - run: echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: echo "x=2" >> "${GITHUB_OUTPUT}"
       - run: echo "::add-mask::value"
       # A comment that names a command runs nothing.
       - run: |
           # migrated from ::set-output to GITHUB_OUTPUT
-          echo "x=1" >> "$GITHUB_OUTPUT"
+          echo "x=1" >> "${GITHUB_OUTPUT}"
       - run: |
-          echo "x=1" >> "$GITHUB_OUTPUT" # was ::set-output
+          echo "x=1" >> "${GITHUB_OUTPUT}" # was ::set-output
       # Every command of the step is rewritten; comments, indentation, and other lines stay.
       - id: meta
         run: | # expect: deprecated-command
@@ -2506,7 +2506,7 @@ jobs:
 
 ## `embedded-script-lint`
 
-Environment file paths must be quoted in shell scripts.
+Shell scripts must quote, brace, and append to environment file paths.
 
 **Non-compliant**
 
@@ -2522,7 +2522,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo "a=1" >> $GITHUB_ENV # expect: embedded-script-lint
-      - run: echo "b=2" >> "$GITHUB_OUTPUT"
+      # SC2250: a quoted path still needs braces.
+      - run: echo "b=2" >> "$GITHUB_OUTPUT" # expect: embedded-script-lint
       - run: | # expect: embedded-script-lint
           echo "## Summary" >> ${GITHUB_STEP_SUMMARY}
       - shell: pwsh
@@ -2538,7 +2539,7 @@ jobs:
       - shell: /usr/bin/env -S pwsh -File {0}
         run: echo "h=8" >> $env:GITHUB_ENV
       # Every redirect target of a step is quoted, and the rest of the line keeps its bytes.
-      - run: | # expect: embedded-script-lint
+      - run: | # expect: embedded-script-lint, embedded-script-lint
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo 'name=a b' >>$GITHUB_OUTPUT # one word
           echo "a=1" > $GITHUB_ENV; echo "b=2" >> ${GITHUB_ENV}
@@ -2558,6 +2559,30 @@ jobs:
           cat <<'EOF' >> $GITHUB_STEP_SUMMARY
           Done: "$GITHUB_ENV" unchanged, 'it's' literal
           EOF
+      # `>` truncates the file: each step starts with empty environment files, so a second `>`
+      # drops what the step wrote before. The fix appends and keeps the path's quoting, so a step
+      # that also misses quotes or braces gets one rewrite for each finding.
+      - run: echo "x=1" > "${GITHUB_OUTPUT}" # expect: embedded-script-lint
+      - run: | # expect: embedded-script-lint, embedded-script-lint
+          echo "tag=${GITHUB_REF_NAME}" > "$GITHUB_OUTPUT"
+          if [ -n "$RELEASE" ]; then
+            echo "release=true" >"${GITHUB_OUTPUT}"
+          fi
+          {
+            echo "JAVA_HOME=${JAVA_HOME_17_X64}"
+            echo "GRADLE_OPTS=-Xmx2g"
+          } > $GITHUB_ENV
+          printf 'v=%s\n' "$(cat VERSION)" 1>"${GITHUB_STATE}"
+          echo "## Release" >> "${GITHUB_STEP_SUMMARY}"
+      - run: | # expect: embedded-script-lint
+          cat > "${GITHUB_OUTPUT}" <<EOF
+          notes<<NOTES
+          $(git log -1 --format=%B)
+          NOTES
+          EOF
+          for dir in "$HOME/.local/bin" "$HOME/go/bin"; do
+            echo "$dir" > "${GITHUB_PATH}"
+          done
   # `run` defaults to pwsh on Windows runners, where `$GITHUB_ENV` word splitting does not apply:
   # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
   windows:
@@ -2595,20 +2620,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - run: echo "a=1" >> "$GITHUB_ENV"
-      - run: echo "b=2" >> "$GITHUB_OUTPUT"
+      - run: echo "a=1" >> "${GITHUB_ENV}"
+      - run: echo "b=2" >> "${GITHUB_OUTPUT}"
       - run: |
           echo "## Summary" >> "${GITHUB_STEP_SUMMARY}"
       - shell: pwsh
         run: echo "c=3" >> $env:GITHUB_ENV
       - shell: /usr/bin/bash -e {0}
-        run: echo "d=4" >> "$GITHUB_ENV"
+        run: echo "d=4" >> "${GITHUB_ENV}"
       - shell: /bin/sh -eu {0}
-        run: echo "e=5" >> "$GITHUB_OUTPUT"
+        run: echo "e=5" >> "${GITHUB_OUTPUT}"
       - run: |
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
           echo 'name=a b' >>"${GITHUB_OUTPUT}" # one word
-          echo "a=1" > "${GITHUB_ENV}"; echo "b=2" >> "${GITHUB_ENV}"
+          echo "a=1" >> "${GITHUB_ENV}"; echo "b=2" >> "${GITHUB_ENV}"
           if [ -d "$HOME/bin" ]; then
             printf '%s\n' "$HOME/bin" >> "${GITHUB_PATH}"
           fi
@@ -2616,6 +2641,19 @@ jobs:
       - run: |
           cat <<EOF >> "${GITHUB_STEP_SUMMARY}"
           ## Build
+          EOF
+      - run: echo "x=1" >> "${GITHUB_OUTPUT}"
+      - run: |
+          echo "tag=${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "JAVA_HOME=${JAVA_HOME_17_X64}"
+          } >> "${GITHUB_ENV}"
+          printf 'v=%s\n' "$(cat VERSION)" 1>>"${GITHUB_STATE}"
+      - run: |
+          cat >> "${GITHUB_OUTPUT}" <<EOF
+          notes<<NOTES
+          $(git log -1 --format=%B)
+          NOTES
           EOF
 ```
 

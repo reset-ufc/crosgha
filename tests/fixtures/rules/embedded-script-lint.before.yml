@@ -7,7 +7,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: echo "a=1" >> $GITHUB_ENV # expect: embedded-script-lint
-      - run: echo "b=2" >> "$GITHUB_OUTPUT"
+      # SC2250: a quoted path still needs braces.
+      - run: echo "b=2" >> "$GITHUB_OUTPUT" # expect: embedded-script-lint
       - run: | # expect: embedded-script-lint
           echo "## Summary" >> ${GITHUB_STEP_SUMMARY}
       - shell: pwsh
@@ -23,7 +24,7 @@ jobs:
       - shell: /usr/bin/env -S pwsh -File {0}
         run: echo "h=8" >> $env:GITHUB_ENV
       # Every redirect target of a step is quoted, and the rest of the line keeps its bytes.
-      - run: | # expect: embedded-script-lint
+      - run: | # expect: embedded-script-lint, embedded-script-lint
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo 'name=a b' >>$GITHUB_OUTPUT # one word
           echo "a=1" > $GITHUB_ENV; echo "b=2" >> ${GITHUB_ENV}
@@ -43,6 +44,30 @@ jobs:
           cat <<'EOF' >> $GITHUB_STEP_SUMMARY
           Done: "$GITHUB_ENV" unchanged, 'it's' literal
           EOF
+      # `>` truncates the file: each step starts with empty environment files, so a second `>`
+      # drops what the step wrote before. The fix appends and keeps the path's quoting, so a step
+      # that also misses quotes or braces gets one rewrite for each finding.
+      - run: echo "x=1" > "${GITHUB_OUTPUT}" # expect: embedded-script-lint
+      - run: | # expect: embedded-script-lint, embedded-script-lint
+          echo "tag=${GITHUB_REF_NAME}" > "$GITHUB_OUTPUT"
+          if [ -n "$RELEASE" ]; then
+            echo "release=true" >"${GITHUB_OUTPUT}"
+          fi
+          {
+            echo "JAVA_HOME=${JAVA_HOME_17_X64}"
+            echo "GRADLE_OPTS=-Xmx2g"
+          } > $GITHUB_ENV
+          printf 'v=%s\n' "$(cat VERSION)" 1>"${GITHUB_STATE}"
+          echo "## Release" >> "${GITHUB_STEP_SUMMARY}"
+      - run: | # expect: embedded-script-lint
+          cat > "${GITHUB_OUTPUT}" <<EOF
+          notes<<NOTES
+          $(git log -1 --format=%B)
+          NOTES
+          EOF
+          for dir in "$HOME/.local/bin" "$HOME/go/bin"; do
+            echo "$dir" > "${GITHUB_PATH}"
+          done
   # `run` defaults to pwsh on Windows runners, where `$GITHUB_ENV` word splitting does not apply:
   # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
   windows:

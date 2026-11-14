@@ -81,7 +81,9 @@ skipped when `--gh-hostname` names another host.
 A finding can have no fix when the change is not safe to choose automatically. A fix proposal
 supplies a `yamlpatch` operation or whole-line rewrites of a scalar, the route it may change, and
 whether it adds or replaces that node. Line rewrites keep a block scalar's indentation and header
-comment, which yamlpatch's `Replace` does not. The shared fix module applies and validates proposals. Detection-only rules leave source
+comment, which yamlpatch's `Replace` does not. The shared fix module applies and validates proposals, one at a
+time, each taken from the findings of the source it patches: an earlier fix may have rewritten the lines a
+later proposal names, as when one step gets a finding per ghlint concept. Detection-only rules leave source
 unchanged under `--fix` and remain visible in the report.
 
 ## Fix safety

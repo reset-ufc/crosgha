@@ -62,3 +62,32 @@ jobs:
       - run: | # expect: embedded-script-lint
           echo "a=1" >> $GITHUB_ENV
           echo 'b=$GITHUB_ENV' >> "$GITHUB_ENV"
+      # GitHub documents `>` as the way to clear a step's summary, so its overwrites stay, and with
+      # them every other overwrite of the step.
+      - run: echo "## Report" > "${GITHUB_STEP_SUMMARY}" # expect: embedded-script-lint
+      - run: | # expect: embedded-script-lint
+          echo "Adding some Markdown content" >> "${GITHUB_STEP_SUMMARY}"
+          echo "There was an error, we need to clear the previous Markdown." > "${GITHUB_STEP_SUMMARY}"
+      - run: | # expect: embedded-script-lint
+          echo "a=1" > "${GITHUB_OUTPUT}"
+          ./report > "${GITHUB_STEP_SUMMARY}"
+      # `>` compares inside `[[ ]]` and `$[ ]`, which the reader does not track.
+      - run: | # expect: embedded-script-lint
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "release=true" > "${GITHUB_OUTPUT}"
+          fi
+      - run: '[[ "$a" > "${GITHUB_OUTPUT}" ]] && echo after' # expect: embedded-script-lint
+      - run: echo "n=$[1 + 2]" > "${GITHUB_OUTPUT}" # expect: embedded-script-lint
+      # sh reads `&>` as `&` and `>`; `<>` opens the file without truncating it.
+      - run: ./print-outputs &> "${GITHUB_OUTPUT}" # expect: embedded-script-lint
+      - run: echo "a=1" 1<> "${GITHUB_OUTPUT}" # expect: embedded-script-lint
+      # A comment is text the rule still reads. A target that a quote closes is no write at all.
+      - run: | # expect: embedded-script-lint
+          # Never echo "a=1" > "${GITHUB_OUTPUT}" here.
+          echo "a=1" >> "${GITHUB_OUTPUT}"
+      - run: echo 'echo "a=1" > "${GITHUB_OUTPUT}"' > setup.sh
+      # YAML folds `>` scalars, so the source is not the script.
+      - run: > # expect: embedded-script-lint
+          echo "a=1" > "${GITHUB_ENV}"
+      # A quoted path without braces, where the added braces would end the flow scalar.
+      - {run: echo a=1 >> "$GITHUB_ENV"} # expect: embedded-script-lint

@@ -15,14 +15,14 @@ jobs:
       # echo would read this path as its `-n` option and write nothing.
       - run: echo "::add-path::-n" # expect: deprecated-command
       - run: echo '::add-path::/opt/$tool' # expect: deprecated-command
-      - run: echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: echo "x=2" >> "${GITHUB_OUTPUT}"
       - run: echo "::add-mask::value"
       # A comment that names a command runs nothing.
       - run: |
           # migrated from ::set-output to GITHUB_OUTPUT
-          echo "x=1" >> "$GITHUB_OUTPUT"
+          echo "x=1" >> "${GITHUB_OUTPUT}"
       - run: |
-          echo "x=1" >> "$GITHUB_OUTPUT" # was ::set-output
+          echo "x=1" >> "${GITHUB_OUTPUT}" # was ::set-output
       # Every command of the step is rewritten; comments, indentation, and other lines stay.
       - id: meta
         run: | # expect: deprecated-command

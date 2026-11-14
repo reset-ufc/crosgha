@@ -6,20 +6,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - run: echo "a=1" >> "$GITHUB_ENV"
-      - run: echo "b=2" >> "$GITHUB_OUTPUT"
+      - run: echo "a=1" >> "${GITHUB_ENV}"
+      - run: echo "b=2" >> "${GITHUB_OUTPUT}"
       - run: |
           echo "## Summary" >> "${GITHUB_STEP_SUMMARY}"
       - shell: pwsh
         run: echo "c=3" >> $env:GITHUB_ENV
       - shell: /usr/bin/bash -e {0}
-        run: echo "d=4" >> "$GITHUB_ENV"
+        run: echo "d=4" >> "${GITHUB_ENV}"
       - shell: /bin/sh -eu {0}
-        run: echo "e=5" >> "$GITHUB_OUTPUT"
+        run: echo "e=5" >> "${GITHUB_OUTPUT}"
       - run: |
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
           echo 'name=a b' >>"${GITHUB_OUTPUT}" # one word
-          echo "a=1" > "${GITHUB_ENV}"; echo "b=2" >> "${GITHUB_ENV}"
+          echo "a=1" >> "${GITHUB_ENV}"; echo "b=2" >> "${GITHUB_ENV}"
           if [ -d "$HOME/bin" ]; then
             printf '%s\n' "$HOME/bin" >> "${GITHUB_PATH}"
           fi
@@ -27,4 +27,17 @@ jobs:
       - run: |
           cat <<EOF >> "${GITHUB_STEP_SUMMARY}"
           ## Build
+          EOF
+      - run: echo "x=1" >> "${GITHUB_OUTPUT}"
+      - run: |
+          echo "tag=${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "JAVA_HOME=${JAVA_HOME_17_X64}"
+          } >> "${GITHUB_ENV}"
+          printf 'v=%s\n' "$(cat VERSION)" 1>>"${GITHUB_STATE}"
+      - run: |
+          cat >> "${GITHUB_OUTPUT}" <<EOF
+          notes<<NOTES
+          $(git log -1 --format=%B)
+          NOTES
           EOF

@@ -1,0 +1,10 @@
+name: Shell, quoting turned off
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> $GITHUB_OUTPUT
+      - run: echo "b=2" >> $GITHUB_OUTPUT

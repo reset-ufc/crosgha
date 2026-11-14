@@ -6,25 +6,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - run: echo 'echo "a=1" >> "$GITHUB_ENV"' > setup.sh
+      - run: echo 'echo "a=1" >> "${GITHUB_ENV}"' > setup.sh
       - run: echo "\$GITHUB_OUTPUT"
       - run: |
-          # Appends to the "$GITHUB_ENV" file
-          echo "a=1" >> "$GITHUB_ENV"
+          # Appends to the "${GITHUB_ENV}" file
+          echo "a=1" >> "${GITHUB_ENV}"
       - run: |
           cat <<EOF > notes.txt
-          Outputs go to "$GITHUB_OUTPUT"
+          Outputs go to "${GITHUB_OUTPUT}"
           EOF
       - run: |
           bash -c '
-          echo a=1 >> "$GITHUB_ENV"
+          echo a=1 >> "${GITHUB_ENV}"
           '
-      - run: lines=$(wc -l < "$GITHUB_ENV")
-      - run: printf 'a=1\n' >> "$GITHUB_ENV"
+      - run: lines=$(wc -l < "${GITHUB_ENV}")
+      - run: printf 'a=1\n' >> "${GITHUB_ENV}"
       - run: >
-          echo "a=1" >> "$GITHUB_ENV"
-      - run: "echo \"a=1\" >> \"$GITHUB_ENV\""
-      - {run: echo a=1 >> "$GITHUB_ENV"}
+          echo "a=1" >> "${GITHUB_ENV}"
+      - run: "echo \"a=1\" >> \"${GITHUB_ENV}\""
+      - {run: 'echo a=1 >> "${GITHUB_ENV}"'}
       - run: |
           echo "a=1" >> "${GITHUB_ENV}"
           if [ -f "${GITHUB_PATH}" ]; then cat "${GITHUB_PATH}"; fi
@@ -52,5 +52,17 @@ jobs:
       - run: suffix="${GITHUB_ENV}"; echo "${file%"$suffix"}"
       - run: echo "${GITHUB_ENV:-${GITHUB_OUTPUT}}"
       - run: |
-          echo "a=1" >> "$GITHUB_ENV"
-          echo 'b=1' >> "$GITHUB_ENV"
+          echo "a=1" >> "${GITHUB_ENV}"
+          echo 'b=1' >> "${GITHUB_ENV}"
+      - run: |
+          truncate -s 0 "${GITHUB_STEP_SUMMARY}"
+          echo "## Report" >> "${GITHUB_STEP_SUMMARY}"
+      - run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "release=true" >> "${GITHUB_OUTPUT}"
+          fi
+      - run: echo "n=$(( 1 + 2 ))" >> "${GITHUB_OUTPUT}"
+      - run: ./print-outputs >> "${GITHUB_OUTPUT}" 2>&1
+      - run: |
+          # Never truncate "${GITHUB_OUTPUT}" here.
+          echo "a=1" >> "${GITHUB_OUTPUT}"
