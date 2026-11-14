@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/reset-ufc/crosgha/compare/v0.23.0...v0.24.0) (2026-11-14)
+
+
+### Added
+
+* **scan:** run repository rules, actions, and config discovery on remote inputs ([#164](https://github.com/reset-ufc/crosgha/issues/164)) ([3ac4ea4](https://github.com/reset-ufc/crosgha/commit/3ac4ea4fe69b4379392dee3f6efa46ae233fc952)), closes [#99](https://github.com/reset-ufc/crosgha/issues/99)
+
 ## [0.23.0](https://github.com/reset-ufc/crosgha/compare/v0.22.0...v0.23.0) (2026-11-14)
 
 
