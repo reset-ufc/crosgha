@@ -3,7 +3,7 @@
     reason = "tests stage files and run the binary"
 )]
 
-//! `crosgha migrate --from zizmor|actionlint` on workflows and repositories.
+//! `crosgha migrate --from zizmor|actionlint|poutine` on workflows and repositories.
 
 mod common;
 
@@ -13,7 +13,7 @@ use std::fs;
 #[test]
 fn migrate_replaces_other_scanners_with_the_crosgha_action() {
     let action = format!("reset-ufc/crosgha@{}", "c".repeat(40));
-    for tool in ["zizmor", "actionlint"] {
+    for tool in ["zizmor", "actionlint", "poutine"] {
         let temp = TempDir::new("migrate");
         let path = temp.join("workflow.yml");
         fs::copy(fixture(&format!("migrate/{tool}.before.yml")), &path).unwrap();
@@ -71,6 +71,7 @@ fn migrate_converts_configs_and_shell_steps() {
     for (tool, workflow, config) in [
         ("zizmor", "ci.yml", "zizmor.yml"),
         ("actionlint", "lint.yml", "actionlint.yaml"),
+        ("poutine", "scan.yml", "poutine.yml"),
     ] {
         let temp = TempDir::new("migrate");
         let repo = temp.join("work");
@@ -100,8 +101,10 @@ fn migrate_converts_configs_and_shell_steps() {
 
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(output.status.success(), "{tool}: {stderr}");
+        // No expected crosgha.yml means the migration writes none.
         let expected = |name: &str| {
-            fs::read_to_string(fixture(&format!("migrate/expected/{tool}-repo.{name}"))).unwrap()
+            fs::read_to_string(fixture(&format!("migrate/expected/{tool}-repo.{name}")))
+                .unwrap_or_default()
         };
         assert_eq!(migrated, expected(workflow), "{tool}");
         assert_eq!(crosgha, expected("crosgha.yml"), "{tool}");
@@ -155,9 +158,48 @@ fn migrate_converts_configs_and_shell_steps() {
                     "{stderr}"
                 );
             }
-            _ => {
+            "actionlint" => {
                 assert!(stderr.contains("`config-variables`"), "{stderr}");
                 assert!(stderr.contains("`paths`"), "{stderr}");
+            }
+            _ => {
+                // poutine's `skip` and `include` have no crosgha meaning; nothing is written.
+                assert!(!repo.join(".github/crosgha.yml").exists());
+                for key in ["`skip`", "`include`"] {
+                    assert!(
+                        stderr
+                            .lines()
+                            .any(|note| note.contains("poutine.yml") && note.contains(key)),
+                        "{key}: {stderr}"
+                    );
+                }
+                // Only `analyze_local` scans the checkout, as crosgha's Action does.
+                for (line, reason) in [
+                    (
+                        "scan.yml:32",
+                        "`poutine analyze_repo` has no crosgha Action equivalent",
+                    ),
+                    (
+                        "scan.yml:33",
+                        "`poutine analyze_org` has no crosgha Action equivalent",
+                    ),
+                    ("scan.yml:31", "was kept"),
+                    (
+                        "scan.yml:38",
+                        "`--format sarif` has no crosgha Action input",
+                    ),
+                    ("scan.yml:39", "`--skip`"),
+                    ("scan.yml:40", "`--config`"),
+                    ("scan.yml:41", "`--scm gitlab`"),
+                    ("scan.yml:42", "`--format json` has no crosgha Action input"),
+                ] {
+                    assert!(
+                        stderr
+                            .lines()
+                            .any(|note| note.contains(line) && note.contains(reason)),
+                        "{line} {reason}: {stderr}"
+                    );
+                }
             }
         }
     }
