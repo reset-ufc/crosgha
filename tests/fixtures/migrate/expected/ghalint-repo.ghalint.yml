@@ -1,0 +1,45 @@
+name: ghalint
+on:
+  pull_request:
+    branches: [main]
+permissions: {}
+jobs:
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Lint workflows
+        uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          advanced-security: 'false'
+        env:
+          GHALINT_LOG_COLOR: always
+  actions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: reset-ufc/crosgha@cccccccccccccccccccccccccccccccccccccccc # v0.1.0
+        with:
+          inputs: 'action.yaml tools/setup/action.yaml'
+          advanced-security: 'false'
+  every-action:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: brew install ghalint
+      - run: ghalint run-action
+  unsupported:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: ghalint -c ghalint-strict.yaml run
+      - run: ghalint exp validate-input
+      - run: ghalint run
+        env:
+          GHALINT_CONFIG: ghalint-strict.yaml

@@ -53,7 +53,7 @@ The stages have these interfaces:
 | `fix` | Parsed workflow and proposals | Reparsed source after each patch, proof that the target disappeared, no new finding appeared, and only intended YAML nodes changed. A rejected proposal keeps its finding, records the reason, and the next proposal still runs. |
 | `report` | Per-file and repository findings | Text, JSON, SARIF, annotation, and agent renderings of the same findings, plus the rule catalog as text or JSON. A followed action's finding is shown in its own file in text and JSON, with its chains (`Reached`); SARIF, annotations, and agent lines place it on the scanned `uses:` line its first chain starts at. |
 | `policy` | Persona, severity, and `fail-on` | Which rules run, and whether reported findings make the command fail. |
-| `migrate` | Workflows and the tool to replace | Rewrites zizmor, actionlint, or poutine Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
+| `migrate` | Workflows and the tool to replace | Rewrites zizmor, actionlint, poutine, or ghalint Action steps and install/run shell steps to the crosgha Action, and writes `crosgha.yml` from the tool's config. Every file is rewritten in memory and re-parsed before any is written. |
 | `hook` | Current git repository | Writes or removes the `pre-push` hook that runs the CLI. Refuses to install into a hooks directory outside the repository, and never touches a hook that differs from every script a release has written (`TEMPLATES`). |
 | `cli` | Command-line options | Preflight, local and remote scans, per-input configs, output, exit policy, and the decision to persist verified fixes. |
 

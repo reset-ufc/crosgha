@@ -1,5 +1,5 @@
-//! `crosgha migrate --from <tool>`: moves a repository from zizmor, actionlint, or poutine to
-//! crosgha.
+//! `crosgha migrate --from <tool>`: moves a repository from zizmor, actionlint, poutine, or
+//! ghalint to crosgha.
 //! It rewrites the tool's Action steps, turns shell steps that only install and run the tool into
 //! crosgha Action steps, and writes a `crosgha.yml` from the tool's config. The tool's own config
 //! file is left in place.
@@ -21,6 +21,7 @@ pub enum Tool {
     Zizmor,
     Actionlint,
     Poutine,
+    Ghalint,
 }
 
 /// poutine's documented Action step is followed by this upload of the SARIF file it writes
@@ -33,6 +34,7 @@ impl Tool {
             Self::Zizmor => "zizmor",
             Self::Actionlint => "actionlint",
             Self::Poutine => "poutine",
+            Self::Ghalint => "ghalint",
         }
     }
 
@@ -47,6 +49,8 @@ impl Tool {
                 "docker://rhysd/actionlint",
             ],
             Self::Poutine => &["boostsecurityio/poutine-action@"],
+            // ghalint documents no Action of its own, only the CLI.
+            Self::Ghalint => &[],
         }
     }
 
@@ -164,7 +168,22 @@ pub fn run(
                     continue;
                 }
                 let Some(script) = step.run() else { continue };
-                match classify(script, tool) {
+                let mut shell = classify(script, tool);
+                // ghalint also reads its config path from the environment:
+                // https://github.com/suzuki-shunsuke/ghalint/blob/82a9fe3de4e23d0b055812a12fbc724f0066b4bb/README.md#environment-variables
+                if tool == Tool::Ghalint
+                    && matches!(shell, Shell::Invoke(Ok(_)))
+                    && step
+                        .value
+                        .get("env")
+                        .and_then(|env| env.get("GHALINT_CONFIG"))
+                        .is_some()
+                {
+                    shell = Shell::Invoke(Err(
+                        "`GHALINT_CONFIG` has no crosgha Action input".to_owned()
+                    ));
+                }
+                match shell {
                     Shell::Unrelated => {}
                     Shell::Install => {
                         installs.push((removal(&workflow, &step.route)?, place()?));
@@ -289,7 +308,40 @@ pub fn run(
             Tool::Zizmor => zizmor_config(&github, &mut summary.notes)?,
             Tool::Actionlint => actionlint_config(&github, &mut summary.notes)?,
             Tool::Poutine => {
-                poutine_config(&github, &mut summary.notes)?;
+                // https://github.com/boostsecurityio/poutine/blob/2ad918cfe37a6889f05602264a03256eef149bdc/README.md#configuration
+                let root = github.parent().unwrap_or(&github);
+                let configs = [root.join(".poutine.yml"), github.join("poutine.yml")];
+                let keys = [
+                    (
+                        "skip",
+                        "names poutine rules; ignore crosgha findings with `# crosgha: \
+                         ignore[rule]` or `rules.<id>.ignore`",
+                    ),
+                    ("include", "adds Rego rules, which crosgha does not run"),
+                ];
+                config_notes(&configs, &keys, &mut summary.notes)?;
+                None
+            }
+            Tool::Ghalint => {
+                // `^(\.|\.github/)?ghalint\.ya?ml$`, per
+                // https://github.com/suzuki-shunsuke/ghalint/blob/82a9fe3de4e23d0b055812a12fbc724f0066b4bb/README.md#configuration-file
+                let root = github.parent().unwrap_or(&github);
+                let configs = ["ghalint.yaml", "ghalint.yml"]
+                    .into_iter()
+                    .flat_map(|name| {
+                        [
+                            root.join(name),
+                            root.join(format!(".{name}")),
+                            github.join(name),
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                let keys = [(
+                    "excludes",
+                    "names ghalint policies; ignore crosgha findings with `# crosgha: \
+                     ignore[rule]` or `rules.<id>.ignore`",
+                )];
+                config_notes(&configs, &keys, &mut summary.notes)?;
                 None
             }
         },
@@ -439,6 +491,7 @@ fn installs(line: &str, tool: Tool) -> bool {
         ),
         Tool::Actionlint => matches!(words[..install], ["go" | "brew"]),
         Tool::Poutine => matches!(words[..install], ["brew"]),
+        Tool::Ghalint => matches!(words[..install], ["go" | "brew"]),
     };
     let mut packages = words[install + 1..]
         .iter()
@@ -454,6 +507,11 @@ fn installs(line: &str, tool: Tool) -> bool {
                 *package == "actionlint" || package.starts_with("github.com/rhysd/actionlint/")
             }
             Tool::Poutine => *package == "poutine",
+            // https://github.com/suzuki-shunsuke/ghalint/blob/82a9fe3de4e23d0b055812a12fbc724f0066b4bb/docs/install.md
+            Tool::Ghalint => {
+                ["ghalint", "suzuki-shunsuke/ghalint/ghalint"].contains(package)
+                    || package.starts_with("github.com/suzuki-shunsuke/ghalint/cmd/ghalint@")
+            }
         })
 }
 
@@ -509,6 +567,7 @@ fn invocation_args(words: &[String], tool: Tool) -> Option<&[String]> {
             1
         }
         (Tool::Poutine, [first, ..]) if *first == "poutine" || first.ends_with("/poutine") => 1,
+        (Tool::Ghalint, [first, ..]) if *first == "ghalint" || first.ends_with("/ghalint") => 1,
         _ => return None,
     };
     Some(&words[skip..])
@@ -528,6 +587,27 @@ fn translate(args: &[String], tool: Tool) -> Result<Vec<(&'static str, String)>,
             ));
         }
         (Tool::Poutine, None) => return Err("`poutine` runs no command".to_owned()),
+        // `run` checks the workflows and `run-action` (alias `act`) the action files it names:
+        // https://github.com/suzuki-shunsuke/ghalint/blob/82a9fe3de4e23d0b055812a12fbc724f0066b4bb/README.md#how-to-use
+        (Tool::Ghalint, Some((command, rest))) => match command.as_str() {
+            "run" => rest,
+            "run-action" | "act" if !rest.is_empty() => rest,
+            "run-action" | "act" => {
+                return Err(format!(
+                    "`ghalint {command}` without files checks every action file up to three \
+                     directories deep; list them in `inputs` by hand"
+                ));
+            }
+            flag if flag.starts_with('-') => {
+                return Err(format!("`{flag}` has no crosgha Action input"));
+            }
+            _ => {
+                return Err(format!(
+                    "`ghalint {command}` has no crosgha Action equivalent"
+                ));
+            }
+        },
+        (Tool::Ghalint, None) => return Err("`ghalint` runs no command".to_owned()),
         _ => args,
     };
     let mut fail_on_violation = false;
@@ -858,33 +938,25 @@ fn actionlint_config(
     Ok(Some((target, text)))
 }
 
-/// poutine's config (`.poutine.yml` at the root wins over `.github/poutine.yml`) holds `skip`
-/// entries for poutine's own rules and `include` paths of Rego rules, neither of which crosgha can
-/// read, so no `crosgha.yml` is written.
-/// https://github.com/boostsecurityio/poutine/blob/2ad918cfe37a6889f05602264a03256eef149bdc/README.md#configuration
-fn poutine_config(github: &Path, notes: &mut Vec<String>) -> Result<(), String> {
-    let root = github.parent().unwrap_or(github);
-    let Some(source_path) = [root.join(".poutine.yml"), github.join("poutine.yml")]
-        .into_iter()
-        .find(|path| path.is_file())
-    else {
+/// Notes for the `keys` of the first file in `configs` (in precedence order) that exists. The
+/// configs of poutine and ghalint name the tool's own rules or extensions, which crosgha cannot
+/// read, so no `crosgha.yml` is written from them.
+fn config_notes(
+    configs: &[PathBuf],
+    keys: &[(&str, &str)],
+    notes: &mut Vec<String>,
+) -> Result<(), String> {
+    let Some(source_path) = configs.iter().find(|path| path.is_file()) else {
         return Ok(());
     };
     let located = |error: String| format!("{}: {error}", source_path.display());
-    let source = fs::read_to_string(&source_path).map_err(|error| located(error.to_string()))?;
+    let source = fs::read_to_string(source_path).map_err(|error| located(error.to_string()))?;
     let config: Value =
         yaml_serde::from_str(&source).map_err(|error| located(error.to_string()))?;
-    if config.get("skip").is_some() {
-        notes.push(located(
-            "`skip` names poutine rules; ignore crosgha findings with `# crosgha: ignore[rule]` \
-             or `rules.<id>.ignore`"
-                .to_owned(),
-        ));
-    }
-    if config.get("include").is_some() {
-        notes.push(located(
-            "`include` adds Rego rules, which crosgha does not run".to_owned(),
-        ));
+    for (key, reason) in keys {
+        if config.get(key).is_some() {
+            notes.push(located(format!("`{key}` {reason}")));
+        }
     }
     Ok(())
 }

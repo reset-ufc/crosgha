@@ -64,7 +64,7 @@ goes: [docs/action.md](docs/action.md).
 | Document | Covers |
 |---|---|
 | [docs/install.md](docs/install.md) | Install script options, release archives, building from source |
-| [docs/usage.md](docs/usage.md) | Which paths and actions are scanned, the pre-push hook, migrating from zizmor, actionlint, or poutine |
+| [docs/usage.md](docs/usage.md) | Which paths and actions are scanned, the pre-push hook, migrating from zizmor, actionlint, poutine, or ghalint |
 | [docs/action.md](docs/action.md) | Action inputs, outputs, and run steps |
 | [docs/configuration.md](docs/configuration.md) | Personas, online rules, `crosgha.yml` / `zizmor.yml`, ignoring findings, severity |
 | [docs/output.md](docs/output.md) | Output formats and exit status |
