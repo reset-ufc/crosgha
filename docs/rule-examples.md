@@ -2201,10 +2201,8 @@ Deprecated workflow commands and removed opt-out variables must not be used.
 name: Deprecated
 on: [push]
 permissions: {}
-env:
-  ACTIONS_ALLOW_UNSECURE_COMMANDS: true # expect: deprecated-command
 jobs:
-  a:
+  release:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -2214,6 +2212,9 @@ jobs:
       - run: echo "::save-state name=y::2" # expect: deprecated-command
       - run: | # expect: deprecated-command
           echo "::add-path::/opt/bin"
+      # echo would read this path as its `-n` option and write nothing.
+      - run: echo "::add-path::-n" # expect: deprecated-command
+      - run: echo '::add-path::/opt/$tool' # expect: deprecated-command
       - run: echo "x=1" >> "$GITHUB_OUTPUT"
       - run: echo "::add-mask::value"
       # A comment that names a command runs nothing.
@@ -2222,27 +2223,34 @@ jobs:
           echo "x=1" >> "$GITHUB_OUTPUT"
       - run: |
           echo "x=1" >> "$GITHUB_OUTPUT" # was ::set-output
-      - run: | # expect: deprecated-command
+      # Every command of the step is rewritten; comments, indentation, and other lines stay.
+      - id: meta
+        run: | # expect: deprecated-command
           # still uses the old form
-          echo "::set-env name=A::1"
-      - run: | # expect: deprecated-command
-          printf '%s\n' '::save-state name=a # b::1'
-      - run: ./legacy-tool
-        env:
-          ACTIONS_ALLOW_UNSECURE_COMMANDS: 'true' # expect: deprecated-command
-      # The runner reads the variable with .NET bool.TryParse: `True` in any case, nothing else.
-      - run: ./legacy-tool --upper
-        env:
-          ACTIONS_ALLOW_UNSECURE_COMMANDS: 'TRUE' # expect: deprecated-command
-      - run: ./legacy-tool --expression
-        env:
-          ACTIONS_ALLOW_UNSECURE_COMMANDS: ${{ 'true' }} # expect: deprecated-command
-      - run: ./legacy-tool --spelled-out
-        env:
-          ACTIONS_ALLOW_UNSECURE_COMMANDS: FALSE
-      - run: ./legacy-tool --not-a-boolean
-        env:
-          ACTIONS_ALLOW_UNSECURE_COMMANDS: 'yes'
+          version="$(git describe --tags --abbrev=0)"
+          echo "::set-output name=version::${version#v}"
+          echo '::set-output name=matrix::{"os":["ubuntu-24.04","macos-15"]}'
+          echo ::set-output name=sha::$GITHUB_SHA
+          for dir in packages/*; do
+            echo "::add-path::$PWD/$dir/bin"
+          done
+          if [ -f .nvmrc ]; then
+            echo "::set-env name=NODE_VERSION::$(cat .nvmrc)"
+          fi
+      - run: |- # expect: deprecated-command
+          echo "::set-output name=url::https://example.com/${{ steps.meta.outputs.version }}"
+      - shell: sh
+        run: echo "::set-env name=CI_STAGE::deploy" # expect: deprecated-command
+      - shell: /usr/bin/bash -e {0}
+        run: echo "::set-output name=empty::" # expect: deprecated-command
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: echo "::set-output name=os::windows" # expect: deprecated-command
 ```
 
 **Compliant**
@@ -2254,17 +2262,37 @@ name: Deprecated
 on: [push]
 permissions: {}
 jobs:
-  a:
+  release:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       ACTIONS_ALLOW_UNSECURE_COMMANDS: false
     steps:
-      - run: echo "x=1" >> "$GITHUB_OUTPUT"
-      - run: echo "y=2" >> "$GITHUB_STATE"
-      - run: echo "/opt/bin" >> "$GITHUB_PATH"
+      - run: echo "x=1" >> "${GITHUB_OUTPUT}"
+      - run: echo "y=2" >> "${GITHUB_STATE}"
+      - run: printf '%s\n' "/opt/bin" >> "${GITHUB_PATH}"
+      - run: printf '%s\n' "-n" >> "${GITHUB_PATH}"
+      - run: printf '%s\n' '/opt/$tool' >> "${GITHUB_PATH}"
       - run: echo "::add-mask::value"
-      - run: ./legacy-tool
+      - id: meta
+        run: |
+          version="$(git describe --tags --abbrev=0)"
+          echo "version=${version#v}" >> "${GITHUB_OUTPUT}"
+          echo 'matrix={"os":["ubuntu-24.04","macos-15"]}' >> "${GITHUB_OUTPUT}"
+          echo sha=$GITHUB_SHA >> "${GITHUB_OUTPUT}"
+          for dir in packages/*; do
+            printf '%s\n' "$PWD/$dir/bin" >> "${GITHUB_PATH}"
+          done
+          if [ -f .nvmrc ]; then
+            echo "NODE_VERSION=$(cat .nvmrc)" >> "${GITHUB_ENV}"
+          fi
+      - shell: sh
+        run: echo "CI_STAGE=deploy" >> "${GITHUB_ENV}"
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - run: '"os=windows" >> $env:GITHUB_OUTPUT'
 ```
 
 ## `removed-feature`

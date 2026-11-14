@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use yaml_serde::Value;
 use yamlpath::Route;
 
-use super::{Finding, Rule, common, expression, runner, shell};
+use super::{Finding, Rule, common, expression, shell};
 use crate::policy::{Persona, Severity};
 use crate::workflow::Workflow;
 
@@ -558,44 +558,12 @@ const ENV_FILES: &[&str] = &[
     "GITHUB_STEP_SUMMARY",
 ];
 
-fn default_shell(scope: &Value) -> Option<&str> {
-    scope
-        .get("defaults")
-        .and_then(|defaults| defaults.get("run"))
-        .and_then(|run| run.get("shell"))
-        .and_then(Value::as_str)
-}
-
 pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let workflow_shell = default_shell(&workflow.value);
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
-        // `run` defaults to pwsh on Windows and to bash elsewhere, so a matrix over both OSes
-        // still runs bash on some entries:
-        // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
-        let labels: Vec<String> = runner::job_labels(&job)
-            .iter()
-            .map(|label| label.to_ascii_lowercase())
-            .collect();
-        let windows = labels.iter().any(|label| label.starts_with("windows"))
-            && !labels.iter().any(|label| {
-                ["ubuntu", "macos", "linux"]
-                    .iter()
-                    .any(|os| label.starts_with(os))
-            });
-        let job_shell = default_shell(job.value)
-            .or(workflow_shell)
-            .or(windows.then_some("pwsh"));
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
-            let shell = step
-                .value
-                .get("shell")
-                .and_then(Value::as_str)
-                .or(job_shell)
-                .unwrap_or("bash");
-            let posix = matches!(shell_program(shell), Some("bash" | "sh"));
-            if posix && script.lines().any(unquoted_env_file) {
+            if shell::runs_posix(workflow, &job, &step) && script.lines().any(unquoted_env_file) {
                 let mut finding = common::finding(
                     workflow,
                     &SCRIPT_LINT,
@@ -609,13 +577,6 @@ pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
-}
-
-/// The program a `shell` runs, by file name. A custom shell such as `/usr/bin/bash -e {0}` names
-/// it by path, and `/usr/bin/env [options] [NAME=value] bash {0}` looks it up.
-fn shell_program(shell: &str) -> Option<&str> {
-    let words: Vec<&str> = shell.split_whitespace().collect();
-    shell::program(&words).map(|program| program.name)
 }
 
 fn unquoted_env_file(line: &str) -> bool {

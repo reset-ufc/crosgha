@@ -1,0 +1,53 @@
+name: Deprecated
+on: [push]
+permissions: {}
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ACTIONS_ALLOW_UNSECURE_COMMANDS: false
+    steps:
+      - run: echo "x=1" >> "${GITHUB_OUTPUT}" # expect: deprecated-command
+      - run: echo "y=2" >> "${GITHUB_STATE}" # expect: deprecated-command
+      - run: | # expect: deprecated-command
+          printf '%s\n' "/opt/bin" >> "${GITHUB_PATH}"
+      # echo would read this path as its `-n` option and write nothing.
+      - run: printf '%s\n' "-n" >> "${GITHUB_PATH}" # expect: deprecated-command
+      - run: printf '%s\n' '/opt/$tool' >> "${GITHUB_PATH}" # expect: deprecated-command
+      - run: echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: echo "::add-mask::value"
+      # A comment that names a command runs nothing.
+      - run: |
+          # migrated from ::set-output to GITHUB_OUTPUT
+          echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: |
+          echo "x=1" >> "$GITHUB_OUTPUT" # was ::set-output
+      # Every command of the step is rewritten; comments, indentation, and other lines stay.
+      - id: meta
+        run: | # expect: deprecated-command
+          # still uses the old form
+          version="$(git describe --tags --abbrev=0)"
+          echo "version=${version#v}" >> "${GITHUB_OUTPUT}"
+          echo 'matrix={"os":["ubuntu-24.04","macos-15"]}' >> "${GITHUB_OUTPUT}"
+          echo sha=$GITHUB_SHA >> "${GITHUB_OUTPUT}"
+          for dir in packages/*; do
+            printf '%s\n' "$PWD/$dir/bin" >> "${GITHUB_PATH}"
+          done
+          if [ -f .nvmrc ]; then
+            echo "NODE_VERSION=$(cat .nvmrc)" >> "${GITHUB_ENV}"
+          fi
+      - run: |- # expect: deprecated-command
+          echo "url=https://example.com/${{ steps.meta.outputs.version }}" >> "${GITHUB_OUTPUT}"
+      - shell: sh
+        run: echo "CI_STAGE=deploy" >> "${GITHUB_ENV}" # expect: deprecated-command
+      - shell: /usr/bin/bash -e {0}
+        run: echo "empty=" >> "${GITHUB_OUTPUT}" # expect: deprecated-command
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: echo "os=windows" >> "${GITHUB_OUTPUT}" # expect: deprecated-command

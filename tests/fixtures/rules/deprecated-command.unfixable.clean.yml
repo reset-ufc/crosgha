@@ -1,0 +1,29 @@
+name: Deprecated, unfixable
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: printf '%s\n' 'a=1' >> "${GITHUB_STATE}"
+      - run: echo -n "x=1" >> "${GITHUB_OUTPUT}"
+      - run: |
+          {
+            echo 'notes<<NOTES_EOF'
+            git log -1 --format=%B
+            echo 'NOTES_EOF'
+          } >> "${GITHUB_OUTPUT}"
+      - shell: pwsh
+        run: '"x=1" >> $env:GITHUB_OUTPUT'
+      - shell: python
+        run: |
+          import os
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print("x=1", file=output)
+      - run: ./legacy-tool
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - run: '"x=1" >> $env:GITHUB_OUTPUT'

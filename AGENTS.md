@@ -6,8 +6,10 @@ preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSco
 - **Scan:** finds workflows directly inside `.github/workflows`, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
 - **Rules:** 48 cover every tag of the curated taxonomy: 39 per workflow, 4 per repository, and 5 that query the
   GitHub API.
-- **Fixes:** only `persist-credentials` and `removed-feature` (setup-java distributions) have verified fixes so far.
-  `persist-credentials` stays unfixed when `true` is explicit, a later step pushes with the token, or checkout predates v2.
+- **Fixes:** only `persist-credentials`, `removed-feature` (setup-java distributions), and `deprecated-command`
+  (workflow commands to environment files) have verified fixes so far. `persist-credentials` stays unfixed when
+  `true` is explicit, a later step pushes with the token, or checkout predates v2. `deprecated-command` rewrites
+  only whole `echo` lines in bash or sh steps (docs/fixes.md lists what it leaves).
 - **zizmor compatibility:** personas, ignore comments, `zizmor.yml` (including per-rule options), and
   `crosgha migrate` follow zizmor so users can switch tools without rewriting configuration. Reports name the
   equivalent zizmor or actionlint rule.

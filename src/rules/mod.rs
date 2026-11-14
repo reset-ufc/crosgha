@@ -120,9 +120,23 @@ impl Finding {
 }
 
 pub struct ProposedFix {
-    pub patch: Patch<'static>,
+    pub edit: Edit,
     pub changed_route: Route<'static>,
     pub change: ChangeKind,
+}
+
+pub enum Edit {
+    Patch(Patch<'static>),
+    /// Whole lines of the scalar at `changed_route`, rewritten in order. yamlpatch's `Replace`
+    /// re-indents a block scalar and drops its header comment, and its `RewriteFragment` needs a
+    /// crate outside the allowed dependencies.
+    Lines(Vec<LineRewrite>),
+}
+
+/// Replaces the next line whose text, without its indentation and trailing spaces, is `from`.
+pub struct LineRewrite {
+    pub from: String,
+    pub to: String,
 }
 
 #[derive(Clone, Copy)]
