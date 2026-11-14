@@ -60,7 +60,9 @@ a warning on stderr that names it, so a file written for zizmor keeps working.
   `DoubleCurlyIf` names two parts: the condition mixed with text in `unsafe-if-condition` and the bare condition in
   `readability`. Each of ghlint's four `FailFast...` IDs names one action in `error-suppression`, and none names
   `continue-on-error`. `MissingGhToken`, `MissingGhHost`, and `MissingGhRepo` each name one part of
-  `gh-cli-environment`. Ignoring or disabling such an ID affects only those parts.
+  `gh-cli-environment`. `TooManySteps` and `TooManyJobs` each name one part of `complex-job`, and neither names
+  long scripts or conditions. Every ghlint ID of `readability` and `redundant-setting` names one part of that rule.
+  Ignoring or disabling such an ID affects only those parts.
 - **Override:** `--no-ignores` reports everything, including findings that comments or the config ignore.
 
 ## Severity

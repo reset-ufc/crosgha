@@ -318,22 +318,7 @@ pub fn unsafe_if(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 /// (`|-`, `>-`), since the line break that YAML keeps at its end is text after `}}`. A quoted
 /// scalar is written again from its value, so only one that fits on one line is fixed.
 fn merge_fix(workflow: &Workflow, route: &Route<'static>, value: &str) -> Option<ProposedFix> {
-    let document = &workflow.document;
-    let key = document.query_key_only(route).ok()?;
-    let node = document.query_exact(route).ok()??;
-    // Only the colon and comments may stand between the key and the scalar. An alias resolves to
-    // its anchor elsewhere in the file, and an anchor or a tag sits in between; a rewrite of such
-    // a scalar would change every alias of it.
-    let between: String = document
-        .source()
-        .get(key.location.byte_span.1..node.location.byte_span.0)?
-        .lines()
-        .map(|line| line.split('#').next().unwrap_or_default())
-        .collect();
-    if between.trim() != ":" {
-        return None;
-    }
-    let source = document.extract(&node);
+    let source = common::own_scalar(workflow, route)?;
     // A plain or block scalar holds `value` as written, up to indentation and line folding.
     let same_words = |text: &str| text.split_whitespace().eq(value.split_whitespace());
     let text = match source.chars().next()? {

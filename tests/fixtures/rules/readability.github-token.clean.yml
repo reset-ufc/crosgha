@@ -1,0 +1,26 @@
+name: Release
+on: [push]
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OTHER: ${{ secrets.GITHUB_TOKEN_2 }}
+        run: gh release create "${GITHUB_REF_NAME}"
+      - name: Fallback
+        uses: actions/github-script@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        with:
+          github-token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          script: return 1

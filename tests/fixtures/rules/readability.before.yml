@@ -2,9 +2,13 @@ on: [push] # expect: readability
 permissions: {}
 jobs:
   test:
+    name: Test
     if: github.repository == 'octo-org/octo-repo' # expect: readability
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with: { persist-credentials: false }
@@ -69,3 +73,85 @@ jobs:
       - name: Constant
         if: true
         run: make constant
+  # ghlint's ID and name checks: an ID other than lower-case kebab, no name or a blank one.
+  Build_All: # expect: readability, readability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        id: build
+        shell: bash
+        run: make build
+      # Within two edits of an earlier ID, a swap of two letters counting as one.
+      - name: Build again
+        id: build2 # expect: readability
+        shell: bash
+        run: make build
+      - name: Unit
+        id: test-unit
+        shell: bash
+        run: make unit
+      - name: Unit swapped
+        id: test-uint # expect: readability
+        shell: bash
+        run: make unit
+      - name: Mixed case
+        id: Test_Run # expect: readability
+        shell: bash
+        run: make run
+      # A repeated ID is not a similar one, and IDs three edits apart are not reported.
+      - name: Build once more
+        id: build
+        shell: bash
+        run: make build
+      - name: Deploy
+        id: deploy-prod
+        shell: bash
+        run: make deploy
+      - name: Deploy dev
+        id: deploy-dev
+        shell: bash
+        run: make deploy
+      - name: No shell
+        run: make lint # expect: readability
+      # A token that YAML anchors or aliases is reported but not rewritten: the anchor holds it.
+      - name: Anchored
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          token: &token ${{ secrets.GITHUB_TOKEN }} # expect: readability
+          persist-credentials: false
+      - name: Aliased
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          token: *token # expect: readability
+          persist-credentials: false
+  blank: # expect: readability
+    name: " "
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # `github.token` is null outside steps, so job env and reusable workflow inputs keep the secret.
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Literal
+        shell: bash
+        run: echo "${{ 'secrets.GITHUB_TOKEN' }} secrets.GITHUB_TOKEN ${{ secrets.GITHUB_TOKEN_2 }}"
+  reuse: # expect: readability
+    uses: ./.github/workflows/reusable.yml
+    with:
+      token: ${{ secrets.GITHUB_TOKEN }}
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
+  matrix:
+    name: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Default shell
+        run: make

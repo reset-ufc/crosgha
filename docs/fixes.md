@@ -10,7 +10,7 @@ A fix that fails a check is skipped: its finding stays in the report with the re
 JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
 workflow is never rewritten; its fixes are reported as not written.
 
-Six rules have fixes:
+Eight rules have fixes:
 
 - `persist-credentials` adds `persist-credentials: false`. It leaves the finding unfixed, with the reason in its
   message, when `true` is explicit, when a later step of the job pushes with the persisted token (`git push` or
@@ -170,6 +170,53 @@ Six rules have fixes:
     when there is no diff and has no input that fails instead. Open the pull request with `gh pr create`.
 
   `continue-on-error: true` is never fixed: only the author knows whether the step may fail.
+
+- `redundant-setting` removes a key that changes nothing, after ghlint's
+  [`EmptyEnvRule`](https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/EmptyEnvRule.kt)
+  and [`RedundantShellRule`](https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/RedundantShellRule.kt):
+
+  | Finding | Removed |
+  |---|---|
+  | `env: {}` on the workflow, a job, or a step (`EmptyWorkflowEnv`, `EmptyJobEnv`, `EmptyStepEnv`) | the `env` key |
+  | a step's `shell` equal to the nearest `defaults.run.shell`, the job's or else the workflow's (`RedundantShell`) | the step's `shell` |
+  | a job's `defaults.run.shell` equal to the workflow's (`RedundantDefaultShell`) | the job's `shell`, and `run` and `defaults` when nothing else is left in them |
+
+  GitHub merges the workflow, job, and step `env` maps, so an empty one adds nothing, and a step without `shell`
+  runs the nearest default, so it keeps the shell it had. The job keeps its `defaults.run.shell` for the same
+  reason: removing the workflow's copy would change the jobs that rely on it. A comment on the removed key's line
+  goes with it; comment lines around it stay. A finding stays unfixed when:
+
+  - removing the key would leave an empty flow mapping, as `defaults: { run: { shell: bash } }` would keep
+    `run: {}`;
+  - the removal would add or remove another finding, as when every step of the workflow sets the shell that
+    `DuplicateShellOnSteps` asks to make the default.
+
+  Only an empty mapping counts: `env:` with no value, or with only comments under it, is null and stays, and so
+  does an expression that yields the map at run time. A step's shell is never compared with the runner's default:
+  an explicit `bash` adds `--noprofile --norc -o pipefail` to the `bash -e {0}` that runs when no shell is set, and
+  Windows runners default to pwsh
+  ([supported shells](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell)).
+  `DuplicateShellOnSteps` is never fixed: choosing which default to set is the author's call.
+
+- `readability` rewrites `secrets.GITHUB_TOKEN` to `github.token` in a step's values (`with`, `env`, `run`, and
+  the other step keys), after ghlint's
+  [`PreferGitHubTokenRule`](https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/PreferGitHubTokenRule.kt):
+
+  | Before | After |
+  |---|---|
+  | `token: ${{ secrets.GITHUB_TOKEN }}` | `token: ${{ github.token }}` |
+  | `"Bearer ${{ secrets['GITHUB_TOKEN'] }}"` | `"Bearer ${{ github.token }}"` |
+  | `${{ secrets.RELEASE_TOKEN \|\| secrets.github_token }}` | `${{ secrets.RELEASE_TOKEN \|\| github.token }}` |
+
+  GitHub [documents](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts) `github.token`
+  as functionally equivalent to the `GITHUB_TOKEN` secret, set while a job's steps run. Only the reference changes:
+  the scalar keeps its quotes, block header, and comments. References are found inside `${{ }}` and outside string
+  literals, in any casing, as the runner reads context names; `secrets.GITHUB_TOKEN_2` is another secret. A finding
+  stays unfixed when the value carries a YAML anchor or tag or is an alias, whose rewrite would change every alias
+  of it, or when its source spells the reference differently from its value (escapes in a quoted scalar).
+
+  Values outside steps are not reported: the docs say `github.token` is set only within a job's steps and is `null`
+  elsewhere, so a reusable workflow call's `with` and `secrets`, and workflow and job `env`, keep the secret.
 
 Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger filter needs project
 context.

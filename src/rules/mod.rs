@@ -13,6 +13,8 @@ mod maintainability;
 mod online;
 mod permissions;
 mod persist_credentials;
+mod readability;
+mod redundant_setting;
 mod repository;
 mod runner;
 mod shell;
@@ -149,6 +151,7 @@ pub struct LineRewrite {
 pub enum ChangeKind {
     Add,
     Replace,
+    Remove,
 }
 
 pub use repository::{Located, Parsed, Place, Scanned, local_actions};
@@ -157,6 +160,7 @@ pub use repository::{Located, Parsed, Place, Scanned, local_actions};
 pub type Options<'a> = Option<&'a yaml_serde::Value>;
 
 type Detect = fn(&Workflow) -> Result<Vec<Finding>, String>;
+type NamedDetect = fn(&Workflow, &str) -> Result<Vec<Finding>, String>;
 type ConfigurableDetect = fn(&Workflow, Options) -> Result<Vec<Finding>, String>;
 type RepositoryDetect = fn(&Path, &Scanned, bool, Options) -> Result<Vec<Located>, String>;
 type OnlineDetect = fn(&Workflow, &GitHub, Options) -> Result<Vec<Finding>, String>;
@@ -184,6 +188,7 @@ const REGISTRY: &[(&Rule, Detect)] = &[
     (&injection::OBFUSCATION, injection::obfuscation),
     // Permissions and secrets
     (&permissions::EXCESSIVE, permissions::excessive),
+    (&permissions::WORKFLOW_LEVEL, permissions::workflow_level),
     (&token_permissions::RULE, token_permissions::detect),
     (
         &permissions::SECRETS_EXPOSURE,
@@ -214,8 +219,9 @@ const REGISTRY: &[(&Rule, Detect)] = &[
         &maintainability::DUPLICATED_STEPS,
         maintainability::duplicated_steps,
     ),
+    (&redundant_setting::RULE, redundant_setting::detect),
     (&maintainability::COMPLEXITY, maintainability::complexity),
-    (&maintainability::READABILITY, maintainability::readability),
+    (&readability::RULE, readability::detect),
     (&deprecation::DEPRECATED, deprecation::deprecated),
     (&deprecation::REMOVED, deprecation::removed),
     // Correctness
@@ -227,6 +233,10 @@ const REGISTRY: &[(&Rule, Detect)] = &[
     ),
     (&gh_cli_environment::RULE, gh_cli_environment::detect),
 ];
+
+/// Checks that read the workflow's file name. Their rules are listed through `REGISTRY`, so they
+/// are not repeated in `all()`.
+const NAMED: &[(&Rule, NamedDetect)] = &[(&readability::RULE, readability::file_name)];
 
 /// Rules that read `rules.<id>.config`, with the option names zizmor documents.
 const CONFIGURABLE: &[(&Rule, ConfigurableDetect)] = &[
@@ -392,6 +402,11 @@ pub fn detect_all(
     for (rule, detect) in REGISTRY.iter().chain(hosted) {
         if enabled(rule, settings) {
             findings.extend(detect(workflow)?);
+        }
+    }
+    for (rule, detect) in NAMED {
+        if enabled(rule, settings) {
+            findings.extend(detect(workflow, file)?);
         }
     }
     for (rule, detect) in CONFIGURABLE {

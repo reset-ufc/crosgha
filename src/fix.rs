@@ -329,6 +329,27 @@ fn validate_change(
             );
             restored == before.document.source()
         }
+        ChangeKind::Remove => {
+            let Edit::Patch(Patch {
+                operation: Op::Remove,
+                ..
+            }) = &proposal.edit
+            else {
+                return Err("a remove fix must use a remove patch".to_owned());
+            };
+            let (start, end) = before
+                .document
+                .query_key_only(route)
+                .map_err(|error| error.to_string())?
+                .location
+                .byte_span;
+            let key = &before.document.source()[start..end];
+            removes_only(
+                before.document.source(),
+                after.document.source(),
+                start..end,
+            ) && removes_one(&before.value, &after.value, key)
+        }
     };
     if !only_target {
         return Err("fix changed YAML outside the intended node".to_owned());
@@ -459,6 +480,72 @@ fn inserts_only(before: &str, after: &str, node: std::ops::Range<usize>) -> bool
             }
             _ => false,
         })
+}
+
+/// Whether `after` is `before` without one contiguous range that holds the removed `key`.
+fn removes_only(before: &str, after: &str, key: std::ops::Range<usize>) -> bool {
+    let (old, new) = (before.as_bytes(), after.as_bytes());
+    let Some(length) = old.len().checked_sub(new.len()) else {
+        return false;
+    };
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    // When the removed text repeats its surroundings, it can start anywhere in `lowest..=highest`;
+    // one of those starts must cover the key.
+    let lowest = (new.len().saturating_sub(suffix)).max(key.end.saturating_sub(length));
+    let highest = prefix.min(key.start);
+    prefix + suffix >= new.len() && lowest <= highest
+}
+
+/// Whether `after` equals `before` without one `key` entry, or without the entry of a mapping
+/// that held only that entry, and so on upward: the block mappings a removal leaves empty. A flow
+/// mapping stays as `{}`, which would be a setting that holds nothing, so it fails the check.
+fn removes_one(before: &Value, after: &Value, key: &str) -> bool {
+    match (before, after) {
+        (Value::Mapping(old), Value::Mapping(new)) if new.len() + 1 == old.len() => {
+            !new.is_empty()
+                && new.iter().all(|(name, item)| old.get(name) == Some(item))
+                && old
+                    .iter()
+                    .any(|(name, item)| !new.contains_key(name) && holds_only(name, item, key))
+        }
+        (Value::Mapping(old), Value::Mapping(new)) => {
+            new.len() == old.len()
+                && one_removes(old.iter().map(|(name, item)| (item, new.get(name))), key)
+        }
+        (Value::Sequence(old), Value::Sequence(new)) => {
+            new.len() == old.len() && one_removes(old.iter().zip(new.iter().map(Some)), key)
+        }
+        _ => false,
+    }
+}
+
+/// Whether the entry `name: item` is `key`, or a mapping whose only entry holds only `key`.
+fn holds_only(name: &Value, item: &Value, key: &str) -> bool {
+    name.as_str() == Some(key)
+        || item.as_mapping().is_some_and(|entries| {
+            entries.len() == 1
+                && entries
+                    .iter()
+                    .all(|(name, item)| holds_only(name, item, key))
+        })
+}
+
+fn one_removes<'a>(pairs: impl Iterator<Item = (&'a Value, Option<&'a Value>)>, key: &str) -> bool {
+    let mut changed = 0;
+    for (old, new) in pairs {
+        match new {
+            Some(new) if new == old => {}
+            Some(new) if removes_one(old, new, key) => changed += 1,
+            _ => return false,
+        }
+    }
+    changed == 1
 }
 
 /// Whether `after` equals `before` except for one mapping that gained `key: value`. This catches

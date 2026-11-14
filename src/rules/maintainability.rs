@@ -78,36 +78,16 @@ pub const DUPLICATED_STEPS: Rule = Rule {
     relational: true,
 };
 
-// GASH (VEM 2024) "Long Code Blocks" and "unnecessary complexity"; Khatami et al. KZ-18.
+// GASH (VEM 2024) "Long Code Blocks" and "unnecessary complexity"; Khatami et al. KZ-18. Step and
+// job counts follow ghlint's `ComponentCountRule.kt` at 74115a437cfa161c2fd2d72fc2ebcd83ac514b80:
+// https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/ComponentCountRule.kt
 pub const COMPLEXITY: Rule = Rule {
     id: "complex-job",
-    summary: "Jobs, scripts, and conditions should stay small enough to review.",
+    summary: "Workflows, jobs, scripts, and conditions should stay small enough to review.",
     tag: "long-job/complexity",
     severity: Severity::Note,
     persona: Persona::Auditor,
-    equivalents: &[("ghlint", "TooManySteps")],
-    configurable: false,
-    relational: false,
-};
-
-// zizmor `anonymous-definition` and Khatami et al. (SCAM 2024), KZ-16 "Name run steps".
-// Conditions follow ghlint at 74115a437cfa161c2fd2d72fc2ebcd83ac514b80: the bare branch of
-// `DoubleCurlyIf` (DoubleCurlyIfRule.kt) and `NeverUseAlways` and `NegativeStatusCheck`
-// (ImplicitStatusCheckRule.kt). GitHub documents all three as valid, so they stay at `auditor`.
-pub const READABILITY: Rule = Rule {
-    id: "readability",
-    summary: "Workflows and run steps should have names, and conditions should state their intent.",
-    tag: "readability",
-    severity: Severity::Note,
-    persona: Persona::Auditor,
-    equivalents: &[
-        ("zizmor", "anonymous-definition"),
-        ("ghlint", "MissingWorkflowName"),
-        ("ghlint", "MissingStepName"),
-        ("ghlint", "DoubleCurlyIf"),
-        ("ghlint", "NeverUseAlways"),
-        ("ghlint", "NegativeStatusCheck"),
-    ],
+    equivalents: &[("ghlint", "TooManySteps"), ("ghlint", "TooManyJobs")],
     configurable: false,
     relational: false,
 };
@@ -486,25 +466,50 @@ pub fn duplicated_steps(workflow: &Workflow) -> Result<Vec<Finding>, String> {
 }
 
 // ponytail: Fixed ceilings; make them configurable when a project needs other limits.
+const MAX_JOBS: usize = 10;
 const MAX_STEPS: usize = 20;
 const MAX_SCRIPT_LINES: usize = 20;
 const MAX_LOGICAL_OPERATORS: usize = 2;
 
+/// No ghlint ID covers long scripts or conditions, so their findings name their own parts: an
+/// empty list would answer to both ghlint IDs.
+const LONG_SCRIPT: &[&str] = &["long-script"];
+const COMPLEX_CONDITION: &[&str] = &["complex-condition"];
+
 pub fn complexity(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
+    // ghlint counts reusable workflow calls as jobs too.
+    let jobs = workflow
+        .value
+        .get("jobs")
+        .and_then(Value::as_mapping)
+        .map_or(0, Mapping::len);
+    if jobs > MAX_JOBS {
+        let mut finding = common::finding(
+            workflow,
+            &COMPLEXITY,
+            Route::default().with_key("jobs"),
+            "workflow",
+            format!("workflow has {jobs} jobs (limit {MAX_JOBS})"),
+        )?;
+        finding.concepts = &["TooManyJobs"];
+        findings.push(finding);
+    }
     for job in common::jobs(workflow) {
         let count = job
             .get("steps")
             .and_then(Value::as_sequence)
             .map_or(0, Vec::len);
         if count > MAX_STEPS {
-            findings.push(common::finding(
+            let mut finding = common::finding(
                 workflow,
                 &COMPLEXITY,
                 job.route.clone(),
                 job.location(),
                 format!("job has {count} steps (limit {MAX_STEPS})"),
-            )?);
+            )?;
+            finding.concepts = &["TooManySteps"];
+            findings.push(finding);
         }
         let mut conditions = vec![(job.route.with_key("if"), job.location(), job.get("if"))];
         for step in common::steps(&job) {
@@ -515,13 +520,15 @@ pub fn complexity(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     .count()
             });
             if lines > MAX_SCRIPT_LINES {
-                findings.push(common::finding(
+                let mut finding = common::finding(
                     workflow,
                     &COMPLEXITY,
                     step.key("run"),
                     step.location.clone(),
                     format!("script has {lines} lines (limit {MAX_SCRIPT_LINES})"),
-                )?);
+                )?;
+                finding.concepts = LONG_SCRIPT;
+                findings.push(finding);
             }
             conditions.push((step.key("if"), step.location.clone(), step.value.get("if")));
         }
@@ -531,101 +538,19 @@ pub fn complexity(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             };
             let operators = condition.matches("&&").count() + condition.matches("||").count();
             if operators > MAX_LOGICAL_OPERATORS {
-                findings.push(common::finding(
+                let mut finding = common::finding(
                     workflow,
                     &COMPLEXITY,
                     route,
                     location,
-                    format!("condition has {operators} logical operators (limit {MAX_LOGICAL_OPERATORS})"),
-                )?);
-            }
-        }
-    }
-    Ok(findings)
-}
-
-pub fn readability(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let mut findings = Vec::new();
-    if workflow.value.get("name").is_none() {
-        let mut finding = common::finding(
-            workflow,
-            &READABILITY,
-            Route::default().with_key("on"),
-            "workflow",
-            "workflow has no `name`",
-        )?;
-        finding.concepts = &["MissingWorkflowName"];
-        findings.push(finding);
-    }
-    for job in common::jobs(workflow) {
-        for step in common::steps(&job) {
-            if step.run().is_some() && step.value.get("name").is_none() {
-                let mut finding = common::finding(
-                    workflow,
-                    &READABILITY,
-                    step.key("run"),
-                    step.location.clone(),
-                    "`run` step has no `name`",
+                    format!(
+                        "condition has {operators} logical operators (limit {MAX_LOGICAL_OPERATORS})"
+                    ),
                 )?;
-                finding.concepts = &["MissingStepName"];
+                finding.concepts = COMPLEX_CONDITION;
                 findings.push(finding);
             }
         }
     }
-    for condition in common::conditions(workflow) {
-        for (message, concepts) in unclear_condition(condition.value) {
-            let mut finding = common::finding(
-                workflow,
-                &READABILITY,
-                condition.route.clone(),
-                condition.location.clone(),
-                message,
-            )?;
-            finding.concepts = concepts;
-            findings.push(finding);
-        }
-    }
     Ok(findings)
-}
-
-/// What hides the intent of an `if`, with the ghlint concept of each.
-fn unclear_condition(condition: &Value) -> Vec<(String, &'static [&'static str])> {
-    let mut problems: Vec<(String, &'static [&'static str])> = Vec::new();
-    let text = match condition {
-        Value::String(text) => text,
-        // `if: !cancelled()` and `if: ! cancelled()` start a YAML tag, which takes the `!`.
-        Value::Tagged(_) => {
-            problems.push((
-                "YAML reads the leading `!` as a tag; wrap the condition in `${{ }}`".to_owned(),
-                &["DoubleCurlyIf"],
-            ));
-            return problems;
-        }
-        _ => return problems,
-    };
-    // A bare condition becomes a string as soon as someone adds `${{ }}` around one part.
-    if !text.contains("${{") && !text.trim().is_empty() {
-        problems.push((
-            "condition is not wrapped in `${{ }}`".to_owned(),
-            &["DoubleCurlyIf"],
-        ));
-    }
-    let checks = expression::status_checks(text);
-    if checks.iter().any(|check| check.name == "always") {
-        problems.push((
-            "`always()` also runs after the run is cancelled; `success() || failure()` does not"
-                .to_owned(),
-            &["NeverUseAlways"],
-        ));
-    }
-    if let Some(check) = checks.iter().find(|check| check.negated) {
-        problems.push((
-            format!(
-                "`!{}()` names the statuses that skip the work; name the ones that run it, such as `success() || failure()`",
-                check.name
-            ),
-            &["NegativeStatusCheck"],
-        ));
-    }
-    problems
 }

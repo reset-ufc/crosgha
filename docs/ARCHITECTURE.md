@@ -6,9 +6,9 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 | Area | Current state |
 |---|---|
 | CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
-| Rule modules | 49 rules covering every taxonomy tag: 40 per workflow, 4 per repository, 5 online. |
+| Rule modules | 51 rules covering every taxonomy tag: 42 per workflow, 4 per repository, 5 online. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
-| Fix validation | Runnable for add and replace proposals; `persist-credentials` and `error-suppression` propose adds of a step input, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, and `unsafe-if-condition` the new source of an `if` scalar. |
+| Fix validation | Runnable for add, replace, and remove proposals; `persist-credentials` and `error-suppression` propose adds of a step input, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, `unsafe-if-condition` the new source of an `if` scalar, `readability` the new source of a step value, and `redundant-setting` removals of a key. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
 | Composite Action | Report mode works: zizmor-action's inputs, a sha256-verified release binary, SARIF upload, job summary, then `fail-on`. |
 | PR and auto-merge | Mode contract and guards exist; repository operations are pending. |
@@ -36,7 +36,7 @@ The stages have these interfaces:
 | `config` | Scanned path or `--config` | Per-rule `disable`, `ignore`, severity remaps, and `config` options, using zizmor's schema and discovery order. |
 | `rules` | Parsed workflow and settings | Findings with rule ID, curated tag, severity, location, route, and an optional fix proposal. Rules do not write files. |
 | `rules::common` | Parsed workflow | Shared traversal: jobs, steps (including `parallel` groups), triggers, `uses` refs, action versions, and boolean inputs. |
-| `rules::expression` | Text with `${{ }}` | Expression spans and bodies, context paths, which of them an outsider controls, and how a condition compares or negates a path. |
+| `rules::expression` | Text with `${{ }}` | Expression spans and bodies, context paths, which of them an outsider controls, where a named secret is read, and how a condition compares or negates a path. |
 | `rules::shell` | `run` script | Simple commands (quoted text and heredoc bodies stay data), the program each runs past keywords, assignments, and wrappers such as `sudo`/`env`, getopt-style options, git subcommands, and the shell a step runs in. |
 | `github` | API path | Cached read-only GitHub REST responses for online rules, failures included. Each path has its own lock, so parallel workflows request it once; after a rate-limit refusal or a 401 no further request is sent. The tag walk fails when a page repeats the previous one or after 100 pages. |
 | `engine` | Source and scan/fix mode | Findings and a prepared fix result. This is the main in-memory analysis interface. Workflows and `.github` directories are inspected on every core; results keep path order, and fixes are written only after all inspections finish. |
@@ -76,11 +76,12 @@ four shapes, dispatched from explicit tables in `rules/mod.rs`:
 
 Checks that state github.com facts (retired hosted-runner images and service shutdowns in
 `removed-feature`, and `retired-runtime`) sit in the `HOSTED` and `HOSTED_REPOSITORY` tables and are
-skipped when `--gh-hostname` names another host.
+skipped when `--gh-hostname` names another host. The `readability` check of the workflow's file name
+sits in the `NAMED` table, whose functions also take the file's base name.
 
 A finding can have no fix when the change is not safe to choose automatically. A fix proposal
 supplies a `yamlpatch` operation, whole-line rewrites of a scalar, or a scalar's new source, the
-route it may change, and whether it adds or replaces that node. Line rewrites and new scalar source
+route it may change, and whether it adds, replaces, or removes that node. Line rewrites and new scalar source
 keep a block scalar's indentation and header comment, which yamlpatch's `Replace` does not. The shared fix module applies and validates proposals, one at a
 time, each taken from the findings of the source it patches: an earlier fix may have rewritten the lines a
 later proposal names, as when one step gets a finding per ghlint concept. Detection-only rules leave source
@@ -96,6 +97,9 @@ unchanged under `--fix` and remain visible in the report.
    A replaced value is swapped back and must restore the original source. An added key must
    be the only insertion: the original equals the patched source minus the new node and the
    spaces, line breaks, or comma around it, and the parsed values differ only by that key.
+   A removed key must be the only deletion: the patched source equals the original minus one
+   range that holds the key, and the parsed values differ only by that key and the block
+   mappings above it that it leaves empty. A flow mapping left as `{}` fails the check.
    Files with CRLF or mixed line breaks, or without a final newline, are patched as LF with
    one; then each original line gets its own break back and an added line takes the break of
    the line before it.

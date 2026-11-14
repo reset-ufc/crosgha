@@ -1,8 +1,12 @@
 name: Tests
 on: [push]
 permissions: {}
+defaults:
+  run:
+    shell: bash
 jobs:
   test:
+    name: Test
     if: ${{ github.repository == 'octo-org/octo-repo' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -16,3 +20,25 @@ jobs:
       - name: Notify
         if: ${{ (success() || cancelled()) && github.event_name == 'push' }}
         run: make notify
+  build-all:
+    name: Build all
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        id: build
+        run: make build
+      - name: Build again
+        id: rebuild-docs
+        run: make build
+      - name: Run
+        id: test-run
+        run: make run
+      - name: Token
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          token: ${{ github.token }}
+          persist-credentials: false
+  reuse:
+    name: Reuse
+    uses: ./.github/workflows/reusable.yml

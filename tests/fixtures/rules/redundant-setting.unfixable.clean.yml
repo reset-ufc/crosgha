@@ -1,0 +1,28 @@
+name: Shells
+on: [push]
+permissions: {}
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Lint
+        run: make lint
+      - name: Format
+        run: make format
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Build
+        run: make
+      - name: Test
+        run: make test

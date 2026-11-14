@@ -1,0 +1,26 @@
+name: Defaults
+on: [push]
+permissions: {}
+# Every `run` step in the workflow overrides its default with the same shell.
+defaults:
+  run:
+    shell: pwsh # expect: redundant-setting
+jobs:
+  build:
+    name: Build
+    runs-on: windows-2025
+    timeout-minutes: 10
+    # Repeats the workflow's default, but removing the key would leave `run: {}` in the flow mapping.
+    defaults: { run: { shell: pwsh } } # expect: redundant-setting, redundant-setting
+    steps:
+      - name: Build
+        run: make
+        shell: bash
+  test:
+    name: Test
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Test
+        run: make test
+        shell: bash

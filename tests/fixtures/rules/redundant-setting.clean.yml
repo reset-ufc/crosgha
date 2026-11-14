@@ -1,0 +1,33 @@
+name: Build
+on: [push]
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Compile
+        run: make
+      - name: Strict
+        run: make strict
+        shell: bash -e {0}
+      - name: Dynamic
+        run: make dynamic
+        env: ${{ fromJSON(vars.STEP_ENV) }}
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Bash
+        run: make
+        shell: bash
+      - name: Pwsh
+        run: Get-ChildItem

@@ -1,0 +1,71 @@
+name: Build
+on: [push]
+permissions: {}
+env: {} # expect: redundant-setting
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env: {} # expect: redundant-setting
+    # The job's default repeats the workflow's.
+    defaults:
+      run:
+        shell: bash # expect: redundant-setting
+    steps:
+      - name: Compile
+        run: make
+        shell: bash # expect: redundant-setting
+        env: {} # expect: redundant-setting
+      - name: Checkout
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        env: {} # expect: redundant-setting
+        with:
+          persist-credentials: false
+      - { name: Flow, run: make test, shell: bash } # expect: redundant-setting
+      # An explicit shell that differs from the default, even in its arguments, is a choice.
+      - name: Strict
+        run: make strict
+        shell: bash -e {0}
+      - name: Python
+        run: print(1)
+        shell: python
+      - name: Variables
+        run: make vars
+        env:
+          # filled in later
+      - name: Dynamic
+        run: make dynamic
+        env: ${{ fromJSON(vars.STEP_ENV) }}
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: src
+    steps:
+      # The nearest default wins: the job's `pwsh` replaces the workflow's `bash`.
+      - name: Bash
+        run: make
+        shell: bash
+      - name: Pwsh
+        run: Get-ChildItem
+        shell: pwsh # expect: redundant-setting
+      - name: Default
+        run: Get-Item .
+  plain:
+    name: Plain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src
+        shell: bash # expect: redundant-setting
+    steps:
+      - name: Make
+        run: make

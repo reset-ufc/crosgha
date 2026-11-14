@@ -1,0 +1,26 @@
+name: Release
+on: [push]
+# Jobs without their own block get these scopes, and job blocks make it redundant.
+permissions: # expect: workflow-level-permissions
+  contents: write
+  pull-requests: read
+jobs:
+  build: # expect: workflow-level-permissions
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        run: make
+  call: # expect: workflow-level-permissions
+    name: Call
+    uses: ./.github/workflows/reusable.yml
+  publish:
+    name: Publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish
+        run: make publish

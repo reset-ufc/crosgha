@@ -492,7 +492,8 @@ pub fn git_subcommand<'a, 'w>(program: &Program<'a, 'w>) -> Option<(&'a str, &'w
     Some((subcommand, args))
 }
 
-fn default_shell(scope: &Value) -> Option<&str> {
+/// The `defaults.run.shell` of a workflow or job.
+pub fn default_shell(scope: &Value) -> Option<&str> {
     scope
         .get("defaults")
         .and_then(|defaults| defaults.get("run"))

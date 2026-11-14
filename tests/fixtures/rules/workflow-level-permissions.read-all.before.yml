@@ -1,0 +1,11 @@
+name: Read all
+on: [push]
+permissions: read-all
+jobs:
+  build: # expect: workflow-level-permissions
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Build
+        run: make

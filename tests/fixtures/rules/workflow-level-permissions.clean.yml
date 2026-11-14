@@ -1,0 +1,28 @@
+name: Release
+on: [push]
+# An empty block grants nothing, so it only guards jobs added later.
+permissions: {}
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Build
+        run: make
+  call:
+    name: Call
+    uses: ./.github/workflows/reusable.yml
+    permissions:
+      contents: read
+  publish:
+    name: Publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish
+        run: make publish

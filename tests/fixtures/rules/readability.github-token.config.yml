@@ -1,0 +1,5 @@
+# Fixture file names hold dots (`readability.before`), which `WorkflowIdNaming` reports;
+# tests/cli.rs checks that part on real workflow names.
+rules:
+  WorkflowIdNaming:
+    disable: true

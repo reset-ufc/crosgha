@@ -1,0 +1,55 @@
+name: Shells
+on: [push]
+permissions: {}
+jobs:
+  # Several steps set one shell and no default exists.
+  lint: # expect: redundant-setting
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          persist-credentials: false
+      - name: Lint
+        run: make lint
+        shell: bash
+      - name: Format
+        run: make format
+        shell: bash
+  # Every step overrides the job's default with the same shell.
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh # expect: redundant-setting
+    steps:
+      - name: Build
+        run: make
+        shell: bash
+      - name: Test
+        run: make test
+        shell: bash
+  # One step with a shell, or steps with different shells, need no default.
+  single:
+    name: Single
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Only
+        run: make
+        shell: bash
+  mixed:
+    name: Mixed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Bash
+        run: make
+        shell: bash
+      - name: Sh
+        run: make
+        shell: sh

@@ -4,13 +4,15 @@ Rust CLI and composite GitHub Action that detect smells in GitHub Actions workfl
 preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSconfigured GitHub Actions.
 
 - **Scan:** finds workflows directly inside `.github/workflows`, parses YAML with `yamlpath`, and validates top-level `on` and `jobs`.
-- **Rules:** 49 cover every tag of the curated taxonomy: 40 per workflow, 4 per repository, and 5 that query the
+- **Rules:** 51 cover every tag of the curated taxonomy: 42 per workflow, 4 per repository, and 5 that query the
   GitHub API.
 - **Fixes:** only `persist-credentials`, `removed-feature` (setup-java distributions), `deprecated-command`
   (workflow commands to environment files), `embedded-script-lint` (quotes and braces environment file paths,
   appends instead of overwriting), `unsafe-if-condition` (a condition mixing `${{ }}` with text becomes one
-  `${{ }}`), and `error-suppression` (adds the fail-fast input of upload-artifact, action-gh-release, and
-  publish-unit-test-result-action) have verified fixes so far. `persist-credentials` stays unfixed when `true` is
+  `${{ }}`), `error-suppression` (adds the fail-fast input of upload-artifact, action-gh-release, and
+  publish-unit-test-result-action), `redundant-setting` (removes an empty `env` and a `shell` that repeats its
+  default), and `readability` (rewrites `secrets.GITHUB_TOKEN` in step values to `github.token`) have verified fixes
+  so far. `persist-credentials` stays unfixed when `true` is
   explicit, a later step pushes with the token, or checkout predates v2. `deprecated-command` rewrites only whole
   `echo` lines in bash or sh steps, and `embedded-script-lint` only `>`/`>>` redirects whose target is an
   environment file (docs/fixes.md lists what each leaves).
