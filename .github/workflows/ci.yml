@@ -102,6 +102,35 @@ jobs:
       - name: Build release
         run: cargo build --release --locked
 
+  # The Action installs the release that its own Cargo.toml names, so this job checks action.yml
+  # and action/entrypoint.sh with the last released binary, not the code under test.
+  action:
+    name: Action (uses ./)
+    # The push that merges a release PR names a version that release.yml has not published yet.
+    # Release PRs are squash-merged with release-please's title; a merge commit names its branch.
+    if: >-
+      ${{ github.event_name == 'pull_request'
+      || !(startsWith(github.event.head_commit.message, 'chore(master): release ')
+      || contains(github.event.head_commit.message, 'release-please--branches--')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Offline and without SARIF upload, like the CLI scan above, so the job needs no token.
+      - name: Scan workflows with the Action
+        uses: ./
+        with:
+          inputs: .github/workflows
+          persona: pedantic
+          online-audits: false
+          advanced-security: false
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-24.04
