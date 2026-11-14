@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/reset-ufc/crosgha/compare/v0.24.0...v0.25.0) (2026-11-14)
+
+
+### Added
+
+* **scan:** follow actions called from other repositories with --follow-actions ([#166](https://github.com/reset-ufc/crosgha/issues/166)) ([27ac9f0](https://github.com/reset-ufc/crosgha/commit/27ac9f05acf8e33182ee7ec836b13a99bf9c1489)), closes [#100](https://github.com/reset-ufc/crosgha/issues/100)
+
 ## [0.24.0](https://github.com/reset-ufc/crosgha/compare/v0.23.0...v0.24.0) (2026-11-14)
 
 
