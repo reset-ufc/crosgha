@@ -1,7 +1,7 @@
 use yaml_serde::{Mapping, Value};
 use yamlpatch::{Op, Patch};
 
-use super::{ChangeKind, Finding, ProposedFix, Rule, common, shell};
+use super::{ChangeKind, Edit, Finding, ProposedFix, Rule, common, shell};
 use crate::policy::{Persona, Severity};
 use crate::workflow::Workflow;
 
@@ -135,7 +135,7 @@ fn propose_fix(step: &common::Step<'_>) -> ProposedFix {
         }
     };
     ProposedFix {
-        patch,
+        edit: Edit::Patch(patch),
         changed_route,
         change: ChangeKind::Add,
     }

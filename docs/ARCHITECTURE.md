@@ -8,7 +8,7 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 | CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
 | Rule modules | 48 rules covering every taxonomy tag: 39 per workflow, 4 per repository, 5 online. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
-| Fix validation | Runnable for add and replace proposals; `persist-credentials` proposes adds and `removed-feature` replacements. |
+| Fix validation | Runnable for add and replace proposals; `persist-credentials` proposes adds, `removed-feature` replacements, and `deprecated-command` line rewrites inside a `run` script. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
 | Composite Action | Report mode works: zizmor-action's inputs, a sha256-verified release binary, SARIF upload, job summary, then `fail-on`. |
 | PR and auto-merge | Mode contract and guards exist; repository operations are pending. |
@@ -79,8 +79,9 @@ Checks that state github.com facts (retired hosted-runner images and service shu
 skipped when `--gh-hostname` names another host.
 
 A finding can have no fix when the change is not safe to choose automatically. A fix proposal
-supplies a `yamlpatch` operation, the route it may change, and whether it adds or replaces that
-node. The shared fix module applies and validates proposals. Detection-only rules leave source
+supplies a `yamlpatch` operation or whole-line rewrites of a scalar, the route it may change, and
+whether it adds or replaces that node. Line rewrites keep a block scalar's indentation and header
+comment, which yamlpatch's `Replace` does not. The shared fix module applies and validates proposals. Detection-only rules leave source
 unchanged under `--fix` and remain visible in the report.
 
 ## Fix safety

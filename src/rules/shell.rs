@@ -1,6 +1,11 @@
-//! `run` scripts read as simple commands: the program each one runs and its options.
+//! `run` scripts read as simple commands: the program each one runs and its options, and the shell
+//! that runs the script.
 
-use super::expression;
+use yaml_serde::Value;
+
+use super::common::{Job, Step};
+use super::{expression, runner};
+use crate::workflow::Workflow;
 
 const NOT_EMPTY: &str = "`commands` starts with one command and only grows while splitting";
 
@@ -291,4 +296,41 @@ pub fn git_subcommand<'a, 'w>(program: &Program<'a, 'w>) -> Option<(&'a str, &'w
     let (_, rest) = leading_options(program.args, &GIT);
     let (&subcommand, args) = rest.split_first()?;
     Some((subcommand, args))
+}
+
+fn default_shell(scope: &Value) -> Option<&str> {
+    scope
+        .get("defaults")
+        .and_then(|defaults| defaults.get("run"))
+        .and_then(|run| run.get("shell"))
+        .and_then(Value::as_str)
+}
+
+/// Whether bash or sh runs `step`'s script: its `shell`, else the job's or the workflow's
+/// `defaults.run.shell`, else the runner's default. A custom shell such as `/usr/bin/bash -e {0}`
+/// names it by path, and `/usr/bin/env [options] [NAME=value] bash {0}` looks it up.
+pub fn runs_posix(workflow: &Workflow, job: &Job, step: &Step) -> bool {
+    // `run` defaults to pwsh on Windows and to bash elsewhere, so a matrix over both OSes still
+    // runs bash on some entries:
+    // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
+    let labels: Vec<String> = runner::job_labels(job)
+        .iter()
+        .map(|label| label.to_ascii_lowercase())
+        .collect();
+    let windows = labels.iter().any(|label| label.starts_with("windows"))
+        && !labels.iter().any(|label| {
+            ["ubuntu", "macos", "linux"]
+                .iter()
+                .any(|os| label.starts_with(os))
+        });
+    let shell = step
+        .value
+        .get("shell")
+        .and_then(Value::as_str)
+        .or_else(|| default_shell(job.value))
+        .or_else(|| default_shell(&workflow.value))
+        .or(windows.then_some("pwsh"))
+        .unwrap_or("bash");
+    let words: Vec<&str> = shell.split_whitespace().collect();
+    program(&words).is_some_and(|program| matches!(program.name, "bash" | "sh"))
 }

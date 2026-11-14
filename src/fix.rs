@@ -1,8 +1,9 @@
 use yaml_serde::Value;
-use yamlpatch::{Op, apply_yaml_patches};
+use yamlpatch::{Op, Patch, apply_yaml_patches};
+use yamlpath::Route;
 
 use crate::policy::Settings;
-use crate::rules::{self, ChangeKind, Finding, ProposedFix};
+use crate::rules::{self, ChangeKind, Edit, Finding, LineRewrite, ProposedFix};
 use crate::workflow::Workflow;
 
 pub struct FixOutcome {
@@ -208,9 +209,13 @@ fn patch(
     before: &[Finding],
     context: &Context,
 ) -> Result<(Workflow, Vec<Finding>), String> {
-    let patched = apply_yaml_patches(&current.document, std::slice::from_ref(&proposal.patch))
-        .map_err(|error| error.to_string())?;
-    let mut source = patched.source().to_owned();
+    let mut source = match &proposal.edit {
+        Edit::Patch(patch) => apply_yaml_patches(&current.document, std::slice::from_ref(patch))
+            .map_err(|error| error.to_string())?
+            .source()
+            .to_owned(),
+        Edit::Lines(rewrites) => rewrite_lines(current, &proposal.changed_route, rewrites)?,
+    };
     if matches!(proposal.change, ChangeKind::Add)
         && let Some(moved) = after_trailing_whitespace(current.document.source(), &source)
     {
@@ -264,7 +269,11 @@ fn validate_change(
     let route = &proposal.changed_route;
     let only_target = match proposal.change {
         ChangeKind::Add => {
-            let Op::Add { key, value } = &proposal.patch.operation else {
+            let Edit::Patch(Patch {
+                operation: Op::Add { key, value },
+                ..
+            }) = &proposal.edit
+            else {
                 return Err("an add fix must use an add patch".to_owned());
             };
             let start = after
@@ -313,6 +322,40 @@ fn validate_change(
         return Err("fix changed YAML outside the intended node".to_owned());
     }
     Ok(())
+}
+
+/// The source of `workflow` with each rewrite applied to the next matching line of the scalar at
+/// `route`, keeping the line's indentation and line break.
+fn rewrite_lines(
+    workflow: &Workflow,
+    route: &Route,
+    rewrites: &[LineRewrite],
+) -> Result<String, String> {
+    let document = &workflow.document;
+    let node = document
+        .query_exact(route)
+        .map_err(|error| error.to_string())?
+        .ok_or("missing original value")?;
+    let (start, end) = node.location.byte_span;
+    let mut pending = rewrites.iter().peekable();
+    let mut rewritten = String::with_capacity(end - start);
+    for line in document.extract(&node).split_inclusive('\n') {
+        let indent = line.len() - line.trim_start().len();
+        let text_end = indent.max(line.trim_end().len());
+        match pending.next_if(|rewrite| line[indent..text_end] == *rewrite.from) {
+            Some(rewrite) => {
+                rewritten.push_str(&line[..indent]);
+                rewritten.push_str(&rewrite.to);
+                rewritten.push_str(&line[text_end..]);
+            }
+            None => rewritten.push_str(line),
+        }
+    }
+    if pending.next().is_some() {
+        return Err("a rewritten line is missing from the script".to_owned());
+    }
+    let source = document.source();
+    Ok(format!("{}{rewritten}{}", &source[..start], &source[end..]))
 }
 
 /// yamlpatch adds block lines right after the last value, before that line's trailing spaces,

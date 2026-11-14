@@ -5,7 +5,9 @@ use yaml_serde::Value;
 use yamlpatch::{Op, Patch};
 use yamlpath::Route;
 
-use super::{ChangeKind, Finding, ProposedFix, Rule, common, repository, runner, shell};
+use super::{
+    ChangeKind, Edit, Finding, LineRewrite, ProposedFix, Rule, common, repository, runner, shell,
+};
 use crate::policy::{Persona, Severity};
 use crate::workflow::Workflow;
 
@@ -64,22 +66,18 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     for job in common::jobs(workflow) {
         scopes.push((job.route.clone(), job.location(), job.value));
         for step in common::steps(&job) {
-            if let Some(command) = step.run().and_then(|script| {
-                let commands = shell::commands(script);
-                DEPRECATED_COMMANDS.iter().find(|command| {
-                    commands
-                        .iter()
-                        .flat_map(|run| &run.words)
-                        .any(|word| word.contains(**command))
-                })
-            }) {
-                findings.push(common::finding(
+            if let Some(script) = step.run()
+                && let Some(command) = deprecated_command(script)
+            {
+                let mut finding = common::finding(
                     workflow,
                     &DEPRECATED,
                     step.key("run"),
                     step.location.clone(),
                     format!("`{command}` is a deprecated workflow command"),
-                )?);
+                )?;
+                finding.fix = environment_files(workflow, &job, &step, script);
+                findings.push(finding);
             }
             scopes.push((step.route.clone(), step.location.clone(), step.value));
         }
@@ -105,6 +103,170 @@ pub fn deprecated(workflow: &Workflow) -> Result<Vec<Finding>, String> {
         }
     }
     Ok(findings)
+}
+
+/// The first deprecated command that `script` runs.
+fn deprecated_command(script: &str) -> Option<&'static str> {
+    let commands = shell::commands(script);
+    DEPRECATED_COMMANDS.iter().copied().find(|command| {
+        commands
+            .iter()
+            .flat_map(|run| &run.words)
+            .any(|word| word.contains(command))
+    })
+}
+
+/// The environment file that replaces each command that takes a `name`:
+/// https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-an-environment-variable
+const NAMED_FILES: &[(&str, &str)] = &[
+    ("set-output", "GITHUB_OUTPUT"),
+    ("save-state", "GITHUB_STATE"),
+    ("set-env", "GITHUB_ENV"),
+];
+
+/// Script text that leaves a step unfixed. A heredoc or here-string (`<<`) may hold a command as
+/// data, and `$'...'` quoting hides where quotes end. The runner decoded `%25`, `%0D`, and `%0A`
+/// in a command's value, but an environment file stores them as written
+/// (`src/Runner.Common/ActionCommand.cs` in actions/runner at
+/// 8cfa1049f86781d141056082d73802d56cd2b433), so a script that escapes values that way would
+/// change what it writes.
+const UNFIXABLE: &[&str] = &["<<", "$'", "%25", "%0D", "%0A"];
+
+/// Rewrites each deprecated command of a bash or sh step into the environment file write that
+/// replaces it, or `None` when one of them is not a whole `echo` line with a known rewrite.
+fn environment_files(
+    workflow: &Workflow,
+    job: &common::Job,
+    step: &common::Step,
+    script: &str,
+) -> Option<ProposedFix> {
+    if !shell::runs_posix(workflow, job, step) || UNFIXABLE.iter().any(|text| script.contains(text))
+    {
+        return None;
+    }
+    // Only a literal block scalar or a one-line plain scalar holds the script as written.
+    let route = step.key("run");
+    let node = workflow.document.query_exact(&route).ok()??;
+    let source = workflow.document.extract(&node);
+    if !source.starts_with('|') && source != script {
+        return None;
+    }
+    let mut rewrites = Vec::new();
+    for (line, top_level) in lines(script) {
+        if deprecated_command(line).is_none() {
+            continue;
+        }
+        let from = line.trim();
+        let to = top_level.then(|| rewrite(from))??;
+        rewrites.push(LineRewrite {
+            from: from.to_owned(),
+            to,
+        });
+    }
+    if rewrites.is_empty() {
+        return None;
+    }
+    Some(ProposedFix {
+        edit: Edit::Lines(rewrites),
+        changed_route: route,
+        change: ChangeKind::Replace,
+    })
+}
+
+/// Each line of `script`, and whether it starts a new command: not inside a quoted string and not
+/// continued from the line before by a trailing `\`.
+fn lines(script: &str) -> Vec<(&str, bool)> {
+    let mut found = Vec::new();
+    let mut quote = None;
+    let mut continued = false;
+    for line in script.split('\n') {
+        found.push((line, quote.is_none() && !continued));
+        continued = false;
+        let bytes = line.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            match (quote, byte) {
+                (Some(b'\''), b'\'') | (Some(b'"'), b'"') => quote = None,
+                (Some(b'"') | None, b'\\') => {
+                    continued = index + 1 == bytes.len();
+                    index += 1;
+                }
+                (None, b'\'' | b'"') => quote = Some(byte),
+                (None, b'#') if index == 0 || bytes[index - 1].is_ascii_whitespace() => break,
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+    found
+}
+
+/// The environment file write that replaces `line` when it is exactly
+/// `echo <quote>::<command> name=<name>::<value><quote>` or `echo <quote>::add-path::<path><quote>`.
+/// The write keeps `echo` and the quoting, so the shell expands the value as before.
+fn rewrite(line: &str) -> Option<String> {
+    let argument = line.strip_prefix("echo ")?;
+    let quote = match argument.as_bytes().first() {
+        Some(b'"') => "\"",
+        Some(b'\'') => "'",
+        _ => "",
+    };
+    let text = argument
+        .strip_prefix(quote)?
+        .strip_suffix(quote)
+        .filter(|text| quote.is_empty() || !text.contains(quote))?;
+    let (head, value) = text.strip_prefix("::")?.split_once("::")?;
+    let quoted_safely = match quote {
+        "\"" => !value.ends_with('\\'),
+        "'" => true,
+        _ => unquoted_safe(value),
+    };
+    if !quoted_safely {
+        return None;
+    }
+    let (file, written) = match head.split_once(' ') {
+        None if head == "add-path" && !value.is_empty() => ("GITHUB_PATH", value.to_owned()),
+        Some((command, property)) => {
+            let (_, file) = NAMED_FILES.iter().find(|(name, _)| *name == command)?;
+            let name = property
+                .strip_prefix("name=")
+                .filter(|name| !name.is_empty() && name.bytes().all(is_name_byte))?;
+            (*file, format!("{name}={value}"))
+        }
+        None => return None,
+    };
+    Some(format!("echo {quote}{written}{quote} >> \"${{{file}}}\""))
+}
+
+fn is_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+}
+
+/// Whether an unquoted value reads the same after its word moves: only plain characters and
+/// `$NAME` or `${NAME}` expansions, nothing that globs, expands braces, or ends the command.
+fn unquoted_safe(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = &bytes[index..];
+        let length = match rest {
+            [b'$', b'{', ..] => match rest.iter().position(|byte| *byte == b'}') {
+                Some(close)
+                    if close > 2 && rest[2..close].iter().all(|byte| is_name_byte(*byte)) =>
+                {
+                    close + 1
+                }
+                _ => return false,
+            },
+            [b'$', ..] => 1,
+            [byte, ..] if is_name_byte(*byte) || b"./:@+=, ".contains(byte) => 1,
+            _ => return false,
+        };
+        index += length;
+    }
+    true
 }
 
 /// Hosted images and the date GitHub fully retired them:
@@ -387,10 +549,10 @@ pub fn removed(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     format!("setup-java v6 removed the `{adopt}` distribution; use `{successor}`"),
                 )?;
                 finding.fix = Some(ProposedFix {
-                    patch: Patch {
+                    edit: Edit::Patch(Patch {
                         route: input.clone(),
                         operation: Op::Replace(Value::String((*successor).to_owned())),
-                    },
+                    }),
                     changed_route: input,
                     change: ChangeKind::Replace,
                 });

@@ -1,0 +1,78 @@
+name: Deprecated, unfixable
+# A privileged trigger makes the GITHUB_ENV rewrite a `github-env-injection` finding, so
+# validation rejects it.
+on: [push, pull_request_target]
+permissions: {}
+env:
+  ACTIONS_ALLOW_UNSECURE_COMMANDS: true # expect: deprecated-command
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ACTIONS_ALLOW_UNSECURE_COMMANDS: false
+    steps:
+      - run: echo "::set-env name=A::1" # expect: deprecated-command
+      - run: | # expect: deprecated-command
+          printf '%s\n' '::save-state name=a # b::1'
+      - run: echo -n "::set-output name=x::1" # expect: deprecated-command
+      - run: echo "::set-output name=x::1" | tee out.log # expect: deprecated-command
+      - run: | # expect: deprecated-command
+          echo "::set-output name=x::1" # done
+      - run: echo "::set-output name=x::"$value"" # expect: deprecated-command
+      - run: echo ::set-output name=files::*.txt # expect: deprecated-command
+      - run: echo ::set-output name=list::{a,b} # expect: deprecated-command
+      - run: echo "::set-output name=$key::1" # expect: deprecated-command
+      - run: echo "::set-output name=x::C:\" # expect: deprecated-command
+      - run: echo "::add-path::" # expect: deprecated-command
+      # YAML folds `>` scalars and unescapes quoted ones, so the source is not the script.
+      - run: > # expect: deprecated-command
+          echo "::set-output name=x::1"
+      - run: "echo \"::set-output name=x::1\"" # expect: deprecated-command
+      # The runner decoded %25, %0D, and %0A in values; environment files store them as written.
+      - run: | # expect: deprecated-command
+          notes="$(git log -1 --format=%B)"
+          notes="${notes//'%'/'%25'}"
+          echo "::set-output name=notes::$notes"
+      # A heredoc, a quoted string, or a continued line holds the command as data.
+      - run: | # expect: deprecated-command
+          cat <<EOF
+          echo "::set-output name=x::1"
+          EOF
+      - run: | # expect: deprecated-command
+          bash -c "
+          echo '::set-output name=x::1'
+          "
+      - run: | # expect: deprecated-command
+          echo \
+            "::set-output name=x::1"
+      # One command without a rewrite leaves the whole step unfixed.
+      - run: | # expect: deprecated-command
+          echo "::set-output name=a::1"
+          echo "::set-output name=b::2"; echo done
+      - shell: pwsh
+        run: echo "::set-output name=x::1" # expect: deprecated-command
+      - shell: python
+        run: print("::set-output name=x::1") # expect: deprecated-command
+      - run: ./legacy-tool
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: 'true' # expect: deprecated-command
+      # The runner reads the variable with .NET bool.TryParse: `True` in any case, nothing else.
+      - run: ./legacy-tool --upper
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: 'TRUE' # expect: deprecated-command
+      - run: ./legacy-tool --expression
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: ${{ 'true' }} # expect: deprecated-command
+      - run: ./legacy-tool --spelled-out
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: FALSE
+      - run: ./legacy-tool --not-a-boolean
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: 'yes'
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      # Windows runners default to pwsh.
+      - run: echo "::set-output name=x::1" # expect: deprecated-command

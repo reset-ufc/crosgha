@@ -2,14 +2,32 @@ name: Deprecated
 on: [push]
 permissions: {}
 jobs:
-  a:
+  release:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       ACTIONS_ALLOW_UNSECURE_COMMANDS: false
     steps:
-      - run: echo "x=1" >> "$GITHUB_OUTPUT"
-      - run: echo "y=2" >> "$GITHUB_STATE"
-      - run: echo "/opt/bin" >> "$GITHUB_PATH"
+      - run: echo "x=1" >> "${GITHUB_OUTPUT}"
+      - run: echo "y=2" >> "${GITHUB_STATE}"
+      - run: echo "/opt/bin" >> "${GITHUB_PATH}"
       - run: echo "::add-mask::value"
-      - run: ./legacy-tool
+      - id: meta
+        run: |
+          version="$(git describe --tags --abbrev=0)"
+          echo "version=${version#v}" >> "${GITHUB_OUTPUT}"
+          echo 'matrix={"os":["ubuntu-24.04","macos-15"]}' >> "${GITHUB_OUTPUT}"
+          echo sha=$GITHUB_SHA >> "${GITHUB_OUTPUT}"
+          for dir in packages/*; do
+            echo "$PWD/$dir/bin" >> "${GITHUB_PATH}"
+          done
+          if [ -f .nvmrc ]; then
+            echo "NODE_VERSION=$(cat .nvmrc)" >> "${GITHUB_ENV}"
+          fi
+      - shell: sh
+        run: echo "CI_STAGE=deploy" >> "${GITHUB_ENV}"
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - run: '"os=windows" >> $env:GITHUB_OUTPUT'
