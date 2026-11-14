@@ -3,7 +3,7 @@
     reason = "tests stage files and run the binary"
 )]
 
-//! `crosgha migrate --from zizmor|actionlint|poutine` on workflows and repositories.
+//! `crosgha migrate --from zizmor|actionlint|poutine|ghalint` on workflows and repositories.
 
 mod common;
 
@@ -72,6 +72,7 @@ fn migrate_converts_configs_and_shell_steps() {
         ("zizmor", "ci.yml", "zizmor.yml"),
         ("actionlint", "lint.yml", "actionlint.yaml"),
         ("poutine", "scan.yml", "poutine.yml"),
+        ("ghalint", "ghalint.yml", "ghalint.yaml"),
     ] {
         let temp = TempDir::new("migrate");
         let repo = temp.join("work");
@@ -161,6 +162,34 @@ fn migrate_converts_configs_and_shell_steps() {
             "actionlint" => {
                 assert!(stderr.contains("`config-variables`"), "{stderr}");
                 assert!(stderr.contains("`paths`"), "{stderr}");
+            }
+            "ghalint" => {
+                // ghalint has no Action of its own, so only its shell steps move.
+                assert!(!repo.join(".github/crosgha.yml").exists());
+                for (line, reason) in [
+                    ("ghalint.yaml", "`excludes`"),
+                    (
+                        "ghalint.yml:34",
+                        "`ghalint run-action` without files checks every action file",
+                    ),
+                    ("ghalint.yml:33", "was kept"),
+                    ("ghalint.yml:39", "`-c` has no crosgha Action input"),
+                    (
+                        "ghalint.yml:40",
+                        "`ghalint exp` has no crosgha Action equivalent",
+                    ),
+                    (
+                        "ghalint.yml:41",
+                        "`GHALINT_CONFIG` has no crosgha Action input",
+                    ),
+                ] {
+                    assert!(
+                        stderr
+                            .lines()
+                            .any(|note| note.contains(line) && note.contains(reason)),
+                        "{line} {reason}: {stderr}"
+                    );
+                }
             }
             _ => {
                 // poutine's `skip` and `include` have no crosgha meaning; nothing is written.
