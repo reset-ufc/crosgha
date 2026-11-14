@@ -224,6 +224,11 @@ fn patch(
             .source()
             .to_owned(),
         Edit::Lines(rewrites) => rewrite_lines(current, &proposal.changed_route, rewrites)?,
+        Edit::Scalar(text) => {
+            let (start, end) = scalar_span(current, &proposal.changed_route)?;
+            let source = current.document.source();
+            format!("{}{text}{}", &source[..start], &source[end..])
+        }
     };
     if matches!(proposal.change, ChangeKind::Add)
         && let Some(moved) = after_trailing_whitespace(current.document.source(), &source)
@@ -340,15 +345,11 @@ fn rewrite_lines(
     route: &Route,
     rewrites: &[LineRewrite],
 ) -> Result<String, String> {
-    let document = &workflow.document;
-    let node = document
-        .query_exact(route)
-        .map_err(|error| error.to_string())?
-        .ok_or("missing original value")?;
-    let (start, end) = node.location.byte_span;
+    let (start, end) = scalar_span(workflow, route)?;
+    let source = workflow.document.source();
     let mut pending = rewrites.iter().peekable();
     let mut rewritten = String::with_capacity(end - start);
-    for line in document.extract(&node).split_inclusive('\n') {
+    for line in source[start..end].split_inclusive('\n') {
         let indent = line.len() - line.trim_start().len();
         let text_end = indent.max(line.trim_end().len());
         match pending.next_if(|rewrite| line[indent..text_end] == *rewrite.from) {
@@ -363,8 +364,17 @@ fn rewrite_lines(
     if pending.next().is_some() {
         return Err("a rewritten line is missing from the script".to_owned());
     }
-    let source = document.source();
     Ok(format!("{}{rewritten}{}", &source[..start], &source[end..]))
+}
+
+/// Byte range of the scalar at `route`, from its block header or quote to its last character.
+fn scalar_span(workflow: &Workflow, route: &Route) -> Result<(usize, usize), String> {
+    let node = workflow
+        .document
+        .query_exact(route)
+        .map_err(|error| error.to_string())?
+        .ok_or("missing original value")?;
+    Ok(node.location.byte_span)
 }
 
 /// yamlpatch adds block lines right after the last value, before that line's trailing spaces,

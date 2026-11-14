@@ -1,0 +1,63 @@
+name: Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions: {}
+jobs:
+  build:
+    # GitHub substitutes each `${{ }}` into one string, and a non-empty string is true.
+    if: ${{ github.event_name == 'push' || github.event.pull_request.draft == false }} # expect: unsafe-if-condition
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: changes
+        run: echo "lines=$(git diff --stat HEAD~1 | wc -l)" >> "${GITHUB_OUTPUT}"
+      - if: ${{ steps.changes.outputs.lines == '0' }} # expect: unsafe-if-condition
+        run: echo "nothing changed"
+      - if: ${{ github.event.pull_request.additions > 10 && github.event.pull_request.draft }} # expect: unsafe-if-condition
+        run: echo "large draft"
+      # `&&` binds tighter than the `||` inside the first segment, so that segment is grouped.
+      - if: ${{ (github.ref_type == 'tag' || github.ref == 'refs/heads/main') && !github.event.repository.fork }} # expect: unsafe-if-condition
+        run: echo "publish"
+      - if: ${{ (github.event_name == 'push' || github.event_name == 'release') && github.ref_type == 'tag' }} # expect: unsafe-if-condition
+        run: echo "tagged"
+      - if: ${{ github.run_attempt > 1 && (github.event_name == 'push') != false }} # expect: unsafe-if-condition
+        run: echo "retry"
+      # A block scalar keeps its last line break, which ends up after `}}`.
+      - if: |- # expect: unsafe-if-condition
+          ${{ github.event_name == 'push' }}
+        run: echo "block"
+      - if: |- # expect: unsafe-if-condition
+          ${{ github.event_name == 'push' &&
+              github.ref == 'refs/heads/main' }}
+
+        run: echo "kept"
+      - if: >- # expect: unsafe-if-condition
+          ${{ github.event_name == 'push' &&
+          startsWith(github.ref, 'refs/tags/') }}
+        run: echo "folded"
+      - if: # expect: unsafe-if-condition
+          ${{ github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' }}
+        run: echo "plain over two lines"
+      - if: '${{ github.ref == ''refs/heads/main'' }}' # expect: unsafe-if-condition
+        run: echo "single-quoted"
+      - if: "${{ !cancelled() }}" # expect: unsafe-if-condition
+        run: echo "double-quoted"
+      - {if: '${{ github.event_name == ''push'' }}', run: echo "flow"} # expect: unsafe-if-condition
+      # `}}` and `${{` inside a string literal neither end nor start a segment.
+      - if: ${{ contains(github.event.head_commit.message, '}} ${{') && github.event_name == 'push' }} # expect: unsafe-if-condition
+        run: echo "literal braces"
+      # One expression already.
+      - if: ${{ github.event_name == 'push' }}
+        run: echo "single"
+      - if: >-
+          ${{ github.event_name == 'push' &&
+              github.ref == 'refs/heads/main' }}
+        run: echo "stripped"
+      - if: ${{ contains(github.event.head_commit.message, '${{') }}
+        run: echo "literal"
+      - if: "${{ github.event_name == 'push' }}"
+        run: echo "quoted"

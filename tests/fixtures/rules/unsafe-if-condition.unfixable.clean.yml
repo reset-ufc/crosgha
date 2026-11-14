@@ -1,0 +1,20 @@
+name: Conditions
+on: [pull_request]
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: echo a
+      - if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+        run: echo c
+      - if: ${{ github.actor != 'dependabot[bot]' }}
+        run: echo e
+      - if: ${{ always() && github.event_name == 'push' }}
+        run: echo s
+      - if: &push ${{ github.event_name == 'push' }}
+        run: echo z
+      - if: *push
+        run: echo z2

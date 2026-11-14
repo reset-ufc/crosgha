@@ -7,8 +7,9 @@ preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSco
 - **Rules:** 48 cover every tag of the curated taxonomy: 39 per workflow, 4 per repository, and 5 that query the
   GitHub API.
 - **Fixes:** only `persist-credentials`, `removed-feature` (setup-java distributions), `deprecated-command`
-  (workflow commands to environment files), and `embedded-script-lint` (quotes and braces environment file paths,
-  appends instead of overwriting) have verified fixes so far. `persist-credentials` stays unfixed when `true` is
+  (workflow commands to environment files), `embedded-script-lint` (quotes and braces environment file paths,
+  appends instead of overwriting), and `unsafe-if-condition` (a condition mixing `${{ }}` with text becomes one
+  `${{ }}`) have verified fixes so far. `persist-credentials` stays unfixed when `true` is
   explicit, a later step pushes with the token, or checkout predates v2. `deprecated-command` rewrites only whole
   `echo` lines in bash or sh steps, and `embedded-script-lint` only `>`/`>>` redirects whose target is an
   environment file (docs/fixes.md lists what each leaves).

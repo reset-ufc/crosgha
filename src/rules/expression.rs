@@ -18,6 +18,25 @@ pub fn spans(text: &str) -> Vec<(usize, usize)> {
     found
 }
 
+/// Whether `text` is one `${{ ... }}` and nothing else, the only form GitHub evaluates as a
+/// condition once `${{` appears in it. Any other text makes the value a string.
+pub fn single(text: &str) -> bool {
+    spans(text) == [(0, text.len())]
+}
+
+/// `text` with each `${{ ... }}` replaced by its body.
+pub fn strip_delimiters(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut from = 0;
+    for (start, end) in spans(text) {
+        out.push_str(&text[from..start]);
+        out.push_str(&text[start + 3..end - 2]);
+        from = end;
+    }
+    out.push_str(&text[from..]);
+    out
+}
+
 /// The bodies of every `${{ ... }}` expression in `text`.
 pub fn expressions(text: &str) -> Vec<&str> {
     spans(text)
@@ -412,4 +431,226 @@ pub fn enclosing_call(text: &str, at: usize) -> Option<(&str, &str)> {
         .rfind(|char: char| !(char.is_ascii_alphanumeric() || char == '_'))
         .map_or(0, |index| index + 1);
     Some((&head[name_start..], &text[name_start..=close]))
+}
+
+/// A call to a status check function in a condition.
+pub struct StatusCheck {
+    pub name: &'static str,
+    /// Preceded by `!`.
+    pub negated: bool,
+}
+
+/// Status check function calls in `condition`, inside `${{ }}` or not, outside string literals:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions
+/// The runner looks function names up ignoring case (`WellKnownFunctions` in actions/runner
+/// `src/Sdk/DTExpressions2/Expressions2/ExpressionConstants.cs`, same commit as `Binding`).
+pub fn status_checks(condition: &str) -> Vec<StatusCheck> {
+    const NAMES: [&str; 4] = ["always", "success", "failure", "cancelled"];
+    let text = strip_delimiters(condition).to_ascii_lowercase();
+    let mut found = Vec::new();
+    // `''` escapes a quote inside a literal; it reads as closing and reopening one.
+    for outside in text.split('\'').step_by(2) {
+        for name in NAMES {
+            for (start, _) in outside.match_indices(name) {
+                let before = &outside[..start];
+                let preceded = before
+                    .bytes()
+                    .next_back()
+                    .is_some_and(|byte| is_context_char(byte) || byte == b'.');
+                let call = outside[start + name.len()..]
+                    .trim_start()
+                    .strip_prefix('(')
+                    .and_then(|arguments| arguments.trim_start().strip_prefix(')'));
+                if let (false, Some(after)) = (preceded, call) {
+                    found.push(StatusCheck {
+                        name,
+                        negated: negated(before, after),
+                    });
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Whether a `!` negates a call that `before` and `after` surround, also through parentheses that
+/// hold only the call, as in `!(cancelled())`. A `!` before a group that holds more, as in
+/// `!(cancelled() || x)`, negates the group: the call itself may still decide in the positive.
+fn negated(mut before: &str, mut after: &str) -> bool {
+    loop {
+        before = before.trim_end();
+        after = after.trim_start();
+        match (before.strip_suffix('('), after.strip_prefix(')')) {
+            (Some(outer_before), Some(outer_after)) => {
+                before = outer_before;
+                after = outer_after;
+            }
+            _ => return before.ends_with('!'),
+        }
+    }
+}
+
+/// How tightly a binary operator binds, loosest first. The runner ranks `<`, `>` above `==`,
+/// `!=`; one rank for both only adds parentheses (`Precedence` in actions/runner
+/// `src/Sdk/DTExpressions2/Expressions2/Tokens/Token.cs` at
+/// 8cfa1049f86781d141056082d73802d56cd2b433).
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+enum Binding {
+    Or,
+    And,
+    Comparison,
+}
+
+/// A token of a condition whose `${{ }}` segments each count as one operand.
+enum Token {
+    Operand,
+    Segment,
+    Not,
+    Open,
+    Close,
+    Operator(Binding),
+}
+
+/// `text`, a condition that mixes `${{ }}` with other text, as one expression in a single
+/// `${{ }}`: each segment's body takes the place of the segment, in parentheses when an operator
+/// next to it binds tighter than the body's own. `None` unless the text outside the segments holds
+/// only operators, parentheses, literals, and whitespace that join the segments into one
+/// expression: a context or function outside `${{ }}` was never evaluated, so nothing says it
+/// exists. Whitespace around the condition stays outside the new `${{ }}`.
+pub fn merge_segments(text: &str) -> Option<String> {
+    let spans = spans(text);
+    let &(_, last) = spans.last()?;
+    if text[last..].contains("${{") {
+        return None;
+    }
+    let mut tokens = Vec::new();
+    let mut segments = Vec::new();
+    let mut from = 0;
+    for &(start, end) in &spans {
+        lex(&text[from..start], &mut tokens)?;
+        if text[start + 3..end - 2].trim().is_empty() {
+            return None;
+        }
+        segments.push(tokens.len());
+        tokens.push(Token::Segment);
+        from = end;
+    }
+    lex(&text[from..], &mut tokens)?;
+    let (mut operand, mut depth) = (true, 0_usize);
+    for token in &tokens {
+        match (operand, token) {
+            (true, Token::Not) => {}
+            (true, Token::Open) => depth += 1,
+            (true, Token::Operand | Token::Segment) => operand = false,
+            (false, Token::Operator(_)) => operand = true,
+            (false, Token::Close) => depth = depth.checked_sub(1)?,
+            _ => return None,
+        }
+    }
+    if operand || depth > 0 {
+        return None;
+    }
+
+    let mut joined = String::with_capacity(text.len());
+    let mut from = 0;
+    for (&(start, end), &at) in spans.iter().zip(&segments) {
+        joined.push_str(&text[from..start]);
+        let body = text[start + 3..end - 2].trim();
+        let before = at.checked_sub(1).map(|index| &tokens[index]);
+        if needs_group(body, before, tokens.get(at + 1)) {
+            joined.push('(');
+            joined.push_str(body);
+            joined.push(')');
+        } else {
+            joined.push_str(body);
+        }
+        from = end;
+    }
+    joined.push_str(&text[from..]);
+    let core = joined.trim();
+    let lead = joined.len() - joined.trim_start().len();
+    Some(format!(
+        "{}${{{{ {core} }}}}{}",
+        &joined[..lead],
+        &joined[lead + core.len()..]
+    ))
+}
+
+/// Appends the tokens of `text`, text outside `${{ }}`, or returns `None` at anything but an
+/// operator, a parenthesis, or a literal.
+fn lex(text: &str, tokens: &mut Vec<Token>) -> Option<()> {
+    let mut rest = text.trim_start();
+    while let Some(first) = rest.chars().next() {
+        let (token, length) = match first {
+            '(' => (Token::Open, 1),
+            ')' => (Token::Close, 1),
+            '\'' => (Token::Operand, string_length(rest)?),
+            _ if rest.starts_with("||") => (Token::Operator(Binding::Or), 2),
+            _ if rest.starts_with("&&") => (Token::Operator(Binding::And), 2),
+            _ if ["==", "!=", "<=", ">="]
+                .iter()
+                .any(|operator| rest.starts_with(operator)) =>
+            {
+                (Token::Operator(Binding::Comparison), 2)
+            }
+            '<' | '>' => (Token::Operator(Binding::Comparison), 1),
+            '!' => (Token::Not, 1),
+            _ => (Token::Operand, keyword_length(rest)?),
+        };
+        tokens.push(token);
+        rest = rest[length..].trim_start();
+    }
+    Some(())
+}
+
+/// Length of the string literal `text` starts with, where `''` is an escaped quote.
+fn string_length(text: &str) -> Option<usize> {
+    let mut index = 1;
+    loop {
+        index += text[index..].find('\'')? + 1;
+        if !text[index..].starts_with('\'') {
+            return Some(index);
+        }
+        index += 1;
+    }
+}
+
+/// Length of the number (`10`, `-1.5`) or keyword literal `text` starts with. The runner reads
+/// keywords case-sensitively (`LexicalAnalyzer.cs`, same commit as `Binding`).
+fn keyword_length(text: &str) -> Option<usize> {
+    let length = text
+        .find(|char: char| !(char.is_ascii_alphanumeric() || "_-.".contains(char)))
+        .unwrap_or(text.len());
+    let word = &text[..length];
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    let unsigned = word.strip_prefix('-').unwrap_or(word);
+    let number = match unsigned.split_once('.') {
+        Some((whole, fraction)) => digits(whole) && digits(fraction),
+        None => digits(unsigned),
+    };
+    let keyword = ["true", "false", "null", "NaN", "Infinity"].contains(&word);
+    (number || keyword).then_some(length)
+}
+
+/// Whether `body`, a segment's expression, needs parentheses once `before` and `after` stand next
+/// to it: a `!` before it, or an operator that binds tighter than the loosest one at its top
+/// level. Chained comparisons are grouped too, since they do not associate like `&&` and `||`.
+fn needs_group(body: &str, before: Option<&Token>, after: Option<&Token>) -> bool {
+    let splits = |operator: &str| split_outside_groups(body, operator).len() > 1;
+    let loosest = if splits("||") {
+        Binding::Or
+    } else if splits("&&") {
+        Binding::And
+    } else if ["==", "!=", "<", ">"].into_iter().any(splits) {
+        Binding::Comparison
+    } else {
+        return false;
+    };
+    let tighter = |token: Option<&Token>| match token {
+        Some(Token::Operator(binding)) => {
+            *binding > loosest || (*binding == loosest && loosest == Binding::Comparison)
+        }
+        _ => false,
+    };
+    matches!(before, Some(Token::Not)) || tighter(before) || tighter(after)
 }

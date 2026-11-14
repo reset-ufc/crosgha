@@ -103,9 +103,12 @@ pub const COMPLEXITY: Rule = Rule {
 };
 
 // zizmor `anonymous-definition` and Khatami et al. (SCAM 2024), KZ-16 "Name run steps".
+// Conditions follow ghlint at 74115a437cfa161c2fd2d72fc2ebcd83ac514b80: the bare branch of
+// `DoubleCurlyIf` (DoubleCurlyIfRule.kt) and `NeverUseAlways` and `NegativeStatusCheck`
+// (ImplicitStatusCheckRule.kt). GitHub documents all three as valid, so they stay at `auditor`.
 pub const READABILITY: Rule = Rule {
     id: "readability",
-    summary: "Workflows and run steps should have names.",
+    summary: "Workflows and run steps should have names, and conditions should state their intent.",
     tag: "readability",
     severity: Severity::Note,
     persona: Persona::Auditor,
@@ -113,6 +116,9 @@ pub const READABILITY: Rule = Rule {
         ("zizmor", "anonymous-definition"),
         ("ghlint", "MissingWorkflowName"),
         ("ghlint", "MissingStepName"),
+        ("ghlint", "DoubleCurlyIf"),
+        ("ghlint", "NeverUseAlways"),
+        ("ghlint", "NegativeStatusCheck"),
     ],
     configurable: false,
     relational: false,
@@ -608,5 +614,60 @@ pub fn readability(workflow: &Workflow) -> Result<Vec<Finding>, String> {
             }
         }
     }
+    for condition in common::conditions(workflow) {
+        for (message, concepts) in unclear_condition(condition.value) {
+            let mut finding = common::finding(
+                workflow,
+                &READABILITY,
+                condition.route.clone(),
+                condition.location.clone(),
+                message,
+            )?;
+            finding.concepts = concepts;
+            findings.push(finding);
+        }
+    }
     Ok(findings)
+}
+
+/// What hides the intent of an `if`, with the ghlint concept of each.
+fn unclear_condition(condition: &Value) -> Vec<(String, &'static [&'static str])> {
+    let mut problems: Vec<(String, &'static [&'static str])> = Vec::new();
+    let text = match condition {
+        Value::String(text) => text,
+        // `if: !cancelled()` and `if: ! cancelled()` start a YAML tag, which takes the `!`.
+        Value::Tagged(_) => {
+            problems.push((
+                "YAML reads the leading `!` as a tag; wrap the condition in `${{ }}`".to_owned(),
+                &["DoubleCurlyIf"],
+            ));
+            return problems;
+        }
+        _ => return problems,
+    };
+    // A bare condition becomes a string as soon as someone adds `${{ }}` around one part.
+    if !text.contains("${{") && !text.trim().is_empty() {
+        problems.push((
+            "condition is not wrapped in `${{ }}`".to_owned(),
+            &["DoubleCurlyIf"],
+        ));
+    }
+    let checks = expression::status_checks(text);
+    if checks.iter().any(|check| check.name == "always") {
+        problems.push((
+            "`always()` also runs after the run is cancelled; `success() || failure()` does not"
+                .to_owned(),
+            &["NeverUseAlways"],
+        ));
+    }
+    if let Some(check) = checks.iter().find(|check| check.negated) {
+        problems.push((
+            format!(
+                "`!{}()` names the statuses that skip the work; name the ones that run it, such as `success() || failure()`",
+                check.name
+            ),
+            &["NegativeStatusCheck"],
+        ));
+    }
+    problems
 }

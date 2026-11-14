@@ -10,7 +10,7 @@ A fix that fails a check is skipped: its finding stays in the report with the re
 JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
 workflow is never rewritten; its fixes are reported as not written.
 
-Four rules have fixes:
+Five rules have fixes:
 
 - `persist-credentials` adds `persist-credentials: false`. It leaves the finding unfixed, with the reason in its
   message, when `true` is explicit, when a later step of the job pushes with the persisted token (`git push` or
@@ -108,6 +108,40 @@ Four rules have fixes:
     and every case of the quoting fix's list that hides the script.
 
   The rule reports only bash and sh steps, so other shells never get either fix.
+
+- `unsafe-if-condition` rewrites a condition that mixes `${{ }}` with other text into one expression in a single
+  `${{ }}`, the only form GitHub
+  [evaluates](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions) once `${{` appears in
+  an `if`:
+
+  | Before | After |
+  |---|---|
+  | `${{ github.event_name == 'push' }} && ${{ github.ref == 'refs/heads/main' }}` | `${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}` |
+  | `${{ steps.size.outputs.lines }} == '0'` | `${{ steps.size.outputs.lines == '0' }}` |
+  | `${{ a == 'x' \|\| b == 'y' }} && ${{ !c }}` | `${{ (a == 'x' \|\| b == 'y') && !c }}` |
+  | `"!${{ cancelled() }}"` | `"${{ !cancelled() }}"` |
+  | `\|` or `>` block holding `${{ ... }}` | `\|-` or `>-` with the same lines |
+
+  This changes when the job or step runs, and that is the point. The mixed condition was a non-empty string, so it
+  was always true; now it is the expression its operators spell out. A segment goes in parentheses when the operator
+  next to it binds tighter than its own (`Precedence` in actions/runner's
+  [`Token.cs`](https://github.com/actions/runner/blob/8cfa1049f86781d141056082d73802d56cd2b433/src/Sdk/DTExpressions2/Expressions2/Tokens/Token.cs)),
+  so `&&` and `||` keep the grouping each `${{ }}` gave them. A block scalar gets the strip indicator, since the line
+  break YAML keeps at its end would be text after `}}`; its lines and header comment stay. A quoted scalar keeps its
+  quote style. The output is one wrapped expression, the form the `readability` check for bare conditions asks for,
+  so the fix never adds a finding there. It stays unfixed when:
+
+  - the text outside `${{ }}` holds anything but operators, parentheses, literals (`'text'`, numbers, `true`,
+    `false`, `null`, `NaN`, `Infinity`), and whitespace: a context such as `github.ref`, a function such as `always()`, or prose. That
+    text was never evaluated, so nothing says it is a valid expression;
+  - the segments and that text do not form one expression: two segments with no operator between them, an empty
+    `${{ }}`, or a `${{` without its `}}`;
+  - the scalar is quoted over several lines, its block header has an indentation indicator (`|2`), or it carries
+    an anchor or a tag, or is an alias, whose rewrite would change every alias;
+  - the rewrite would be a new finding: a bot check such as `${{ github.actor }} == 'dependabot[bot]'` is spoofable
+    once it is evaluated, so the fix leaves that choice to the author.
+
+  Constant conditions (`if: true`) and bot checks are never fixed.
 
 Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger filter needs project
 context.

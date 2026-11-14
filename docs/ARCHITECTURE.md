@@ -8,7 +8,7 @@ The hook and the Action both run the CLI binary; neither contains a second detec
 | CLI pipeline | Runnable: personas, `fail-on`, zizmor-compatible flags, and `migrate`. |
 | Rule modules | 48 rules covering every taxonomy tag: 39 per workflow, 4 per repository, 5 online. |
 | Config and ignores | `crosgha.yml` or `zizmor.yml` (disable, ignore, remap, and per-rule options), and inline `crosgha:` or `zizmor:` ignore comments. |
-| Fix validation | Runnable for add and replace proposals; `persist-credentials` proposes adds, `removed-feature` replacements, and `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script. |
+| Fix validation | Runnable for add and replace proposals; `persist-credentials` proposes adds, `removed-feature` replacements, `deprecated-command` and `embedded-script-lint` line rewrites inside a `run` script, and `unsafe-if-condition` the new source of an `if` scalar. |
 | Reports | Text, versioned JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), and brief agent lines from the same findings; `--sarif-file` adds SARIF to any format. |
 | Composite Action | Report mode works: zizmor-action's inputs, a sha256-verified release binary, SARIF upload, job summary, then `fail-on`. |
 | PR and auto-merge | Mode contract and guards exist; repository operations are pending. |
@@ -79,9 +79,9 @@ Checks that state github.com facts (retired hosted-runner images and service shu
 skipped when `--gh-hostname` names another host.
 
 A finding can have no fix when the change is not safe to choose automatically. A fix proposal
-supplies a `yamlpatch` operation or whole-line rewrites of a scalar, the route it may change, and
-whether it adds or replaces that node. Line rewrites keep a block scalar's indentation and header
-comment, which yamlpatch's `Replace` does not. The shared fix module applies and validates proposals, one at a
+supplies a `yamlpatch` operation, whole-line rewrites of a scalar, or a scalar's new source, the
+route it may change, and whether it adds or replaces that node. Line rewrites and new scalar source
+keep a block scalar's indentation and header comment, which yamlpatch's `Replace` does not. The shared fix module applies and validates proposals, one at a
 time, each taken from the findings of the source it patches: an earlier fix may have rewritten the lines a
 later proposal names, as when one step gets a finding per ghlint concept. Detection-only rules leave source
 unchanged under `--fix` and remain visible in the report.
