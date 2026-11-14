@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use yaml_serde::Value;
 use yamlpath::Route;
@@ -24,17 +25,22 @@ pub const SCHEMA: Rule = Rule {
     relational: false,
 };
 
-// ShellCheck SC2086 (unquoted expansion), limited to GitHub's environment file variables:
+// ShellCheck SC2086 (unquoted expansion) and SC2250 (braces), limited to GitHub's environment file
+// variables, and `>` writes that truncate them, after ghlint's `SafeEnvironmentFileRedirect` and
+// `EnvironmentFileOverwritten` at commit 74115a4:
 // https://www.shellcheck.net/wiki/SC2086
+// https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/SafeEnvironmentFileRedirectRule.kt
+// https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/EnvironmentFileOverwriteRule.kt
 pub const SCRIPT_LINT: Rule = Rule {
     id: "embedded-script-lint",
-    summary: "Environment file paths must be quoted in shell scripts.",
+    summary: "Shell scripts must quote, brace, and append to environment file paths.",
     tag: "embedded-script-lint",
     severity: Severity::Note,
     persona: Persona::Pedantic,
     equivalents: &[
         ("actionlint", "shellcheck"),
         ("ghlint", "SafeEnvironmentFileRedirect"),
+        ("ghlint", "EnvironmentFileOverwritten"),
     ],
     configurable: false,
     relational: false,
@@ -550,6 +556,8 @@ fn references_secrets(condition: &str) -> bool {
     })
 }
 
+/// Environment files that `run` scripts write to:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#environment-files
 const ENV_FILES: &[&str] = &[
     "GITHUB_ENV",
     "GITHUB_OUTPUT",
@@ -558,21 +566,59 @@ const ENV_FILES: &[&str] = &[
     "GITHUB_STEP_SUMMARY",
 ];
 
+/// GitHub documents `>` as the way to clear a step's summary, so an overwrite there may be meant:
+/// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#overwriting-job-summaries
+const CLEARABLE: &str = "GITHUB_STEP_SUMMARY";
+
 pub fn script_lint(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for job in common::jobs(workflow) {
         for step in common::steps(&job) {
             let Some(script) = step.run() else { continue };
-            if shell::runs_posix(workflow, &job, &step) && script.lines().any(unquoted_env_file) {
+            if !shell::runs_posix(workflow, &job, &step) {
+                continue;
+            }
+            let lines: Vec<&str> = script.lines().collect();
+            let message = if lines.iter().any(|line| unquoted_env_file(line)) {
+                Some("quote environment file paths to prevent word splitting (SC2086)")
+            } else if lines.iter().any(|line| unbraced_write(line)) {
+                Some("brace environment file paths, as in `\"${GITHUB_OUTPUT}\"` (SC2250)")
+            } else {
+                None
+            };
+            if let Some(message) = message {
                 let mut finding = common::finding(
                     workflow,
                     &SCRIPT_LINT,
                     step.key("run"),
                     step.location.clone(),
-                    "quote environment file paths to prevent word splitting (SC2086)",
+                    message,
                 )?;
                 finding.concepts = &["SafeEnvironmentFileRedirect"];
                 finding.fix = quote_env_files(workflow, &step, script);
+                findings.push(finding);
+            }
+            let mut overwritten: Vec<&str> = Vec::new();
+            for line in &lines {
+                for write in writes(line) {
+                    if write.overwrite && !overwritten.contains(&write.name) {
+                        overwritten.push(write.name);
+                    }
+                }
+            }
+            if !overwritten.is_empty() {
+                let mut finding = common::finding(
+                    workflow,
+                    &SCRIPT_LINT,
+                    step.key("run"),
+                    step.location.clone(),
+                    format!(
+                        "`>` overwrites environment file `{}`; append with `>>`",
+                        overwritten.join("`, `")
+                    ),
+                )?;
+                finding.concepts = &["EnvironmentFileOverwritten"];
+                finding.fix = append_env_files(workflow, &step, script);
                 findings.push(finding);
             }
         }
@@ -597,38 +643,155 @@ fn unquoted_env_file(line: &str) -> bool {
     })
 }
 
+/// A redirect to an environment file on one line, read loosely as ghlint's regexes read it.
+struct EnvFileWrite {
+    name: &'static str,
+    /// `>` rather than `>>`.
+    overwrite: bool,
+    quoted: bool,
+    braced: bool,
+}
+
+/// The writes on `line`: `>` or `>>` outside double quotes, blanks, then `$NAME`, `${NAME}`,
+/// `"$NAME"`, or `"${NAME}"` as a whole word. Like ghlint, this counts `2>`, `&>`, and `<>`, and
+/// not `>|`; unlike ghlint, it also reads `GITHUB_STATE` and skips targets such as `$NAME.bak`.
+fn writes(line: &str) -> Vec<EnvFileWrite> {
+    let mut found = Vec::new();
+    for (index, _) in line.match_indices('>') {
+        let before = &line[..index];
+        if before.ends_with('>') || !before.matches('"').count().is_multiple_of(2) {
+            continue;
+        }
+        let after = &line[index + 1..];
+        let append = after.starts_with('>');
+        let target = after[usize::from(append)..].trim_start_matches([' ', '\t']);
+        let quoted = target.starts_with('"');
+        let Some(expansion) = target[usize::from(quoted)..].strip_prefix('$') else {
+            continue;
+        };
+        let braced = expansion.starts_with('{');
+        let expansion = &expansion[usize::from(braced)..];
+        let found_name = ENV_FILES.iter().find_map(|name| {
+            let rest = expansion.strip_prefix(name)?;
+            let rest = match braced {
+                true => rest.strip_prefix('}')?,
+                false => rest,
+            };
+            let rest = match quoted {
+                true => rest.strip_prefix('"')?,
+                false => rest,
+            };
+            let word_end = rest
+                .chars()
+                .next()
+                .is_none_or(|next| " \t;&|)<>".contains(next));
+            word_end.then_some(*name)
+        });
+        if let Some(name) = found_name {
+            found.push(EnvFileWrite {
+                name,
+                overwrite: !append,
+                quoted,
+                braced,
+            });
+        }
+    }
+    found
+}
+
+/// Whether `line` redirects to a quoted environment file path without braces, which ghlint's
+/// `SafeEnvironmentFileRedirect` reports after ShellCheck SC2250:
+/// https://www.shellcheck.net/wiki/SC2250
+fn unbraced_write(line: &str) -> bool {
+    writes(line)
+        .iter()
+        .any(|write| write.quoted && !write.braced)
+}
+
+/// The environment file a redirect target such as `"${GITHUB_OUTPUT}"` names.
+fn target_name(word: &str) -> &str {
+    word.trim_matches(['"', '$', '{', '}'])
+}
+
 /// Quotes and braces each environment file path that `script` redirects to, so
-/// `>> $GITHUB_OUTPUT` becomes `>> "${GITHUB_OUTPUT}"`, the form ghlint's
+/// `>> $GITHUB_OUTPUT` and `>> "$GITHUB_OUTPUT"` become `>> "${GITHUB_OUTPUT}"`, the form ghlint's
 /// `SafeEnvironmentFileRedirect` asks for. `None` when the rule would still report a path that is
 /// not a redirect target (a command argument, a `for` list, a pattern, text in quotes), or when
 /// the YAML scalar is not the script as written.
 fn quote_env_files(workflow: &Workflow, step: &common::Step, script: &str) -> Option<ProposedFix> {
-    use std::fmt::Write as _;
-
     if !shell::verbatim(workflow, step, script) {
         return None;
     }
-    let expansions = shell::redirect_targets(script, ENV_FILES)?;
-    let mut quoted = String::with_capacity(script.len() + 4 * expansions.len());
-    let mut copied = 0;
-    for expansion in &expansions {
-        let name = script[expansion.clone()].trim_matches(['$', '{', '}']);
-        let _ = write!(
-            quoted,
-            "{}\"${{{name}}}\"",
-            &script[copied..expansion.start]
-        );
-        copied = expansion.end;
+    let mut replacements = Vec::new();
+    for redirect in shell::redirects(script, ENV_FILES)? {
+        let word = &script[redirect.target.clone()];
+        let canonical = format!("\"${{{}}}\"", target_name(word));
+        if word != canonical {
+            replacements.push((redirect.target, canonical));
+        }
     }
-    quoted.push_str(&script[copied..]);
-    if expansions.is_empty() || quoted.lines().any(unquoted_env_file) {
+    let quoted = replace(script, &replacements);
+    let reported = quoted
+        .lines()
+        .any(|line| unquoted_env_file(line) || unbraced_write(line));
+    if replacements.is_empty() || reported {
         return None;
     }
-    // `Edit::Lines` rewrites the next line with the same text, so an unchanged copy of a changed
-    // line would take its rewrite.
+    line_rewrites(step, script, &quoted)
+}
+
+/// Turns each `>` that truncates an environment file into `>>`. The runner gives every step empty
+/// environment files, so the scripts differ only once the step has written to the file before:
+/// a loop, an earlier line, or a program it ran. Those writes were lost and now reach the runner,
+/// which is what `>>` is for. `None` when the rule would still report an overwrite: one of the
+/// step summary, which `>` may clear on purpose; `&>`, which sh reads as `&` and `>`; `<>`; or a
+/// `>` the reader does not take for a redirect. A script with `[[` or `$[` is left alone, because
+/// a `>` there compares and the reader does not track them.
+// Per-step files: https://github.com/actions/runner/blob/8cfa1049f86781d141056082d73802d56cd2b433/src/Runner.Worker/FileCommandManager.cs
+fn append_env_files(workflow: &Workflow, step: &common::Step, script: &str) -> Option<ProposedFix> {
+    if !shell::verbatim(workflow, step, script) || script.contains("[[") || script.contains("$[") {
+        return None;
+    }
+    let mut replacements = Vec::new();
+    for redirect in shell::redirects(script, ENV_FILES)? {
+        let before = script[..redirect.operator.start].bytes().next_back();
+        if &script[redirect.operator.clone()] == ">"
+            && !matches!(before, Some(b'<' | b'&'))
+            && target_name(&script[redirect.target]) != CLEARABLE
+        {
+            replacements.push((redirect.operator, ">>".to_owned()));
+        }
+    }
+    let appended = replace(script, &replacements);
+    let reported = appended
+        .lines()
+        .any(|line| writes(line).iter().any(|write| write.overwrite));
+    if replacements.is_empty() || reported {
+        return None;
+    }
+    line_rewrites(step, script, &appended)
+}
+
+/// `script` with each range replaced by its text; the ranges are in order and do not overlap.
+fn replace(script: &str, replacements: &[(Range<usize>, String)]) -> String {
+    let mut replaced = String::with_capacity(script.len() + 4 * replacements.len());
+    let mut copied = 0;
+    for (range, text) in replacements {
+        replaced.push_str(&script[copied..range.start]);
+        replaced.push_str(text);
+        copied = range.end;
+    }
+    replaced.push_str(&script[copied..]);
+    replaced
+}
+
+/// The rewrite of the step's `run` scalar from `script` to `rewritten`, line by line. `None` when
+/// an unchanged line has the text of a changed one, because `Edit::Lines` rewrites the next line
+/// with that text.
+fn line_rewrites(step: &common::Step, script: &str, rewritten: &str) -> Option<ProposedFix> {
     let mut rewrites = Vec::new();
     let mut unchanged = Vec::new();
-    for (before, after) in script.split('\n').zip(quoted.split('\n')) {
+    for (before, after) in script.split('\n').zip(rewritten.split('\n')) {
         match before == after {
             true => unchanged.push(before.trim()),
             false => rewrites.push(LineRewrite {

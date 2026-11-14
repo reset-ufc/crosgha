@@ -49,7 +49,7 @@ jobs:
       # A comparison, `!`, or boolean function returns only true or false, so no text reaches the script.
       - run: |
           if [ "${{ startsWith(github.event.comment.body, '/deploy') }}" = "true" ]; then echo deploy; fi
-      - run: echo "is-bug=${{ contains(github.event.issue.labels.*.name, 'bug') }}" >> "$GITHUB_OUTPUT"
+      - run: echo "is-bug=${{ contains(github.event.issue.labels.*.name, 'bug') }}" >> "${GITHUB_OUTPUT}"
       - run: echo "${{ endsWith(github.event.issue.title, '!') }}"
       - run: echo "${{ github.event.issue.body == '' }}"
       - run: echo "${{ github.event.issue.title != 'a && b' }}"

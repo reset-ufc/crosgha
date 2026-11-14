@@ -46,7 +46,7 @@ pub struct Rule {
 }
 
 /// Equivalent IDs that cover only one branch of their rule even when their tool lists no second ID.
-const PARTIAL_EQUIVALENTS: &[&str] = &["DoubleCurlyIf", "SafeEnvironmentFileRedirect"];
+const PARTIAL_EQUIVALENTS: &[&str] = &["DoubleCurlyIf"];
 
 impl Rule {
     pub fn answers_to(&self, id: &str) -> bool {
