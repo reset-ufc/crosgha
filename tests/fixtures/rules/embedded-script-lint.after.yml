@@ -1,0 +1,68 @@
+name: Shell
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> "${GITHUB_ENV}" # expect: embedded-script-lint
+      - run: echo "b=2" >> "$GITHUB_OUTPUT"
+      - run: | # expect: embedded-script-lint
+          echo "## Summary" >> "${GITHUB_STEP_SUMMARY}"
+      - shell: pwsh
+        run: echo "c=3" >> $env:GITHUB_ENV
+      - shell: /usr/bin/bash -e {0}
+        run: echo "d=4" >> "${GITHUB_ENV}" # expect: embedded-script-lint
+      - shell: /bin/sh -eu {0}
+        run: echo "e=5" >> "${GITHUB_OUTPUT}" # expect: embedded-script-lint
+      - shell: /usr/bin/pwsh -command ". '{0}'"
+        run: echo "f=6" >> $env:GITHUB_ENV
+      - shell: /usr/bin/env bash -e {0}
+        run: echo "g=7" >> "${GITHUB_ENV}" # expect: embedded-script-lint
+      - shell: /usr/bin/env -S pwsh -File {0}
+        run: echo "h=8" >> $env:GITHUB_ENV
+      # Every unquoted path of a step is quoted, whatever reads or writes it, and the rest of
+      # the line keeps its bytes.
+      - run: | # expect: embedded-script-lint
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo 'name=a b' >>"${GITHUB_OUTPUT}" # one word
+          echo "a=1" > "${GITHUB_ENV}"; echo "b=2" >> "${GITHUB_ENV}"
+          if [ -f "${GITHUB_PATH}" ]; then
+            printf '%s\n' "$HOME/bin" >> "${GITHUB_PATH}"
+          fi
+          {
+            echo "x=$(( 1 + 2 ))"
+          } >> "${GITHUB_OUTPUT}"
+          cat "${GITHUB_ENV}"
+      # A heredoc body is data; the redirect on its first line is shell code.
+      - run: | # expect: embedded-script-lint
+          cat <<EOF >> "${GITHUB_STEP_SUMMARY}"
+          ## Build
+          Built $(git rev-parse --short HEAD) for ${{ github.ref_name }}.
+          EOF
+          cat <<'EOF' >> "${GITHUB_STEP_SUMMARY}"
+          Done: "$GITHUB_ENV" unchanged, 'it's' literal
+          EOF
+  # `run` defaults to pwsh on Windows runners, where `$GITHUB_ENV` word splitting does not apply:
+  # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> $GITHUB_ENV
+      - shell: bash
+        run: echo "a=1" >> "${GITHUB_ENV}" # expect: embedded-script-lint
+  self-hosted-windows:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> $GITHUB_ENV
+  both:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - run: echo "a=1" >> "${GITHUB_ENV}" # expect: embedded-script-lint

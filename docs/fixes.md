@@ -10,7 +10,7 @@ A fix that fails a check is skipped: its finding stays in the report with the re
 JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
 workflow is never rewritten; its fixes are reported as not written.
 
-Three rules have fixes:
+Four rules have fixes:
 
 - `persist-credentials` adds `persist-credentials: false`. It leaves the finding unfixed, with the reason in its
   message, when `true` is explicit, when a later step of the job pushes with the persisted token (`git push` or
@@ -53,6 +53,29 @@ Three rules have fixes:
   while the runner rejects the extra lines of an environment file. Use the
   [multiline syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#multiline-strings)
   for such values.
+- `embedded-script-lint` quotes and braces each environment file path that a `run` script expands unquoted, the
+  form ShellCheck's [SC2086](https://www.shellcheck.net/wiki/SC2086) and
+  [SC2250](https://www.shellcheck.net/wiki/SC2250) ask for:
+
+  | Before | After |
+  |---|---|
+  | `echo "x=1" >> $GITHUB_OUTPUT` | `echo "x=1" >> "${GITHUB_OUTPUT}"` |
+  | `echo "X=1" >${GITHUB_ENV}` | `echo "X=1" >"${GITHUB_ENV}"` |
+  | `cat $GITHUB_ENV` | `cat "${GITHUB_ENV}"` |
+
+  Only the path changes: `>` stays `>`, the rest of the line keeps its bytes, and every unquoted path of the
+  step is quoted, also inside `$( )`, `if` blocks, `{ }` groups, and on the first line of a heredoc. The shell
+  then reads the path as one word, as it did whenever the path held no spaces or glob characters. A step stays
+  unfixed when a path the rule reports is not one the shell expands unquoted, or when the reader cannot tell:
+
+  - the path is text: inside single quotes, escaped (`\$GITHUB_ENV`), in a comment, in a heredoc body, or in a
+    double-quoted string that spans lines;
+  - the path sits in backticks, or the script uses `$'...'` quoting, leaves a quote or `$(` open, or has a heredoc
+    without its delimiter line;
+  - the script is a folded (`>`) or quoted YAML scalar, which YAML rewrites before the shell sees it, or a plain
+    scalar in a flow mapping (`{run: ...}`), where the added braces would end the scalar.
+
+  The rule reports only bash and sh steps, so other shells never get the fix.
 
 Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger filter needs project
 context.

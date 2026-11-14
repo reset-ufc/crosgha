@@ -1,0 +1,30 @@
+name: Shell, unfixable
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: echo 'echo "a=1" >> "$GITHUB_ENV"' > setup.sh
+      - run: echo "\$GITHUB_OUTPUT"
+      - run: |
+          # Appends to the "$GITHUB_ENV" file
+          echo "a=1" >> "$GITHUB_ENV"
+      - run: |
+          cat <<EOF > notes.txt
+          Outputs go to "$GITHUB_OUTPUT"
+          EOF
+      - run: |
+          bash -c '
+          echo a=1 >> "$GITHUB_ENV"
+          '
+      - run: lines=$(wc -l < "$GITHUB_ENV")
+      - run: printf 'a=1\n' >> "$GITHUB_ENV"
+      - run: >
+          echo "a=1" >> "$GITHUB_ENV"
+      - run: "echo \"a=1\" >> \"$GITHUB_ENV\""
+      - {run: echo a=1 >> "$GITHUB_ENV"}
+      - run: |
+          echo "a=1" >> "$GITHUB_ENV"
+          echo 'b=1' >> "$GITHUB_ENV"

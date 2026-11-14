@@ -1,0 +1,36 @@
+name: Shell, unfixable
+on: [push]
+permissions: {}
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # The rule counts double quotes on the line, but the shell reads these paths as text:
+      # single quotes, an escaped `$`, a comment, a heredoc body, and a string spanning lines.
+      - run: echo 'echo "a=1" >> $GITHUB_ENV' > setup.sh # expect: embedded-script-lint
+      - run: echo \$GITHUB_OUTPUT # expect: embedded-script-lint
+      - run: | # expect: embedded-script-lint
+          # Appends to $GITHUB_ENV
+          echo "a=1" >> "$GITHUB_ENV"
+      - run: | # expect: embedded-script-lint
+          cat <<EOF > notes.txt
+          Outputs go to $GITHUB_OUTPUT
+          EOF
+      - run: | # expect: embedded-script-lint
+          bash -c "
+          echo a=1 >> $GITHUB_ENV
+          "
+      # Backticks and `$'...'` quoting are not followed.
+      - run: lines=`wc -l < $GITHUB_ENV` # expect: embedded-script-lint
+      - run: printf $'a=1\n' >> $GITHUB_ENV # expect: embedded-script-lint
+      # YAML folds `>` scalars and unescapes quoted ones, so the source is not the script.
+      - run: > # expect: embedded-script-lint
+          echo "a=1" >> $GITHUB_ENV
+      - run: "echo \"a=1\" >> $GITHUB_ENV" # expect: embedded-script-lint
+      # In a flow mapping, the braces of `${GITHUB_ENV}` would end the plain scalar.
+      - {run: echo a=1 >> $GITHUB_ENV} # expect: embedded-script-lint
+      # One path left as text leaves the whole step unfixed.
+      - run: | # expect: embedded-script-lint
+          echo "a=1" >> $GITHUB_ENV
+          echo 'b=$GITHUB_ENV' >> "$GITHUB_ENV"
