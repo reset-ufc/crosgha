@@ -26,7 +26,7 @@ preserving comments and formatting. `crosgha` stands for aCtions Repair Of miSco
   equivalent zizmor or actionlint rule.
 - **Output:** text, JSON, SARIF, GitHub annotations (the default under `GITHUB_ACTIONS=true`), or brief agent lines.
 - **Entry points:** the CLI, `crosgha hook install` (git pre-push hook), and the Action with a sha256-verified
-  release binary, in report mode or PR mode (`fix: pull-request`). Auto-merge is still pending (issue #73).
+  release binary, in report mode or PR mode (`fix: pull-request`, optionally with `dangerously-auto-merge`).
 
 This repo is published on its own. When it is checked out inside the research workspace, `CLAUDE.workspace.md` is a
 local-only symlink to the workspace guide, which covers the tool map, curated smell taxonomy, and reproduction harness.
