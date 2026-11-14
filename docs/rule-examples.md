@@ -248,6 +248,10 @@ jobs:
           sh -s -- --yes <<EOF
           curl -fsSL https://example.com/install.sh | sh
           EOF
+      - run: | # expect: unverified-remote-script
+          cat <<'EOF' | sudo bash -s -- --yes
+          curl -fsSL https://example.com/install.sh | sh
+          EOF
       - run: |
           cat <<'EOF' >> "${GITHUB_STEP_SUMMARY}"
           Install with: curl -fsSL https://example.com/install.sh | sh

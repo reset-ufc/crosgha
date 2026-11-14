@@ -20,7 +20,7 @@ pub struct Command<'a> {
 /// The simple commands of `script`, split on newlines, `;`, `|`, `&`, `(`, `)`, and backticks
 /// in shell code. Text in quotes is data that stays inside one word, while `$(...)` and backticks
 /// in double quotes still run commands, and a `case` pattern's `)` does not close a `$(`. A
-/// heredoc body read by a shell (`bash <<EOF`) is commands; any other body is data, whose
+/// heredoc body read by a shell (`bash <<EOF`, `cat <<EOF | bash`) is commands; any other body is data, whose
 /// blank-separated words end the command that reads it, so text it prints is still seen. Quotes
 /// around a word are dropped, a `${{ }}` expression stays inside one word, a `\` line
 /// continuation is a space, and a `#` that starts a word in shell code ends the line.
@@ -31,8 +31,8 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
         piped: false,
     }];
     let mut nesting = vec![Nesting::Code { open: 0, from: 0 }];
-    // Each pending heredoc, and whether its reader runs it as a script.
-    let mut heredocs: Vec<(Heredoc, bool)> = Vec::new();
+    // Each pending heredoc, and the index of the command that reads it.
+    let mut heredocs: Vec<(Heredoc, usize)> = Vec::new();
     let mut start = None;
     let mut index = 0;
     while index < bytes.len() {
@@ -105,8 +105,7 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
             }
             [b'<', b'<', ..] if let Some((heredoc, end)) = heredoc(script, index + 2) => {
                 end_word(&mut commands, script, &mut start, index);
-                let runs = reads_script(&commands.last().expect(NOT_EMPTY).words);
-                heredocs.push((heredoc, runs));
+                heredocs.push((heredoc, commands.len() - 1));
                 index = end;
                 continue;
             }
@@ -114,10 +113,10 @@ pub fn commands(script: &str) -> Vec<Command<'_>> {
                 end_word(&mut commands, script, &mut start, index);
                 let mut scripts = Vec::new();
                 index += 1;
-                for (heredoc, runs) in heredocs.drain(..) {
+                for (heredoc, reader) in heredocs.drain(..) {
                     let (body, end) = heredoc_body(script, index, &heredoc);
                     index = end;
-                    if runs {
+                    if runs_input(&commands[reader..]) {
                         scripts.push(body);
                         continue;
                     }
@@ -235,6 +234,21 @@ fn reads_script(words: &[&str]) -> bool {
             .any(|option| matches!(option, Arg::Short(short, _) if *short == letter))
     };
     SHELLS.contains(&program.name) && !given('c') && (operands.is_empty() || given('s'))
+}
+
+/// Whether the first of `commands` reads input that a shell runs as a script: it is that shell, or
+/// pipes into one, as in `cat <<EOF | bash`.
+fn runs_input(commands: &[Command<'_>]) -> bool {
+    let pipeline = commands
+        .iter()
+        .enumerate()
+        .take_while(|(offset, command)| *offset == 0 || command.piped);
+    for (_, command) in pipeline {
+        if reads_script(&command.words) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The body of `heredoc`, which starts at `start`, without its delimiter line, and the index after
