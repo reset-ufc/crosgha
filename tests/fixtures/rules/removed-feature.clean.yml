@@ -7,7 +7,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/upload-artifact@v4
-        with: { name: dist, path: dist }
+        with: { name: dist, path: dist, if-no-files-found: error }
       - uses: actions/cache@v4.2.0
         with: { path: ~/.cargo, key: cargo }
   windows:

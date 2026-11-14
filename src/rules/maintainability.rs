@@ -6,18 +6,6 @@ use super::{Finding, Rule, common, correctness, shell};
 use crate::policy::{Persona, Severity};
 use crate::workflow::Workflow;
 
-// GASH (Freitas & Rocha, VEM 2024) "Lack of Error Handling: continue-on-error".
-pub const ERROR_SUPPRESSION: Rule = Rule {
-    id: "error-suppression",
-    summary: "`continue-on-error: true` hides failures.",
-    tag: "error-suppression",
-    severity: Severity::Note,
-    persona: Persona::Pedantic,
-    equivalents: &[],
-    configurable: false,
-    relational: false,
-};
-
 // Khatami et al. (SCAM 2024), KZ-06/KZ-07, and zizmor `concurrency-limits`.
 pub const CONCURRENCY: Rule = Rule {
     id: "missing-concurrency",
@@ -123,36 +111,6 @@ pub const READABILITY: Rule = Rule {
     configurable: false,
     relational: false,
 };
-
-pub fn error_suppression(workflow: &Workflow) -> Result<Vec<Finding>, String> {
-    let suppresses = |value: Option<&Value>| {
-        matches!(value, Some(Value::Bool(true))) || value.and_then(Value::as_str) == Some("true")
-    };
-    let mut findings = Vec::new();
-    for job in common::jobs(workflow) {
-        if suppresses(job.get("continue-on-error")) {
-            findings.push(common::finding(
-                workflow,
-                &ERROR_SUPPRESSION,
-                job.route.with_key("continue-on-error"),
-                job.location(),
-                "job failures never fail the workflow",
-            )?);
-        }
-        for step in common::steps(&job) {
-            if suppresses(step.value.get("continue-on-error")) {
-                findings.push(common::finding(
-                    workflow,
-                    &ERROR_SUPPRESSION,
-                    step.key("continue-on-error"),
-                    step.location.clone(),
-                    "step failures never fail the job",
-                )?);
-            }
-        }
-    }
-    Ok(findings)
-}
 
 pub fn concurrency(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     let jobs = common::jobs(workflow);

@@ -1588,7 +1588,7 @@ jobs:
 
 ## `error-suppression`
 
-`continue-on-error: true` hides failures.
+`continue-on-error: true` hides failures, and so do actions that pass when they find nothing to upload, attach, or publish; create-pull-request and versions before the fail-fast input have no automatic fix.
 
 **Non-compliant**
 
@@ -2407,9 +2407,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/upload-artifact@v3 # expect: removed-feature
-        with: { name: dist, path: dist }
+        with: { name: dist, path: dist, if-no-files-found: error }
       - uses: Actions/Upload-Artifact@v3 # expect: removed-feature
-        with: { name: logs, path: logs }
+        with: { name: logs, path: logs, if-no-files-found: error }
       - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
       - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2 # expect: removed-feature
       - uses: actions/cache@v2 # expect: removed-feature
@@ -2515,7 +2515,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/upload-artifact@v4
-        with: { name: dist, path: dist }
+        with: { name: dist, path: dist, if-no-files-found: error }
       - uses: actions/cache@v4.2.0
         with: { path: ~/.cargo, key: cargo }
   windows:
@@ -3419,14 +3419,14 @@ jobs:
       - uses: actions/github-script@v7 # expect: retired-runtime
         with: { script: "core.info('x')" }
       - uses: actions/upload-artifact@v4 # expect: retired-runtime
-        with: { name: dist, path: dist }
+        with: { name: dist, path: dist, if-no-files-found: error }
       - uses: actions/create-release@v1 # expect: retired-runtime
       # v1 of checkout ran as a runner plugin, not on Node.js.
       - uses: actions/checkout@v1
         with: { persist-credentials: false }
       # Latest v3 artifact releases were rebuilt on node24; removed-feature reports the shutdown.
       - uses: actions/upload-artifact@v3
-        with: { name: logs, path: logs }
+        with: { name: logs, path: logs, if-no-files-found: error }
       - uses: actions/checkout@main
         with: { persist-credentials: false }
       - uses: actions/upload-pages-artifact@v3
@@ -3456,7 +3456,7 @@ jobs:
       - uses: actions/github-script@v8
         with: { script: "core.info('x')" }
       - uses: actions/upload-artifact@v6
-        with: { name: dist, path: dist }
+        with: { name: dist, path: dist, if-no-files-found: error }
 ```
 
 ## `repo-org-settings`

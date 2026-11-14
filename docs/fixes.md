@@ -10,7 +10,7 @@ A fix that fails a check is skipped: its finding stays in the report with the re
 JSON), and the other fixes are still applied. CRLF line breaks and a missing final newline are kept. A symlinked
 workflow is never rewritten; its fixes are reported as not written.
 
-Five rules have fixes:
+Six rules have fixes:
 
 - `persist-credentials` adds `persist-credentials: false`. It leaves the finding unfixed, with the reason in its
   message, when `true` is explicit, when a later step of the job pushes with the persisted token (`git push` or
@@ -142,6 +142,34 @@ Five rules have fixes:
     once it is evaluated, so the fix leaves that choice to the author.
 
   Constant conditions (`if: true`) and bot checks are never fixed.
+
+- `error-suppression` adds the input that makes an action fail when it finds nothing to work on, after ghlint's
+  [`FailFastActionsRule`](https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/FailFastActionsRule.kt):
+
+  | Action | Added input | Default it replaces | First release with the input |
+  |---|---|---|---|
+  | `actions/upload-artifact` | `if-no-files-found: error` | `warn` | v2.1.2 |
+  | `softprops/action-gh-release`, when `with` sets `files` | `fail_on_unmatched_files: true` | `false` | v0.1.6 |
+  | `EnricoMi/publish-unit-test-result-action` and its `composite`, `docker`, `linux`, `macos`, `windows`, `windows/bash`, and `windows/powershell` variants | `action_fail_on_inconclusive: true` | `false` | v2.3.0 |
+
+  Each input name and default comes from the action's own `action.yml` at its latest release, and the first release
+  from the earliest tag whose `action.yml` declares it (links in `src/rules/error_suppression.rs`). The step fails
+  where it used to pass with a warning, which is the point: a missing artifact, release asset, or test report no
+  longer goes unnoticed. The input goes at the end of `with`, which is created when the step has none; comments,
+  block scalars, and a flow mapping keep their form. Any value already set counts, so `if-no-files-found: warn`
+  or `${{ inputs.mode }}` stays as an opt-out, and input names match ignoring case, as the runner reads them.
+  A finding stays unfixed when:
+
+  - the ref names a release before the input: `actions/upload-artifact@v1`, `@v2.1.1`, or a SHA whose comment
+    says so. A ref with only a major version such as `@v2` follows the latest release of that major, and a branch
+    or a SHA without a version comment counts as current;
+  - `with:` is empty, as when every input is commented out;
+  - adding the key would re-quote a flow mapping, as `{ path: coverage/ }` or a step written as `{ uses: ... }`;
+  - the action is `peter-evans/create-pull-request`, which
+    [exits silently](https://github.com/peter-evans/create-pull-request/blob/3ffccacd46053766916f087ce41d627c0b8cf2d1/README.md#action-behaviour)
+    when there is no diff and has no input that fails instead. Open the pull request with `gh pr create`.
+
+  `continue-on-error: true` is never fixed: only the author knows whether the step may fail.
 
 Every other rule is detection-only, because choosing a SHA, timeout, token scope, or trigger filter needs project
 context.

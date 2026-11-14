@@ -1,0 +1,18 @@
+name: Nightly
+on: [push]
+permissions: { contents: write, pull-requests: write }
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Measure
+        run: make benchmark
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark
+          path: benchmark/
+      - name: Open the baseline pull request
+        run: gh pr create --title "Update the benchmark baseline" --body "Nightly benchmark."
+        env:
+          GH_TOKEN: ${{ github.token }}

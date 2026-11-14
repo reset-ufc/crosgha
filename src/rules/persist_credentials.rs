@@ -1,7 +1,6 @@
-use yaml_serde::{Mapping, Value};
-use yamlpatch::{Op, Patch};
+use yaml_serde::Value;
 
-use super::{ChangeKind, Edit, Finding, ProposedFix, Rule, common, shell};
+use super::{Finding, Rule, common, shell};
 use crate::policy::{Persona, Severity};
 use crate::workflow::Workflow;
 
@@ -65,7 +64,11 @@ pub fn detect(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                 message,
             )?;
             if unfixable.is_none() {
-                finding.fix = Some(propose_fix(step));
+                finding.fix = Some(common::add_input(
+                    step,
+                    "persist-credentials",
+                    Value::Bool(false),
+                ));
             }
             findings.push(finding);
         }
@@ -99,44 +102,4 @@ fn pushes(step: &common::Step<'_>) -> bool {
                         .is_some_and(|(subcommand, _)| subcommand == "push")
                 })
         })
-}
-
-fn propose_fix(step: &common::Step<'_>) -> ProposedFix {
-    let (patch, changed_route) = match step.value.get("with") {
-        None => {
-            let mut inputs = Mapping::new();
-            inputs.insert(
-                Value::String("persist-credentials".to_owned()),
-                Value::Bool(false),
-            );
-            (
-                Patch {
-                    route: step.route.clone(),
-                    operation: Op::Add {
-                        key: "with".to_owned(),
-                        value: Value::Mapping(inputs),
-                    },
-                },
-                step.key("with"),
-            )
-        }
-        Some(_) => {
-            let with = step.key("with");
-            (
-                Patch {
-                    route: with.clone(),
-                    operation: Op::Add {
-                        key: "persist-credentials".to_owned(),
-                        value: Value::Bool(false),
-                    },
-                },
-                with.with_key("persist-credentials"),
-            )
-        }
-    };
-    ProposedFix {
-        edit: Edit::Patch(patch),
-        changed_route,
-        change: ChangeKind::Add,
-    }
 }

@@ -290,20 +290,18 @@ fn validate_change(
             else {
                 return Err("an add fix must use an add patch".to_owned());
             };
-            let start = after
+            let (start, key_end) = after
                 .document
                 .query_key_only(route)
                 .map_err(|error| error.to_string())?
                 .location
-                .byte_span
-                .0;
+                .byte_span;
+            // The value's own span: in a flow mapping, `query_pretty` widens to the whole mapping.
             let end = after
                 .document
-                .query_pretty(route)
+                .query_exact(route)
                 .map_err(|error| error.to_string())?
-                .location
-                .byte_span
-                .1;
+                .map_or(key_end, |value| value.location.byte_span.1);
             let source = after.document.source();
             inserts_only(
                 before.document.source(),
