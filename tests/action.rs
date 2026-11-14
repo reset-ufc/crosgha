@@ -8,10 +8,16 @@
 
 mod common;
 
-use common::{Api, TOKEN, broken_release, fixture, github_api, release, serve, temp_dir};
+use common::{
+    Api, TOKEN, TempDir, bin, broken_release, copy_tree, fixture, github_api, isolate_git, release,
+    serve, temp_dir,
+};
 use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Arc, Mutex};
 
 struct Run {
     output: Output,
@@ -21,13 +27,19 @@ struct Run {
 }
 
 fn run_action(base: &str, inputs: &str, extra: &[(&str, &str)]) -> Run {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/repos/configured");
+    run_in(&repo, base, inputs, extra)
+}
+
+/// Runs the entry point from the caller's checkout `repo`.
+fn run_in(repo: &Path, base: &str, inputs: &str, extra: &[(&str, &str)]) -> Run {
     let temp = temp_dir("runner");
     let outputs = temp.join("outputs");
     let summary = temp.join("summary");
     let mut command = Command::new("bash");
     command
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("action/entrypoint.sh"))
-        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/repos/configured"))
+        .current_dir(repo)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
         .env("RUNNER_OS", "Linux")
@@ -519,4 +531,354 @@ fn job_summary_is_plain_markdown_in_every_mode() {
         plain.summary
     );
     assert!(!plain.summary.contains("::warning"), "{}", plain.summary);
+}
+
+/// The fix token of pull-request mode; no log, output, or summary may show it.
+const FIX_TOKEN: &str = "fix-token-secret";
+
+/// One request to the pull request stand-in.
+struct Request {
+    line: String,
+    authorization: String,
+    body: String,
+}
+
+/// A stand-in for GitHub's create-pull-request endpoint: it records each request and answers every
+/// one with `status` and `body`.
+fn pulls_api(status: &'static str, body: &'static str) -> (String, Arc<Mutex<Vec<Request>>>) {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::clone(&log);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let mut authorization = String::new();
+            let mut length = 0;
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).unwrap();
+                if header.trim().is_empty() {
+                    break;
+                }
+                let (name, value) = header.split_once(':').unwrap_or_default();
+                match name.to_ascii_lowercase().as_str() {
+                    "authorization" => authorization = value.trim().to_owned(),
+                    "content-length" => length = value.trim().parse().unwrap(),
+                    _ => {}
+                }
+            }
+            let mut content = vec![0; length];
+            reader.read_exact(&mut content).unwrap();
+            requests.lock().unwrap().push(Request {
+                line: line.trim().to_owned(),
+                authorization,
+                body: String::from_utf8(content).unwrap(),
+            });
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    (format!("http://{address}"), log)
+}
+
+fn git(directory: &Path, args: &[&str]) -> String {
+    let output = isolate_git(&mut Command::new("git"))
+        .current_dir(directory)
+        .args([
+            "-c",
+            "user.name=Caller",
+            "-c",
+            "user.email=caller@example.com",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// A caller's checkout of `main` holding `files`, pushed to the bare repository `owner/repo.git`
+/// under the second directory, which `GITHUB_SERVER_URL` names as a `file://` URL.
+fn checkout(files: &[(&str, &str)]) -> (TempDir, TempDir) {
+    let work = TempDir::new("checkout");
+    let server = TempDir::new("server");
+    let bare = server.join("owner/repo.git");
+    fs::create_dir_all(&bare).unwrap();
+    git(
+        &bare,
+        &["init", "--quiet", "--bare", "--initial-branch=main"],
+    );
+    git(&work, &["init", "--quiet", "--initial-branch=main"]);
+    for (path, text) in files {
+        let path = work.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    git(&work, &["add", "--all"]);
+    git(&work, &["commit", "--quiet", "--message", "Initial commit"]);
+    git(&work, &["push", "--quiet", bare.to_str().unwrap(), "main"]);
+    (work, server)
+}
+
+/// The variables of a pull-request run on a push to `main`, besides the inputs.
+fn pull_request_env(server: &Path, api: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("CROSGHA_FIX", "pull-request".to_owned()),
+        ("CROSGHA_FIX_TOKEN", FIX_TOKEN.to_owned()),
+        ("GITHUB_SERVER_URL", format!("file://{}", server.display())),
+        ("GITHUB_API_URL", api.to_owned()),
+        ("GITHUB_REPOSITORY", "owner/repo".to_owned()),
+        ("GITHUB_REF", "refs/heads/main".to_owned()),
+        ("GITHUB_RUN_ID", "42".to_owned()),
+    ]
+}
+
+fn borrowed<'a>(env: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)> {
+    env.iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect()
+}
+
+fn assert_hidden(run: &Run) {
+    for text in [
+        String::from_utf8_lossy(&run.output.stdout).into_owned(),
+        String::from_utf8_lossy(&run.output.stderr).into_owned(),
+        run.outputs.clone(),
+        run.summary.clone(),
+    ] {
+        assert!(!text.contains(FIX_TOKEN), "{text}");
+    }
+}
+
+#[test]
+fn pull_request_mode_commits_only_the_fixes_and_opens_a_pull_request_listing_them() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+    let ci = fs::read_to_string(fixture("checkout-credentials.before.yml")).unwrap();
+    let mixed = fs::read_to_string(fixture("mixed-fixes.before.yml")).unwrap();
+    let (work, server) = checkout(&[
+        (".github/workflows/ci.yml", &ci),
+        (".github/workflows/mixed.yml", &mixed),
+        ("notes.txt", "draft\n"),
+    ]);
+    // What earlier steps of the caller's job changed stays out of the fix commit.
+    fs::write(work.join("notes.txt"), "edited\n").unwrap();
+    fs::write(work.join("build.log"), "log\n").unwrap();
+    let main = git(&work, &["rev-parse", "HEAD"]);
+
+    // The pull request must hold exactly what `crosgha --fix` writes on its own.
+    let expected = TempDir::new("expected");
+    copy_tree(&work.join(".github"), &expected.join(".github"));
+    let fixed = bin()
+        .current_dir(&*expected)
+        .args([
+            "--offline",
+            "--persona",
+            "pedantic",
+            "--fix",
+            "--format",
+            "json",
+            ".",
+        ])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&fixed.stdout).unwrap();
+    let applied: Vec<&serde_json::Value> = report["fixes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|fix| fix["status"] == "applied")
+        .collect();
+    assert!(applied.len() > 1, "{report}");
+
+    let (api, requests) = pulls_api(
+        "201 Created",
+        r#"{"number":7,"html_url":"https://github.com/owner/repo/pull/7"}"#,
+    );
+    let env = pull_request_env(&server, &api);
+    let run = run_in(&work, &base, ".", &borrowed(&env));
+    let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+    assert!(run.output.status.success(), "{stdout}");
+    assert_hidden(&run);
+    // The findings of the scanned branch still apply `fail-on` after the upload.
+    assert_eq!(output_value(&run.outputs, "exit-code"), Some("1"));
+    assert_eq!(
+        output_value(&run.outputs, "pull-request-url"),
+        Some("https://github.com/owner/repo/pull/7"),
+        "{}",
+        run.outputs
+    );
+    assert!(
+        run.summary.contains("https://github.com/owner/repo/pull/7"),
+        "{}",
+        run.summary
+    );
+
+    let bare = server.join("owner/repo.git");
+    let branch = "crosgha/fix-42";
+    assert_eq!(git(&bare, &["rev-parse", &format!("{branch}^")]), main);
+    assert_eq!(
+        git(&bare, &["diff", "--name-only", "main", branch]),
+        ".github/workflows/ci.yml\n.github/workflows/mixed.yml\n"
+    );
+    for file in ["ci.yml", "mixed.yml"] {
+        assert_eq!(
+            git(
+                &bare,
+                &["show", &format!("{branch}:.github/workflows/{file}")]
+            ),
+            fs::read_to_string(expected.join(".github/workflows").join(file)).unwrap(),
+            "{file}"
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(work.join("notes.txt")).unwrap(),
+        "edited\n"
+    );
+    assert!(work.join("build.log").is_file());
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.line, "POST /repos/owner/repo/pulls HTTP/1.1");
+    assert_eq!(request.authorization, format!("Bearer {FIX_TOKEN}"));
+    let pull: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(pull["head"], branch);
+    assert_eq!(pull["base"], "main");
+    assert!(!pull["title"].as_str().unwrap().is_empty());
+    let body = pull["body"].as_str().unwrap();
+    for fix in applied {
+        let place = format!("{}:{}", fix["path"].as_str().unwrap(), fix["line"]);
+        let rule = fix["rule"].as_str().unwrap();
+        assert!(
+            body.lines()
+                .any(|line| line.contains(&place) && line.contains(rule)),
+            "{place} {rule}:\n{body}"
+        );
+    }
+
+    fs::remove_dir_all(&run.temp).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pull_request_mode_opens_nothing_without_a_fix_a_branch_or_an_accepted_push() {
+    let root = release(env!("CARGO_PKG_VERSION"), false);
+    let base = serve(root.clone());
+    let (api, requests) = pulls_api(
+        "422 Unprocessable Entity",
+        r#"{"message":"Validation Failed"}"#,
+    );
+    let mut runs = Vec::new();
+
+    // Findings whose only fix validation refuses leave nothing to propose.
+    let unfixable = "name: Rejected fix\non: [push]\npermissions: { contents: read }\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - { uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 }\n      - run: make lint\n";
+    let (work, server) = checkout(&[(".github/workflows/ci.yml", unfixable)]);
+    let env = pull_request_env(&server, &api);
+    let run = run_in(&work, &base, ".", &borrowed(&env));
+    assert!(
+        run.output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.output.stdout)
+    );
+    assert_eq!(output_value(&run.outputs, "exit-code"), Some("1"));
+    assert_eq!(output_value(&run.outputs, "pull-request-url"), None);
+    let bare = server.join("owner/repo.git");
+    assert_eq!(git(&bare, &["branch", "--list", "crosgha/*"]), "");
+    runs.push(run);
+
+    let ci = fs::read_to_string(fixture("checkout-credentials.before.yml")).unwrap();
+    let (work, server) = checkout(&[(".github/workflows/ci.yml", &ci)]);
+    let bare = server.join("owner/repo.git");
+
+    // A pull request event checks out a merge commit, which has no branch to propose against.
+    // Nothing listens on port 9, so the check must come before the download.
+    let mut env = pull_request_env(&server, &api);
+    env.push(("GITHUB_REF", "refs/pull/3/merge".to_owned()));
+    let run = run_in(&work, "http://127.0.0.1:9", ".", &borrowed(&env));
+    assert!(!run.output.status.success());
+    assert!(
+        String::from_utf8_lossy(&run.output.stdout).contains("branch"),
+        "{}",
+        String::from_utf8_lossy(&run.output.stdout)
+    );
+    runs.push(run);
+
+    // The fix token stays required.
+    let mut env = pull_request_env(&server, &api);
+    env.push(("CROSGHA_FIX_TOKEN", String::new()));
+    let run = run_in(&work, "http://127.0.0.1:9", ".", &borrowed(&env));
+    assert!(!run.output.status.success());
+    assert!(String::from_utf8_lossy(&run.output.stdout).contains("fix-token"));
+    runs.push(run);
+
+    // An earlier step's edit of a file crosgha then fixes would ride along in the fix commit.
+    fs::write(
+        work.join(".github/workflows/ci.yml"),
+        format!("{ci}# edited by the build\n"),
+    )
+    .unwrap();
+    let env = pull_request_env(&server, &api);
+    let run = run_in(&work, &base, ".", &borrowed(&env));
+    let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+    assert!(!run.output.status.success());
+    assert!(stdout.contains("already differed from HEAD"), "{stdout}");
+    assert!(stdout.contains(".github/workflows/ci.yml"), "{stdout}");
+    assert_eq!(git(&bare, &["branch", "--list", "crosgha/*"]), "");
+    runs.push(run);
+    git(&work, &["checkout", "--quiet", "--", "."]);
+
+    // A branch left by an earlier attempt of this run refuses the push, before any pull request.
+    git(&work, &["switch", "--quiet", "--create", "stale"]);
+    fs::write(work.join("stale.txt"), "stale\n").unwrap();
+    git(&work, &["add", "stale.txt"]);
+    git(&work, &["commit", "--quiet", "--message", "Stale fix"]);
+    git(
+        &work,
+        &[
+            "push",
+            "--quiet",
+            bare.to_str().unwrap(),
+            "stale:refs/heads/crosgha/fix-42",
+        ],
+    );
+    git(&work, &["switch", "--quiet", "main"]);
+    let env = pull_request_env(&server, &api);
+    let run = run_in(&work, &base, ".", &borrowed(&env));
+    let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+    assert!(!run.output.status.success());
+    assert!(stdout.contains("cannot push crosgha/fix-42"), "{stdout}");
+    runs.push(run);
+    assert_eq!(requests.lock().unwrap().len(), 0);
+
+    // GitHub's refusal reaches the log with its message.
+    git(
+        &bare,
+        &["branch", "--quiet", "--delete", "--force", "crosgha/fix-42"],
+    );
+    git(&work, &["checkout", "--quiet", "--", "."]);
+    git(&work, &["switch", "--quiet", "main"]);
+    let run = run_in(&work, &base, ".", &borrowed(&env));
+    let stdout = String::from_utf8_lossy(&run.output.stdout).into_owned();
+    assert!(!run.output.status.success());
+    assert!(stdout.contains("Validation Failed"), "{stdout}");
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    runs.push(run);
+
+    for run in runs {
+        assert_hidden(&run);
+        fs::remove_dir_all(&run.temp).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
 }

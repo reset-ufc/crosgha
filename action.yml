@@ -87,6 +87,9 @@ outputs:
   findings:
     description: Number of reported findings.
     value: ${{ steps.crosgha.outputs.findings }}
+  pull-request-url:
+    description: URL of the fix pull request that pull-request mode opened; empty when it had no fix to propose.
+    value: ${{ steps.crosgha.outputs['pull-request-url'] }}
 
 runs:
   using: composite
