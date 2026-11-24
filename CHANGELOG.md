@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.1](https://github.com/reset-ufc/crosgha/compare/v0.26.0...v0.26.1) (2026-11-24)
+
+
+### Fixed
+
+* **rules:** accept a top-level description in workflows ([736e39e](https://github.com/reset-ufc/crosgha/commit/736e39eab829a5d2e86589951bba418571d3fcbe))
+* **rules:** stop rejecting a top-level description in workflows ([eaf3d94](https://github.com/reset-ufc/crosgha/commit/eaf3d94d6d88b7548556df6c9463f20f7de44fed))
+
 ## [0.26.0](https://github.com/reset-ufc/crosgha/compare/v0.25.0...v0.26.0) (2026-11-14)
 
 
