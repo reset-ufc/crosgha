@@ -45,14 +45,21 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Getting started: getting-started.md
+  - How crosgha works: how-it-works.md
   - Install: install.md
   - Usage: usage.md
   - GitHub Action: action.md
   - Configuration: configuration.md
   - Output and exit status: output.md
   - Fixes: fixes.md
-  - Rules: rules.md
-  - Rule examples: rule-examples.md
+  - Rules:
+      - Catalog: rules.md
+      - Supply chain: rules/supply-chain.md
+      - Permissions and secrets: rules/permissions-secrets.md
+      - Runners: rules/runner.md
+      - Repository: rules/repository.md
+      - All fixtures: rule-examples.md
   - What GitHub's documentation asks: github-guidance.md
   - Contributing:
       - Architecture: ARCHITECTURE.md
