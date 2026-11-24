@@ -6,6 +6,12 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      # Released together from one repository and pinned exactly; one PR keeps them on the same version.
+      yamlpath:
+        patterns:
+          - "yamlpath"
+          - "yamlpatch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
