@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.26.2](https://github.com/reset-ufc/crosgha/compare/v0.26.1...v0.26.2) (2026-11-24)
+
+
+### Documentation
+
+* add a site home and a page mapping GitHub's guidance to rules ([9e0e3c1](https://github.com/reset-ufc/crosgha/commit/9e0e3c1eba5f70a2494c6c1b93968534ba69d97e))
+* allow schema data but no schema validator under rule 1 ([405ec54](https://github.com/reset-ufc/crosgha/commit/405ec5460b434ed1bc100df4aa0dff1cdc69ba19)), closes [#95](https://github.com/reset-ufc/crosgha/issues/95)
+* correct coverage claims checked against the tool ([62a51bf](https://github.com/reset-ufc/crosgha/commit/62a51bf343c00b74c1e0ec33849bda2780f82d39))
+* describe run-once commands under unpinned-package ([77e147b](https://github.com/reset-ufc/crosgha/commit/77e147b1d68c125b007ceb989ec25aa984098722))
+* explain rules by dimension, how crosgha works, and a getting-started walkthrough ([25ed161](https://github.com/reset-ufc/crosgha/commit/25ed161e0549e6ffd6636b8b82268b02bdc6983a))
+* explain the injection and correctness rules ([0ff2861](https://github.com/reset-ufc/crosgha/commit/0ff286100b3ac325059bbfb597668c599cfce7e6))
+* explain the maintainability rules and link every new page ([eef65ca](https://github.com/reset-ufc/crosgha/commit/eef65ca5495944d1c07e494a7f8bca4342ba4ccb))
+* keep SchemaStore as a cited source, never a validator ([62e8864](https://github.com/reset-ufc/crosgha/commit/62e886432effb39e532cbed744f287132abb17f8))
+* publish a documentation site that explains every rule ([3eed3d1](https://github.com/reset-ufc/crosgha/commit/3eed3d14312fcdc9563e2fd689370d77974d044e))
+* render Mermaid diagrams and link rule sources on GitHub ([0f66b1f](https://github.com/reset-ufc/crosgha/commit/0f66b1f0ec4b30b9722d44e73be4699847178226))
+* tighten the prose and correct four stale statements ([c2422a9](https://github.com/reset-ufc/crosgha/commit/c2422a94d11ec973743175c2930dd92bb2dec7ee))
+
 ## [0.26.1](https://github.com/reset-ufc/crosgha/compare/v0.26.0...v0.26.1) (2026-11-24)
 
 
