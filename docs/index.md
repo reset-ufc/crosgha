@@ -1,14 +1,13 @@
 # crosgha
 
 aCtions Repair Of miSconfigured GitHub Actions: a Rust CLI and GitHub Action that detects smells in GitHub Actions
-workflows and fixes them deterministically, preserving comments and formatting.
+workflows and fixes them deterministically without changing comments or formatting.
 
-- 51 rules cover every tag of a curated smell taxonomy: 43 check workflow or action files, 3 check the repository,
-  and 5 query the GitHub API.
+- 51 rules cover the smell taxonomy: 43 check workflow or action files, 3 check the repository, and 5 query the GitHub
+  API.
 - Output is text, JSON, SARIF 2.1.0, GitHub annotations (the default under `GITHUB_ACTIONS=true`), or brief lines for
   AI agents.
-- It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
-  actionlint rule in every finding.
+- It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor, actionlint, or ghlint rule when there is one.
 
 ## Install
 

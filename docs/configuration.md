@@ -15,17 +15,17 @@ Rules are grouped by sensitivity, with zizmor's persona names. Each persona incl
 
 Rules with scope `online` in the [rule table](rules.md) query the GitHub API, and so does `repo-org-settings`.
 
-- **When they run:** whenever a token is available (`--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`), unless
-  `--offline` or `--no-online-audits` is set.
-- **GitHub Enterprise Server:** `--gh-hostname` (or `GH_HOST`). It also turns off the checks that describe github.com:
-  retired runner images and shut-down action versions in `removed-feature`, and `retired-runtime` (in workflow steps
-  and in action files).
-- **`repo-org-settings`** also needs a token with the Administration (read) repository permission, and, for local
-  inputs, `--repository owner/name` (or `GITHUB_REPOSITORY`); a remote input checks its own repository. `GITHUB_TOKEN`
-  cannot have that permission, so in Actions the rule is usually skipped with a warning.
-- **Without the API,** `archived-action` still reports the archived actions of the `actions` and `actions-rs`
-  organizations from a built-in list.
-- **Actions of other repositories** are read and checked only with `--follow-actions`, which also needs a token
+- Online rules run whenever a token is available (`--gh-token`, `GH_TOKEN`, or `GITHUB_TOKEN`), unless `--offline` or
+  `--no-online-audits` is set.
+- On GitHub Enterprise Server, pass `--gh-hostname` (or `GH_HOST`). It also turns off the checks that describe
+  github.com: retired runner images and shut-down action versions in `removed-feature`, and `retired-runtime` (in
+  workflow steps and in action files).
+- `repo-org-settings` also needs a token with the Administration (read) repository permission, and, for local inputs,
+  `--repository owner/name` (or `GITHUB_REPOSITORY`); a remote input checks its own repository. `GITHUB_TOKEN` cannot
+  have that permission, so in Actions the rule is usually skipped with a warning.
+- Without the API, `archived-action` still reports the archived actions of the `actions` and `actions-rs` organizations
+  from a built-in list.
+- Actions of other repositories are read and checked only with `--follow-actions`, which also needs a token
   ([usage](usage.md#actions-from-other-repositories)). Online rules do not run on those files.
 
 ## Config file
@@ -59,20 +59,20 @@ a warning on stderr that names it, so a file written for zizmor keeps working.
 
 ## Ignoring findings
 
-- **Inline:** `# crosgha: ignore[rule]` anywhere in the finding's YAML span. `# zizmor: ignore[...]` works too, with
-  zizmor's rule names.
-- **Partial IDs:** some zizmor and ghlint IDs name part of a crosgha rule. `unpinned-uses` and `unpinned-images`
-  split `unpinned-action`; `bot-conditions` and `unsound-condition` split `unsafe-if-condition`. ghlint's
-  `DoubleCurlyIf` names two parts: the condition mixed with text in `unsafe-if-condition` and the bare condition in
-  `readability`. Each of ghlint's four `FailFast...` IDs names one action in `error-suppression`, and none names
-  `continue-on-error`. `MissingGhToken`, `MissingGhHost`, and `MissingGhRepo` each name one part of
-  `gh-cli-environment`. `TooManySteps` and `TooManyJobs` each name one part of `complex-job`, and neither names
-  long scripts or conditions. Every ghlint ID of `readability` and `redundant-setting` names one part of that rule.
-  Ignoring or disabling such an ID affects only those parts.
-- **Actions of other repositories** (`--follow-actions`): comments inside them are not honored. An inline ignore on
-  the scanned `uses:` line, or a config `ignore` entry for that file and line, covers every finding the line pulls
-  in; a finding that another scanned line also reaches stays reported through that line.
-- **Override:** `--no-ignores` reports everything, including findings that comments or the config ignore.
+- Inline: `# crosgha: ignore[rule]` anywhere in the finding's YAML span. `# zizmor: ignore[...]` works too, with zizmor's
+  rule names.
+- Partial IDs: some zizmor and ghlint IDs name part of a crosgha rule. `unpinned-uses` and `unpinned-images` split
+  `unpinned-action`; `bot-conditions` and `unsound-condition` split `unsafe-if-condition`. ghlint's `DoubleCurlyIf` names
+  two parts: the condition mixed with text in `unsafe-if-condition` and the bare condition in `readability`. Each of
+  ghlint's four `FailFast...` IDs names one action in `error-suppression`, and none names `continue-on-error`.
+  `MissingGhToken`, `MissingGhHost`, and `MissingGhRepo` each name one part of `gh-cli-environment`. `TooManySteps`
+  and `TooManyJobs` each name one part of `complex-job`, and neither names long scripts or conditions. Every ghlint ID
+  of `readability` and `redundant-setting` names one part of that rule. Ignoring or disabling such an ID affects only
+  those parts.
+- Actions of other repositories (`--follow-actions`): comments inside them are not honored. An inline ignore on the
+  scanned `uses:` line, or a config `ignore` entry for that file and line, covers every finding the line pulls in; a
+  finding that another scanned line also reaches stays reported through that line.
+- `--no-ignores` reports everything, including findings that comments or the config ignore.
 
 ## Severity
 

@@ -1,7 +1,7 @@
 # Getting started
 
-This walkthrough takes one realistic CI workflow, finds what crosgha reports on it at each persona, applies the fixes
-that pass validation, fixes the rest by hand, and ends with the workflow clean, checked in CI and before every push.
+This walkthrough takes a sample CI workflow, runs each persona on it, applies validated fixes, fixes the rest by hand,
+and sets up CI and pre-push checks.
 
 ## 1. Install
 
@@ -17,8 +17,8 @@ building from source are on the same page.
 
 ## 2. Take a workflow
 
-Save this as `.github/workflows/ci.yml`. It is a Python CI job with the shape most repositories have: a checkout, a
-setup step, a cache, an install, a test run, an artifact upload, and one step that prints the pull request title.
+Save this as `.github/workflows/ci.yml`. It is a Python CI job with a checkout, a setup step, a cache, an install, a
+test run, an artifact upload, and a step that prints the pull request title.
 
 ```yaml
 name: CI
@@ -76,12 +76,11 @@ Checked 1 workflow file: 2 findings (1 error, 1 warning).
 1 finding has a fix: rerun with --fix.
 ```
 
-The default persona reports the security problems worth acting on, and here it finds two. The run exits with status 1,
-because `--fail-on` defaults to `any`.
+The default persona finds two security problems. The run exits with status 1 because `--fail-on` defaults to `any`.
 
 ## 4. Read a finding
 
-Take the first block. Its parts carry the whole message:
+Parts of the first block:
 
 | Piece | In the example | Meaning |
 |---|---|---|
@@ -93,7 +92,7 @@ Take the first block. Its parts carry the whole message:
 | `= help:` | help | What the rule asks for |
 | `= note: same as zizmor: artipacked` | equivalent | The same concept in another tool, so existing ignores keep their names |
 
-The last two lines are the summary: how many findings, which files, and how many of them have a fix. The rule IDs, what
+The last two lines are the summary: how many files and findings, and how many of the findings have a fix. The rule IDs, what
 each one means, and where each comes from are in the [rule catalog](rules.md), with a non-compliant and a compliant
 example per rule in [Rule examples](rule-examples.md).
 
@@ -264,8 +263,7 @@ Remaining: 10 findings (1 error, 5 warnings, 4 notes).
 
 The `...` lines stand for the `unpinned-action` finding on the other three `uses:` lines and for `cache-misuse`, none
 of which crosgha can decide for you. `--fix` rewrites only what it can prove: the patched file must re-parse, the
-targeted finding must be gone with no new finding in its place, and only the intended YAML node may change. Here is
-what it changed, compared with the copy saved before the run:
+targeted finding must be gone with no new finding in its place, and only the intended YAML node may change. Diff against the copy saved before the run:
 
 ```console
 $ diff -u /tmp/ci.yml.orig .github/workflows/ci.yml
@@ -380,7 +378,7 @@ jobs:
           persona: pedantic
 ```
 
-Replace both `<sha>` and `<vX.Y.Z>` with the commit and tag of the release you pin. With a full SHA in each `uses:`
+Replace `<sha>` and `vX.Y.Z` with the commit and tag of the release you pin. With a full SHA in each `uses:`
 line, this workflow is reported clean at `--persona pedantic`. The Action downloads the release that matches its own
 revision, verifies it against the release's `sha256.sum`, runs crosgha once, uploads SARIF, and only then fails
 according to `fail-on`; it accepts zizmor-action's inputs, so a zizmor step needs only its `uses:` line changed. The

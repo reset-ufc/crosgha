@@ -82,8 +82,8 @@ new run.
 `dangerously-auto-merge: true` (with `fix: pull-request`) enables GitHub
 [auto-merge](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request)
 on the pull request it opened, through the GraphQL `enablePullRequestAutoMerge` mutation, so GitHub merges it once
-its required reviews and status checks pass. The Action never merges by itself. The name says it: a merged fix
-changes your workflows without a human reading it, at your own risk.
+its required reviews and status checks pass. The Action never merges by itself: a merged fix changes your workflows
+without a human reading it, at your own risk.
 
 - Before it pushes anything, the Action reads the base branch's rules and classic branch protection with `fix-token`.
   When neither requires a status check, or it cannot read them, it fails instead of opening a pull request that

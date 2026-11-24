@@ -1,8 +1,8 @@
 # Injection and untrusted input
 
-These rules follow data an outsider controls — event payload fields, agent prompts, artifacts, caches — to the place
-where it acts: a shell command, a JavaScript script, an environment file, or a job that runs with the base
-repository's privileges. They also flag the triggers and paths that make that reach easier.
+These rules follow data an outsider controls (event payload fields, agent prompts, artifacts, caches) to where it acts:
+a shell command, a JavaScript script, an environment file, or a job that runs with the base repository's privileges.
+They also flag the triggers and paths that make that reach easier.
 
 The output below shows only the findings of the rule being explained. The command ran with `--persona auditor`, so
 the same run also reports naming, runtime-monitoring, trigger, and permission findings, which the summary line counts.
@@ -78,8 +78,7 @@ jobs:
 **How to fix.** Put the expression in the step's `env` and read the variable in the script: `$TITLE` in a shell
 step, `process.env.TITLE` in a `github-script` step. The value then reaches the script as data, and the shell or
 JavaScript handles it. Validate it where the script uses it as an argument or a path. `--fix` does not rewrite it,
-because the step needs a new `env` entry and a new way to read the value. To accept one finding, see
-[ignoring findings](../configuration.md#ignoring-findings).
+because the step needs a new `env` entry and a new way to read the value. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#script-injection).
 
@@ -148,8 +147,7 @@ jobs:
 ```
 
 **How to fix.** Set the value in `env` at the narrowest scope that works, with a literal or a value the job has
-checked, and keep environment file writes out of `pull_request_target` and `workflow_run` workflows. `--fix` leaves
-it alone: moving a value to `env` changes where the script reads it. To accept one finding, see
+checked, and keep environment file writes out of `pull_request_target` and `workflow_run` workflows. `--fix` does not rewrite it, because moving a value to `env` changes where the script reads it. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#github-env-injection).
@@ -222,8 +220,7 @@ jobs:
 **How to fix.** Move the agent to `workflow_dispatch` or `schedule` when it should run only under maintainer control,
 and keep event payload out of the prompt. The rule does not report `pull_request`, but an outside contributor can
 start that event too. Where the agent must read a comment or an issue, gate the step on a maintainer
-or a label, and state in the prompt that the quoted text is data, never instructions. `--fix` does not rewrite it:
-only the author knows which gate the agent may run behind. To accept one finding, see
+or a label, and state in the prompt that the quoted text is data, never instructions. `--fix` does not rewrite it, because only the author knows which gate the agent may run behind. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#llm-prompt-injection).
@@ -302,8 +299,7 @@ jobs:
 **How to fix.** Drop the `ref` and `repository` inputs that name the fork's head, so the checkout stays on the base
 commit. When the privileged job needs the pull request's content, read it through the API, or split the work: an
 unprivileged `pull_request` workflow builds and uploads an artifact, and a privileged `workflow_run` job downloads it
-into `${{ runner.temp }}` after review. `--fix` does not rewrite it. To accept one finding, see
-[ignoring findings](../configuration.md#ignoring-findings).
+into `${{ runner.temp }}` after review. `--fix` does not rewrite it. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#pwn-request).
 
@@ -316,7 +312,7 @@ pull_request_target and workflow_run run with base repository privileges.
 | warning | pedantic | workflow | none | zizmor: `dangerous-triggers` |
 
 **What it reports.** Each trigger of the workflow whose event is `pull_request_target` or `workflow_run`, one finding
-per trigger, whether the workflow writes `on` as a mapping or as a list. It reports the trigger itself, not what the
+per trigger, whether the workflow writes `on` as a mapping or as a list. It reports the trigger regardless of what the
 job does with it, so a workflow whose jobs stay on the base commit is still reported.
 
 **Why it matters.** Both events run in the context of the base repository, with its token, secrets, and cache scope,
@@ -380,9 +376,7 @@ jobs:
 ```
 
 **How to fix.** Use `pull_request` when the job does not need the base repository's privileges. When a privileged step is unavoidable, keep it to metadata the API returns
-and do the build in a `pull_request` workflow, as [`pwn-request`](#pwn-request) describes. `--fix` does not rewrite
-the trigger, because changing it changes what the workflow may do. To accept one finding, see
-[ignoring findings](../configuration.md#ignoring-findings).
+and do the build in a `pull_request` workflow, as [`pwn-request`](#pwn-request) describes. `--fix` does not rewrite the trigger, because changing it changes what the workflow may do. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#dangerous-trigger).
 
@@ -396,14 +390,14 @@ Conditions must not be constant, always true, or based on spoofable bot names.
 
 **What it reports.** A job or step `if` in one of three shapes: a boolean scalar, such as `if: true`, which is
 constant; a string that holds `${{ }}` next to other text, which GitHub substitutes into one non-empty string and so
-reads as true; or a condition that trusts a bot name, meaning `github.actor` or `github.triggering_actor` compared
-with `==`, or passed to `contains`, `startsWith`, or `endsWith`, against a value holding `[bot]`. A negated check or
+reads as true; or a condition that trusts a bot name (`github.actor` or `github.triggering_actor` compared
+with `==`, or passed to `contains`, `startsWith`, or `endsWith`, against a value holding `[bot]`). A negated check or
 `!=` is not reported, because a spoofed actor only makes it skip the step.
 
 **Why it matters.** GitHub evaluates `if` as an expression with or without `${{ }}`, but when the delimiters wrap only
 part of the value, the text around them turns the whole value into a non-empty string
 ([expressions](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions)), so a condition that
-mixes both forms always runs the job or step, including on the events it meant to exclude. An actor name is set by
+mixes both forms always runs the job or step, even on the events it meant to exclude. An actor name is set by
 whoever pushed the commit or opened the pull request, so a bot check does not prove the event came from that bot.
 
 **Example.**
@@ -451,11 +445,11 @@ jobs:
 ```
 
 **How to fix.** `--fix` rewrites a condition that mixes `${{ }}` with text into one expression in a single
-`${{ }}`, grouping each segment where the operator beside it binds tighter. It leaves constant conditions, bot
+`${{ }}`; it wraps segments in parentheses where an adjacent operator binds tighter. It leaves constant conditions, bot
 checks, and conditions it cannot join into one expression, such as a context outside `${{ }}` or a YAML style it
 cannot rewrite without changing the file's meaning; the reasons are in [Fixes](../fixes.md). Replace a constant
 condition with the check the job needs, and a bot check with a test of the pull request author or of the event's
-own fields. To accept one finding, see [ignoring findings](../configuration.md#ignoring-findings).
+own fields. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#unsafe-if-condition).
 
@@ -467,8 +461,8 @@ Artifacts from other runs must not be extracted into the workspace.
 |---|---|---|---|---|
 | warning | regular | workflow | none | none |
 
-**What it reports.** In a workflow triggered by `workflow_run`, a step that downloads an artifact of another run —
-`actions/download-artifact` with a `run-id` input, or `dawidd6/action-download-artifact` — and whose `path`,
+**What it reports.** In a workflow triggered by `workflow_run`, a step that downloads an artifact of another run
+(`actions/download-artifact` with a `run-id` input, or `dawidd6/action-download-artifact`) and whose `path`,
 with spaces removed, does not start with `${{runner.temp}}` or `/tmp`. The comparison is on the text, so
 `${{ runner.temp }}/x` counts, and a step without `path` extracts into the workspace. Downloads of the current run's
 artifacts are not reported.
@@ -532,8 +526,7 @@ jobs:
 
 **How to fix.** Extract into `${{ runner.temp }}` and read only the files the job expects, by name. Never add the
 directory to `PATH`, source a script from it, or run anything it holds before checking it. `--fix` does not rewrite
-the step, because the new path depends on what the job reads. To accept one finding, see
-[ignoring findings](../configuration.md#ignoring-findings).
+the step, because the new path depends on what the job reads. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#artifact-poisoning).
 
@@ -552,8 +545,8 @@ a reusable workflow without `cache-mode` while the workflow sets none, because t
 writes. On
 `pull_request_target` or `workflow_run`, a cache saved after the step that checked out the pull request's head: the
 save lands in the base branch's cache scope, and the setup actions save in a post step at the end of the job, with
-`setup-node` from v5 caching by default unless `package-manager-cache: false` is set. In a release build — the
-`release` trigger, or `push` with `tags` — any step that uses a cache at all. `actions/cache/save` counts only when
+`setup-node` from v5 caching by default unless `package-manager-cache: false` is set. In a release build (the
+`release` trigger, or `push` with `tags`), any step that uses a cache at all. `actions/cache/save` counts only when
 it runs after the checkout, and `actions/cache/restore` never saves.
 
 **Why it matters.** A cache the attacker's run writes is restored by later trusted runs, so build output, dependency
@@ -611,8 +604,8 @@ jobs:
 
 **How to fix.** Keep caches out of release builds, or build the release in a job that restores nothing and verify the
 artifacts another way. On a low-trust trigger, set `cache-mode: read` on the workflow, or `none` where nothing should
-be restored, and never save a cache after running pull request code. `--fix` does not rewrite it. To accept one
-finding, see [ignoring findings](../configuration.md#ignoring-findings).
+be restored, and never save a cache after running pull request code. `--fix` does not rewrite it. To ignore a finding, see
+[ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#cache-poisoning).
 
@@ -630,9 +623,8 @@ images (`docker://`) are exempt. An expression that is only a string literal, as
 `github[` index syntax, as in `${{ github['event'] }}`, with one finding per YAML value. The first covers a job's `uses`
 and every step's `uses`; the second covers any string in the file.
 
-**Why it matters.** zizmor's `obfuscation` audit records what these forms have in common: the path or the expression
-does not say plainly what it references, so a reader, a reviewer, and a policy that matches `uses` by name see the
-written form rather than the referent.
+**Why it matters.** zizmor's `obfuscation` audit flags these forms because they obscure the target, so reviewers and
+policies that match `uses` by name see the obfuscated text instead of the resolved reference.
 
 **Example.**
 
@@ -688,7 +680,6 @@ jobs:
 
 **How to fix.** Write the action path in its canonical form, with one `/` between segments and no `.` or `..`, and
 write a context path in dotted form (`github.event.issue.title`). Replace a string literal in an expression with the
-text it stands for. `--fix` does not rewrite either form. To accept one finding, see
-[ignoring findings](../configuration.md#ignoring-findings).
+text it stands for. `--fix` does not rewrite either form. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#obfuscation).

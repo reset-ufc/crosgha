@@ -127,7 +127,7 @@ unchanged under `--fix` and remain visible in the report.
    one; then each original line gets its own break back and an added line takes the break of
    the line before it.
 4. Prepare all files before writing any file. Write each changed file through
-   a same-directory temporary file, preserving permissions and renaming it
+   a same-directory temporary file, keep its permissions, and rename it
    over the original. A symbolic link is never replaced or written through (any
    directory between the scanned path and the file), nor a file whose content changed
    since it was read (an edit saved during the scan). A failed write is

@@ -63,7 +63,7 @@ Eight rules have fixes:
   `SafeEnvironmentFileRedirect` and `EnvironmentFileOverwritten`. Turning one of them off in the config keeps the other
   finding and its fix.
 
-  **Quotes and braces** each environment file path that a `run` script redirects to, the form ShellCheck's
+  It quotes and braces each environment file path that a `run` script redirects to, the form ShellCheck's
   [SC2086](https://www.shellcheck.net/wiki/SC2086) and [SC2250](https://www.shellcheck.net/wiki/SC2250) ask for:
 
   | Before | After |
@@ -90,7 +90,7 @@ Eight rules have fixes:
   - a folded (`>`) or quoted YAML scalar, which YAML rewrites before the shell sees it, or a plain scalar in a
     flow mapping (`{run: ...}`), where the added braces would end the scalar.
 
-  **Appends** where `>` truncates an environment file, after ghlint's
+  It appends where `>` truncates an environment file, after ghlint's
   [`EnvironmentFileOverwritten`](https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/EnvironmentFileOverwriteRule.kt):
 
   | Before | After |
@@ -128,7 +128,7 @@ Eight rules have fixes:
   | `"!${{ cancelled() }}"` | `"${{ !cancelled() }}"` |
   | `\|` or `>` block holding `${{ ... }}` | `\|-` or `>-` with the same lines |
 
-  This changes when the job or step runs, and that is the point. The mixed condition was a non-empty string, so it
+  This changes when the job or step runs. The mixed condition was a non-empty string, so it
   was always true; now it is the expression its operators spell out. A segment goes in parentheses when the operator
   next to it binds tighter than its own (`Precedence` in actions/runner's
   [`Token.cs`](https://github.com/actions/runner/blob/8cfa1049f86781d141056082d73802d56cd2b433/src/Sdk/DTExpressions2/Expressions2/Tokens/Token.cs)),
@@ -160,7 +160,7 @@ Eight rules have fixes:
 
   Each input name and default comes from the action's own `action.yml` at its latest release, and the first release
   from the earliest tag whose `action.yml` declares it (links in `src/rules/error_suppression.rs`). The step fails
-  where it used to pass with a warning, which is the point: a missing artifact, release asset, or test report no
+  where it used to pass with a warning, so a missing artifact, release asset, or test report no
   longer goes unnoticed. The input goes at the end of `with`, which is created when the step has none; comments,
   block scalars, and a flow mapping keep their form. Any value already set counts, so `if-no-files-found: warn`
   or `${{ inputs.mode }}` stays as an opt-out, and input names match ignoring case, as the runner reads them.

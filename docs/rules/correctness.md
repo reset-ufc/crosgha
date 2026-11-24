@@ -210,7 +210,7 @@ runs:
 findings are one spelling away from a valid file (`working-dir` for `working-directory`, `timeout` for
 `timeout-minutes`, `pull-request` for `pull-requests`). A duplicate step `id`, a circular `needs`, or a `secrets`
 read in `if` needs another shape: rename one of the steps, break the cycle, and pass the secret through `env` and
-test that instead. `--fix` does not rewrite a file it cannot prove a valid replacement for. To accept one finding,
+test that instead. `--fix` does not rewrite a file it cannot prove a valid replacement for. To ignore a finding,
 see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#schema-validity).
@@ -281,11 +281,11 @@ jobs:
 
 **How to fix.** Write every environment file path as `"${GITHUB_OUTPUT}"`: quoted, so the shell keeps it one word,
 and braced, so the name is unambiguous. Append with `>>` where an earlier write must survive; the runner gives each
-step new, empty files, so `>` and `>>` differ only after the step has written. `--fix` applies both rewrites, changing
-only the path or only the operator, and leaves the finding when the script holds a path it cannot rewrite, such as a
+step new, empty files, so `>` and `>>` differ only after the step has written. `--fix` applies both rewrites (changing
+only the path or only the operator) and leaves the finding when the script holds a path it cannot rewrite, such as a
 command argument, a `for` list, a pattern, text in quotes, a heredoc body, or a folded YAML scalar; it also leaves
 `GITHUB_STEP_SUMMARY`, `&>`, `<>`, and a script with `[[` or `$[` unfixed. The full list is in
-[Fixes](../fixes.md). To accept one finding, see [ignoring findings](../configuration.md#ignoring-findings).
+[Fixes](../fixes.md). To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#embedded-script-lint).
 
@@ -349,7 +349,7 @@ jobs:
 
 **How to fix.** Change the scheme to `https://`, `ssh://`, or `git+ssh://`, or use the `git@host:owner/repo` form,
 and confirm the server offers the encrypted scheme before switching. For a downloaded script, also check its digest
-before running it. `--fix` does not rewrite it, because the host must already serve the new scheme. To accept one
+before running it. `--fix` does not rewrite it, because the host must already serve the new scheme. To ignore a
 finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#insecure-protocol).
@@ -436,7 +436,7 @@ jobs:
 **How to fix.** Set `GH_TOKEN: ${{ github.token }}` in the step or job `env`, and give the token the permission the
 command needs in `permissions`. For commands that read a repository, either check out the code first, set
 `GH_REPO: ${{ github.repository }}`, or pass `--repo`. On GitHub Enterprise Server, set `GH_HOST` next to the
-Enterprise token. `--fix` does not rewrite it, because the token scope belongs to the job. To accept one finding, see
+Enterprise token. `--fix` does not rewrite it, because the token scope belongs to the job. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#gh-cli-environment).

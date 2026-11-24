@@ -68,9 +68,7 @@ jobs:
         shell: bash
 ```
 
-**How to fix.** Add `timeout-minutes` to every job, with a value a little above the job's usual run time. `--fix`
-does not rewrite this, because the right number depends on the job. To silence the rule for one file, see
-[ignoring findings](../configuration.md#ignoring-findings).
+**How to fix.** Add `timeout-minutes` to every job, with a value a little above the job's usual run time. `--fix` does not rewrite this, because the right number depends on the job. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#missing-timeout).
 
@@ -155,8 +153,8 @@ jobs:
           if-no-files-found: error
 ```
 
-**How to fix.** `--fix` adds the input at the end of the step's `with`, and creates `with` when the step has none,
-as described in [Fixes](../fixes.md). The step then fails where it used to pass with a warning: a missing artifact,
+**How to fix.** `--fix` adds the input at the end of the step's `with`, creating `with` when the step has none
+([Fixes](../fixes.md)). The step then fails where it used to pass with a warning: a missing artifact,
 release asset, or test report no longer goes unnoticed. Run it on the example and the step gains one line:
 
 ```diff
@@ -172,7 +170,7 @@ The finding stays unfixed when the ref names a release before the input (`@v2.1.
 so), when `with:` is empty, when adding the input would re-quote a flow mapping, whether the step itself (`{ uses: ... }`) or its `with`
 (`{ path: coverage/ }`), and for
 `peter-evans/create-pull-request`, which has no input that fails instead. `continue-on-error: true` is never fixed:
-only the author knows whether the step may fail. To silence the rule, see
+only the author knows whether the step may fail. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#error-suppression).
@@ -245,9 +243,7 @@ jobs:
 ```
 
 **How to fix.** Add a workflow-level `concurrency` with a `group` and `cancel-in-progress: true`, or give each job
-its own `concurrency`. The group must name what a run supersedes: `${{ github.ref }}` for one run per branch. `--fix`
-does not rewrite this, because the right group depends on what the workflow does. To silence the rule, see
-[ignoring findings](../configuration.md#ignoring-findings).
+its own `concurrency`. The group must name what a run supersedes: `${{ github.ref }}` for one run per branch. `--fix` does not rewrite this, because the right group depends on what the workflow does. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#missing-concurrency).
 
@@ -335,9 +331,9 @@ jobs:
         shell: bash
 ```
 
-**How to fix.** Add `branches` or `paths` to each reported trigger, naming the branches that are reviewed and the
-directories whose changes need the run. `--fix` does not rewrite this, because only the author knows which branches
-and paths matter. To silence the rule, see [ignoring findings](../configuration.md#ignoring-findings).
+**How to fix.** Add `branches` or `paths` to each reported trigger to restrict runs to reviewed branches and relevant
+directories. `--fix` does not rewrite this, because only the author knows which branches and paths matter. To ignore a finding, see
+[ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#broad-trigger).
 
@@ -417,8 +413,7 @@ jobs:
 run in a fork. Jobs that `needs` it inherit the guard, as long as their own `if` does not call a status function; a
 job that must run on every outcome needs an explicit repository guard next to the status function, as in
 `if: ${{ always() && github.repository == 'owner/repo' }}`. `--fix` does not rewrite this, because the repository
-name is not in the workflow. To silence the rule, see
-[ignoring findings](../configuration.md#ignoring-findings).
+name is not in the workflow. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#missing-fork-guard).
 
@@ -496,9 +491,8 @@ jobs:
 ```
 
 **How to fix.** Add a `strategy.matrix` to the job that runs the tests, with the platforms or versions the project
-supports, and read it in `runs-on` or in the toolchain input. `--fix` does not rewrite this, because the supported
-platforms are a project decision. To silence the rule, see
-[ignoring findings](../configuration.md#ignoring-findings).
+supports, and read it in `runs-on` or in the toolchain input. `--fix` does not rewrite this, because the supported platforms are a project decision. To ignore a finding,
+see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#missing-matrix).
 
@@ -586,8 +580,8 @@ jobs:
 **How to fix.** Set the setup action's `cache` input and delete the `actions/cache` step. The value names the
 package manager the action caches, as in `cache: npm` for `actions/setup-node`, `cache: maven` for
 `actions/setup-java`, and `cache: pip` for `actions/setup-python`, or `true` for `actions/setup-go` and
-`actions/setup-dotnet`. `--fix` does not rewrite this, because the cache key has to be chosen. To silence the rule,
-see [ignoring findings](../configuration.md#ignoring-findings).
+`actions/setup-dotnet`. `--fix` does not rewrite this, because the cache key has to be chosen. To ignore a
+finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#cache-misuse).
 
@@ -601,8 +595,8 @@ A job should not repeat a step verbatim.
 
 **What it reports.** Within one job, a step whose keys and values, leaving out `name` and `id`, equal those of an
 earlier step in the same job. The first step is kept and each later repeat is reported. A step whose ID the job
-reads as `steps.<id>`, in a `${{ }}` expression or in a bare `if`, is not reported: it is a measurement, not a
-repeat. A step that sets `parallel` is skipped.
+reads as `steps.<id>`, in a `${{ }}` expression or in a bare `if`, is treated as a measurement and not reported. A step
+that sets `parallel` is skipped.
 
 **Why it matters.** GASH (Freitas & Rocha, VEM 2024) names a step repeated verbatim within one job "Code Replica".
 The copy has to be edited twice, and a change made to one of them leaves the job running two versions of the same
@@ -665,9 +659,8 @@ jobs:
 
 **How to fix.** Delete the repeated step, or change it so it does something else: a second test run usually means
 the first one missed a suite or an argument. When the repeat is intentional because the step's output changes, give
-it an `id` and read it, which is what the rule treats as a measurement. `--fix` does not rewrite this, because only
-the author knows which of the two steps to keep. To silence the rule, see
-[ignoring findings](../configuration.md#ignoring-findings).
+it an `id` and read it, which is what the rule treats as a measurement. `--fix` does not rewrite this, because only the author knows which of the two steps to keep. To ignore a
+finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#duplicated-steps).
 
@@ -780,7 +773,7 @@ key's line goes with it; comment lines around it stay. Running it on the example
 The finding stays unfixed when removing the key would leave an empty flow mapping, as
 `defaults: { run: { shell: bash } }` would keep `run: {}`, and when the removal would add or remove another
 finding, as when every step of the workflow sets the shell that `DuplicateShellOnSteps` asks to make the default.
-That last one is never fixed: choosing which default to set is the author's call. To silence a finding, see
+That last one is never fixed: choosing which default to set is the author's call. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#redundant-setting).
@@ -859,8 +852,8 @@ jobs:
 
 **How to fix.** Move a long script into a file in the repository and call it from `run`, split a job that grew past
 20 steps into jobs that `needs` each other, and replace a long condition with a named step output or a variable
-that holds the decision. `--fix` does not rewrite this, because the split is a design choice. To silence the rule,
-see [ignoring findings](../configuration.md#ignoring-findings).
+that holds the decision. `--fix` does not rewrite this, because the split is a design choice. To ignore a finding, see
+[ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#complex-job).
 
@@ -980,7 +973,7 @@ every alias of it, and when the scalar's source spells the reference differently
 steps are not reported, because `github.token` is null there, so a reusable workflow call's `with` and `secrets`,
 and workflow and job `env`, keep the secret. The rest is manual: add `name` to the workflow, each job, and each
 `run` step, rename IDs to lower-case kebab, wrap a bare condition in `${{ }}`, and replace `always()` with
-`success() || failure()` and a negated status check with the statuses that run the step. To silence a finding, see
+`success() || failure()` and a negated status check with the statuses that run the step. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#readability).
@@ -1087,8 +1080,7 @@ sits in a heredoc, a quoted string that spans lines, or a line continued with `\
 quoting, or when the rewrite would be a new finding. A value that expands to several lines at run time changes behavior, so use the
 [multiline syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#multiline-strings)
 for it. The opt-out variables are never fixed: delete the `env` entry, and for the Node 20 opt-out upgrade the action
-to a release that runs on Node 24. To silence a finding, see
-[ignoring findings](../configuration.md#ignoring-findings).
+to a release that runs on Node 24. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#deprecated-command).
 
@@ -1187,10 +1179,9 @@ and `adopt-hotspot` become `temurin`, `adopt-openj9` becomes `semeru`. Running i
 ```
 
 The image and version findings stay unfixed: move the job to a supported image such as `ubuntu-24.04` or
-`ubuntu-latest`, and upgrade the action to a release that still runs. Both of those are choices about what the job
-needs. On a GitHub Enterprise Server host (`--gh-hostname`) the hosted parts are skipped and only the setup-java
-check runs ([online rules](../configuration.md#online-rules)). To silence a finding, see
-[ignoring findings](../configuration.md#ignoring-findings).
+`ubuntu-latest`, and upgrade the action to a release that still runs. On a GitHub Enterprise Server host (`--gh-hostname`)
+the hosted parts are skipped and only the setup-java check runs ([online rules](../configuration.md#online-rules)). To
+ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#removed-feature).
 
@@ -1277,7 +1268,7 @@ jobs:
 `actions/checkout@v5`, and for an action of your own change `runs.using` in its `action.yml` from `node20` to
 `node24` and rebuild its bundle. `--fix` does not rewrite this, because a new major can change the action's inputs.
 On a GitHub Enterprise Server host (`--gh-hostname`) the check is skipped
-([online rules](../configuration.md#online-rules)). To silence the rule, see
+([online rules](../configuration.md#online-rules)). To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#retired-runtime).

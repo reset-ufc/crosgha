@@ -1,8 +1,7 @@
 # How crosgha works
 
 crosgha has one analysis path. The CLI runs it, and so do the pre-push hook and the GitHub Action, which both call the
-CLI binary: neither contains a second detector or fixer. This page follows one workflow through that path, from the
-files that are found to the report you read.
+CLI binary: neither contains a second detector or fixer.
 
 ## What gets scanned
 
@@ -10,22 +9,21 @@ Without a path, crosgha scans `.github/workflows`. Each path you pass may be a w
 directory of workflows, a repository root, or its `.github`. Subdirectories below `.github/workflows` are never scanned,
 because GitHub does not load workflows from them.
 
-**Action files.** A file named `action.yml` or `action.yaml` is an action metadata file, unless it sits in
-`.github/workflows`, where it is a workflow. An action file is scanned when you name it as a path, and also when the
-scanned repository runs or publishes it: the root `action.yml`, and every local action a scanned workflow calls with
-`uses: ./path`, followed through the composite actions those call in turn. A composite action's `runs.steps` get the
-rules that read steps, `uses` lines, or text; JavaScript and Docker actions get the metadata checks only. Rules about
-triggers, jobs, `permissions`, timeouts, or `defaults` never run on an action file.
+A file named `action.yml` or `action.yaml` is an action metadata file, unless it sits in `.github/workflows`, where it
+is a workflow. An action file is scanned when you name it as a path, and also when the scanned repository runs or
+publishes it: the root `action.yml`, and every local action a scanned workflow calls with `uses: ./path`, followed
+through the composite actions those call in turn. A composite action's `runs.steps` get the rules that read steps,
+`uses` lines, or text; JavaScript and Docker actions get the metadata checks only. Rules about triggers, jobs,
+`permissions`, timeouts, or `defaults` never run on an action file.
 
-**Actions from other repositories.** `--follow-actions` also reads the actions that steps call as
-`uses: owner/repo/path@ref`. Each ref is resolved to a commit first; crosgha reads `action.yml` or `action.yaml` at that
-commit, checks it with the offline action rules without the remote action's own ignore comments, and follows its
-composite calls. It needs a token, spends GitHub
-API requests, and never fixes anything, since the file belongs to another repository. Details and request costs:
+`--follow-actions` also reads the actions that steps call as `uses: owner/repo/path@ref`. Each ref is resolved to a
+commit first; crosgha reads `action.yml` or `action.yaml` at that commit, checks it with the offline action rules
+without the remote action's own ignore comments, and follows its composite calls. It needs a token, spends GitHub API
+requests, and never fixes anything, since the file belongs to another repository. Details and request costs:
 [Usage](usage.md#actions-from-other-repositories).
 
-**Remote repositories.** `crosgha owner/repo@ref` scans a GitHub repository without a clone, at one commit, with the
-same rules as a local copy. It needs a token, and `--offline` and `--fix` reject it ([Usage](usage.md#remote-repositories)).
+`crosgha owner/repo@ref` scans a GitHub repository without a clone, at one commit, with the same rules as a local copy.
+It needs a token, and `--offline` and `--fix` reject it ([Usage](usage.md#remote-repositories)).
 
 ## How a file is checked
 
@@ -43,12 +41,12 @@ flowchart LR
   F --> G[Render the report<br>and choose the exit status]
 ```
 
-**Parsing comes first.** A workflow must have the top-level keys `on` and `jobs`, with `jobs` a mapping; an action
-must have a `runs` mapping with a string `runs.using`. A file that fails this is reported on stderr, the other files
-are still checked, the run exits with status 2, and `--fix` writes nothing. Other schema mistakes, such as a composite
-`run` step without `shell`, are ordinary findings of the `schema-validity` rule.
+A workflow must have the top-level keys `on` and `jobs`, with `jobs` a mapping; an action must have a `runs` mapping with
+a string `runs.using`. A file that fails this is reported on stderr, the other files are still checked, the run exits
+with status 2, and `--fix` writes nothing. Other schema mistakes, such as a composite `run` step without `shell`, are
+ordinary findings of the `schema-validity` rule.
 
-**Every rule has one of three scopes**, which is what it reads:
+Each rule has one of three scopes:
 
 | Scope | What it reads | Count |
 |---|---|---|
@@ -61,8 +59,7 @@ Online rules, and the repository rule `repo-org-settings`, run only when a token
 leaving the rest. A failed API call skips only the checks that needed that answer, and the run exits 2, so a CI gate
 does not pass on checks that never ran. The full list is the [rule catalog](rules.md).
 
-**Personas decide which rules run.** Each rule declares the lowest persona that runs it, and each persona includes the
-ones above it:
+Each rule declares the lowest persona that runs it, and each persona includes the ones above it:
 
 | Persona | Adds | Example from this repository |
 |---|---|---|
@@ -73,11 +70,10 @@ ones above it:
 `--min-severity` then hides findings below a threshold on zizmor's scale, `informational`/`low` → note, `medium` →
 warning, `high` → error; it hides a finding, it does not change the rule it comes from.
 
-**`--fail-on` decides the exit status.** It defaults to `any`, so any reported finding fails the run; `--fail-on
-warning` fails only from warnings up, and `--fail-on none` never fails on findings. Under `--fix` the threshold judges
-the findings that remain after the fixes are applied. Status 1 means a finding reached the threshold, and status 2
-means a path, a workflow, a config, or an API call failed
-([Output and exit status](output.md)).
+`--fail-on` defaults to `any`, so any reported finding fails the run; `--fail-on warning` fails only from warnings up, and
+`--fail-on none` never fails on findings. Under `--fix` the threshold judges the findings that remain after the fixes
+are applied. Status 1 means a finding reached the threshold, and status 2 means a path, a workflow, a config, or an API
+call failed ([Output and exit status](output.md)).
 
 ## How a fix is accepted
 
@@ -169,7 +165,7 @@ Security tab.
 
 The same workflow as it was before the fix, reported in each format:
 
-**`text`** (the default) prints one rustc-style diagnostic per finding, with the source line underlined:
+`text` (the default) prints one rustc-style diagnostic per finding, with the source line underlined:
 
 ```console
 $ crosgha --offline --persona pedantic .github/workflows/build.yml
@@ -203,7 +199,7 @@ Checked 1 workflow file: 3 findings (1 warning, 2 notes).
 1 finding has a fix: rerun with --fix.
 ```
 
-**`json`** is versioned, with a `summary` and one object per finding, so a script can read it:
+`json` is versioned, with a `summary` and one object per finding, so a script can read it:
 
 ```console
 $ crosgha --offline --persona pedantic -f json .github/workflows/build.yml
@@ -240,13 +236,13 @@ $ crosgha --offline --persona pedantic -f json .github/workflows/build.yml
   },
   "tool": {
     "name": "crosgha",
-    "version": "0.26.0"
+    "version": "0.26.1"
   },
   "version": 1
 }
 ```
 
-**`sarif`** is SARIF 2.1.0 with the rule metadata GitHub code scanning requires. The `rules` array carries all 51 rules,
+`sarif` is SARIF 2.1.0 with the rule metadata GitHub code scanning requires. The `rules` array carries all 51 rules,
 with their descriptions and help, so the sample is trimmed:
 
 ```console
@@ -296,7 +292,7 @@ $ crosgha --offline --persona pedantic -f sarif .github/workflows/build.yml
           "rules": [
             ...
           ],
-          "version": "0.26.0"
+          "version": "0.26.1"
         }
       }
     }
@@ -305,7 +301,7 @@ $ crosgha --offline --persona pedantic -f sarif .github/workflows/build.yml
 }
 ```
 
-**`github`** prints workflow-command annotations, which GitHub renders on the pull request's diff:
+`github` prints workflow-command annotations, which GitHub renders on the pull request's diff:
 
 ```console
 $ crosgha --offline --persona pedantic -f github .github/workflows/build.yml
@@ -314,7 +310,7 @@ $ crosgha --offline --persona pedantic -f github .github/workflows/build.yml
 ::warning file=.github/workflows/build.yml,line=11,endLine=11,col=9,endColumn=13,title=persist-credentials::job `build`, step 1: checkout retains credentials for later steps (zizmor: artipacked)
 ```
 
-**`agent`** prints one line per finding, for an AI agent or a log that is read by one:
+`agent` prints one line per finding, for an AI agent or a log that is read by one:
 
 ```console
 $ crosgha --offline --persona pedantic -f agent .github/workflows/build.yml
@@ -330,24 +326,20 @@ parse, a config, a write, or an API call failed; the files that did parse are st
 
 ## Coming from zizmor
 
-crosgha reads zizmor's configuration and speaks its vocabulary. It reads `zizmor.yml` when no `crosgha.yml` is
-present, finds it in the same order, honors `# zizmor: ignore[...]` comments, accepts zizmor's rule names in
-`disable`, `ignore`, and remaps, and names the equivalent zizmor or actionlint rule next to a finding when one exists.
-Personas are zizmor's, `--pedantic` works as an alias for `--persona pedantic`, and `--min-confidence` is accepted and
-changes nothing, since findings carry no confidence level. A `rules.<id>` entry for a zizmor rule crosgha does not
-have is ignored with a warning rather than failing the run, so an existing file keeps working. What differs is the
-exit status of a failed run: 0, 1, and 2 instead of zizmor's 11–14. The schema, the discovery order, and what each key
-does: [Configuration](configuration.md). Migrating Action steps and shell steps, including `crosgha migrate`'s view of
-zizmor, actionlint, poutine, ghalint, and octoscan:
+crosgha reads `zizmor.yml` when no `crosgha.yml` is present, finds it in the same order, honors `# zizmor: ignore[...]`
+comments, accepts zizmor's rule names in `disable`, `ignore`, and remaps, and names the equivalent zizmor or
+actionlint rule next to a finding when one exists. Personas are zizmor's, `--pedantic` works as an alias for
+`--persona pedantic`, and `--min-confidence` is accepted and changes nothing, since findings carry no confidence level.
+A `rules.<id>` entry for a zizmor rule crosgha does not have is ignored with a warning rather than failing the run, so
+an existing file keeps working. What differs is the exit status of a failed run: 0, 1, and 2 instead of zizmor's 11–14.
+The schema, the discovery order, and what each key does: [Configuration](configuration.md). Migrating Action steps and
+shell steps, including `crosgha migrate`'s view of zizmor, actionlint, poutine, ghalint, and octoscan:
 [Usage](usage.md#migrating-from-zizmor-actionlint-poutine-ghalint-or-octoscan).
 
 ## Our detection is our own
 
 crosgha never embeds, vendors, or shells out to another detector. No zizmor, actionlint, poutine, or ghalint crate runs
-inside it, neither for finding smells nor for validating a fix, and none of them runs on this repository's own
-workflows either: crosgha checks those in CI and in the pre-push hook. What it does take from them is knowledge, not
-code: each rule's concept and its primary source are cited above the rule, our list of untrusted contexts comes from
-GitHub's documentation, and the compatibility layer only reads another tool's config format, accepts its rule IDs, and
-rewrites its Action step in `migrate`. That independence is what makes a comparison against those tools meaningful: a
-finding from crosgha is crosgha's, and a fix it applies is proven by its own three checks rather than by another
-linter agreeing with it.
+inside it for finding smells or validating fixes, and none of them runs on this repository's own workflows: crosgha
+checks those in CI and in the pre-push hook. Each rule's concept and primary source are cited above the rule, the list
+of untrusted contexts comes from GitHub's documentation, and the compatibility layer only reads another tool's config
+format, accepts its rule IDs, and rewrites its Action step in `migrate`.

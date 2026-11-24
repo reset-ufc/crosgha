@@ -18,14 +18,14 @@ reported when the text of the `.github/workflows/*.yml` and `*.yaml` files, read
 `github/codeql-action/`, no `actions/dependency-review-action`, and no `ossf/scorecard-action`. Text is matched, not
 YAML: a mention in a comment counts, and a workflow that calls one of those actions through another action is not
 recognized. Apart from the update configs, it reads nothing outside `.github/workflows`, and inline ignore comments and
-the config `ignore` entries do not apply to it, because its findings belong to the repository, not to a file or a line. Disable it with
+the config `ignore` entries do not apply to it, because its findings apply to the whole repository. Disable it with
 `rules.missing-security-tooling.disable` ([configuration](../configuration.md#config-file)).
 
-**Why it matters.** The rule follows Fares et al. (arXiv
-[2601.14455](https://arxiv.org/abs/2601.14455)), hardening gap FGB-05, and the StepSecurity secure-repo checks,
-both cited in the rule's [code](https://github.com/reset-ufc/crosgha/blob/master/src/rules/repository.rs). Each of the
-four checks catches a class of supply chain problem before it reaches a commit: a vulnerable dependency, a code
-pattern, a new dependency added in a pull request, and the repository's own posture.
+**Why it matters.** Fares et al. (arXiv [2601.14455](https://arxiv.org/abs/2601.14455), hardening gap FGB-05) and
+StepSecurity's secure-repo checks cover these controls
+([`src/rules/repository.rs`](https://github.com/reset-ufc/crosgha/blob/master/src/rules/repository.rs)). Each check
+catches a supply chain gap before merge: a vulnerable dependency, a code flaw, a new dependency added in a pull request,
+or weak repository security practices.
 
 **Example.** The fixture is a repository with one workflow and no update config:
 
@@ -90,7 +90,7 @@ That repository reports no `missing-security-tooling` finding.
 
 **How to fix.** Add `.github/dependabot.yml` with one `updates` entry per ecosystem, and a workflow that runs
 `github/codeql-action/init` and `github/codeql-action/analyze`, `actions/dependency-review-action` on pull requests, and
-`ossf/scorecard-action`. `--fix` does not rewrite this finding: it creates no files, as stated in [fixes](../fixes.md).
+`ossf/scorecard-action`. `--fix` does not rewrite this finding because it creates no files.
 
 All fixtures for this rule: [examples](../rule-examples.md#missing-security-tooling).
 
@@ -105,7 +105,7 @@ Repository Actions settings must not grant write tokens or pull request approval
 **What it reports.** It reads `/repos/{owner}/{repo}/actions/permissions/workflow`, the
 [default workflow permissions](https://docs.github.com/en/rest/actions/permissions#get-default-workflow-permissions-for-a-repository)
 of the repository, and reports each of two settings: `default_workflow_permissions` equal to `write`, and
-`can_approve_pull_request_reviews` equal to `true`. Both findings point at the repository, not at a workflow. It reads
+`can_approve_pull_request_reviews` equal to `true`. Both findings target the repository itself. It reads
 one set of settings per scan, so it says nothing about the organization's own settings.
 
 **Why it matters.** A `write` default gives every job of every workflow that declares no `permissions` write access to
@@ -139,8 +139,7 @@ Compliant:
 
 **How to fix.** In the repository's Actions settings (Settings, Actions, General), set the default workflow
 permissions to `read` and leave the pull request approval setting off, which is what
-`can_approve_pull_request_reviews: false` means. `--fix` does not rewrite this finding: the setting lives on GitHub,
-not in a file ([fixes](../fixes.md)). To accept a finding, ignore it as described in
-[configuration](../configuration.md#ignoring-findings).
+`can_approve_pull_request_reviews: false` means. `--fix` does not rewrite this finding because the setting lives on
+GitHub. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#repo-org-settings).

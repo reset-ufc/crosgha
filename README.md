@@ -1,16 +1,16 @@
 # crosgha
 
 aCtions Repair Of miSconfigured GitHub Actions: a Rust CLI and GitHub Action that detects smells in GitHub Actions
-workflows and fixes them deterministically, preserving comments and formatting.
+workflows and fixes them deterministically without changing comments or formatting.
 
-- 51 rules cover every tag of a curated smell taxonomy: 43 check workflow or action files, 3 check the repository,
-  and 5 query the GitHub API.
+- 51 rules cover the smell taxonomy: 43 check workflow or action files, 3 check the repository, and 5 query the GitHub
+  API.
 - Composite actions (`action.yml`) get the step rules, and JavaScript and Docker actions their metadata checks: the
   repository's root action and the local actions its workflows call are found with the workflows. With
   `--follow-actions`, so are the actions they call from other repositories, read at the pinned commit and followed
   through composite actions; each finding names the chain of `uses:` lines that pulled it in.
-- It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
-  actionlint rule in every finding, so switching tools does not mean rewriting configuration.
+- It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor, actionlint, or ghlint
+  rule when there is one, so switching tools does not mean rewriting configuration.
 - Output is text, JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), or brief lines for AI
   agents.
 
@@ -88,7 +88,7 @@ cargo fmt-style   # format Rust per docs/rust-style.md; plain cargo fmt skips it
 make check   # the pre-push checks: fmt, clippy -D warnings, tests, dogfood scan
 ```
 
-- **Toolchain:** the pre-push hook runs under `mise exec` when mise is not active in the calling shell, so pushes from
-  `gh` or an IDE use the pinned toolchain too.
-- **Releases:** commits follow Conventional Commits (enforced by the `commit-msg` hook). release-please turns them
-  into versions and the changelog, and cargo-dist builds the release binaries.
+- The pre-push hook runs under `mise exec` when mise is not active in the calling shell, so pushes from `gh` or an IDE
+  use the pinned toolchain too.
+- Commits follow Conventional Commits (enforced by the `commit-msg` hook). release-please turns them into versions and
+  the changelog, and cargo-dist builds the release binaries.

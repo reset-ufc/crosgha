@@ -4,7 +4,7 @@ This page maps the normative statements in GitHub's own Actions documentation to
 
 Of the 94 statements below, 22 map to a rule, 12 are covered only partly, and 60 have no rule. "Partly" means the rule checks part of what GitHub asks, or checks it more strictly. "Not checked" means no rule in the [catalog](rules.md) decides it from the files crosgha reads. A rule link opens the rule's examples, where its summary and its non-compliant and compliant YAML sit; the full catalog is in [Rules](rules.md).
 
-crosgha reports a finding only for the rules marked below and only at the persona that includes them: `regular` by default, `pedantic` for hardening, `auditor` for heuristics that may be false positives ([personas](configuration.md#personas)). A statement with no rule is still worth reading: some of it is operational advice no static check can settle.
+crosgha reports a finding only for the rules marked below and only at the persona that includes them: `regular` by default, `pedantic` for hardening, `auditor` for heuristics that may be false positives ([personas](configuration.md#personas)). Statements without a rule include operational advice that static checks cannot settle.
 
 ## Workflows, syntax, and limits
 

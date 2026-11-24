@@ -17,11 +17,10 @@ job are skipped: a job whose labels include `ubuntu-slim`; a job with a `contain
 harden-runner needs `sudo` on the VM; a job that calls a reusable workflow, which has no steps of its own; and a job
 whose steps all sit inside a `parallel` block.
 
-**Why it matters.** The rule follows StepSecurity's secure-repo check `harden-runner-integration`, cited in the rule's
-[code](https://github.com/reset-ufc/crosgha/blob/master/src/rules/runner.rs), which asks for a runtime monitor as each
-job's first step. The jobs it skips are the ones
-[harden-runner documents](https://github.com/step-security/harden-runner/blob/main/docs/limitations.md) it cannot
-monitor.
+**Why it matters.** StepSecurity's `harden-runner-integration` check requires a runtime monitor as each job's first step
+([`src/rules/runner.rs`](https://github.com/reset-ufc/crosgha/blob/master/src/rules/runner.rs)). The jobs it skips are
+the ones [harden-runner documents](https://github.com/step-security/harden-runner/blob/main/docs/limitations.md) it
+cannot monitor.
 
 **Example.**
 
@@ -69,9 +68,8 @@ jobs:
 ```
 
 **How to fix.** Make `step-security/harden-runner` the first step of every job, pinned to a full commit SHA, with the
-egress policy the job needs. `--fix` does not rewrite this finding: the monitor's version and policy are a project
-decision, as stated in [fixes](../fixes.md). To accept a finding, ignore it as described in
-[configuration](../configuration.md#ignoring-findings).
+egress policy the job needs. `--fix` does not rewrite this finding, because the monitor's version and policy are a project decision. To ignore a finding, see
+[ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#runtime-monitoring).
 
@@ -88,8 +86,8 @@ All fixtures for this rule: [examples](../rule-examples.md#runtime-monitoring).
 `${{ matrix.config.os }}`, expands to the values under `strategy.matrix` and `strategy.matrix.include[*]`, so a matrix
 that holds `macos-latest` is reported too. Any other expression is left alone, since its value is unknown.
 
-**Why it matters.** Khatami et al. (SCAM 2024), rule KZ-15 "Use fixed version for runs-on argument", cited in the
-rule's [code](https://github.com/reset-ufc/crosgha/blob/master/src/rules/runner.rs), asks for a fixed runner image. A
+**Why it matters.** Khatami et al. (SCAM 2024, rule KZ-15 "Use fixed version for runs-on argument") recommend a fixed
+runner image ([`src/rules/runner.rs`](https://github.com/reset-ufc/crosgha/blob/master/src/rules/runner.rs)). A
 `-latest` label follows GitHub's image rolls, so the toolchain under the job changes without a commit.
 
 **Example.**
@@ -133,9 +131,8 @@ jobs:
 ```
 
 **How to fix.** Name the image version the job was tested on, such as `ubuntu-24.04` or `windows-2025`, in the job and
-in every matrix value it expands from. `--fix` does not rewrite this finding: the version to pin is a project decision,
-as stated in [fixes](../fixes.md). To accept a finding, ignore it as described in
-[configuration](../configuration.md#ignoring-findings).
+in every matrix value it expands from. `--fix` does not rewrite this finding, because the version to pin is a project decision. To ignore a finding, see
+[ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#runner-versioning).
 
@@ -201,13 +198,11 @@ jobs:
 ```
 
 **How to fix.** Run pull request and issue jobs on GitHub-hosted runners, and keep the self-hosted labels for jobs that
-only trusted triggers start, such as `push` or `workflow_dispatch`. `--fix` does not rewrite this finding: it changes
-where a job runs, as stated in [fixes](../fixes.md). To accept a finding, ignore it as described in
-[configuration](../configuration.md#ignoring-findings).
+only trusted triggers start, such as `push` or `workflow_dispatch`. `--fix` does not rewrite this finding, because it changes where a job runs. To ignore a
+finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
-**Options.** Custom labels of your own runners are unknown to crosgha, so list them under
-`rules.self-hosted-runner.config.labels`. A `*` matches any run of characters, and a custom label matches as written,
-without folding case:
+**Options.** List custom runner labels under `rules.self-hosted-runner.config.labels`. A `*` matches any run of
+characters, and a custom label matches as written, without folding case:
 
 ```yaml
 rules:

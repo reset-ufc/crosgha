@@ -23,9 +23,8 @@ from the module that `go.sum` pins and is not reported), `npx` and `pnpm dlx`/`p
 `uv tool run` like `uv tool install`, and `pipx run` through `--spec`. A bare `npx eslint` may run the project's own
 locked binary, so `npx` is reported only with an explicit moving version such as `@latest` or `@9`; only the package
 operand counts, never the arguments passed to the tool. Local paths, URLs, archives, shell variables, and `${{ }}`
-operands are skipped, and `npm install` or `npm ci` with no package name lists nothing to check. At most one finding
-is reported per step, from
-[`src/rules/supply_chain.rs`](https://github.com/reset-ufc/crosgha/blob/master/src/rules/supply_chain.rs).
+operands are skipped, and `npm install` or `npm ci` with no package name lists nothing to check. At most one finding is reported per step
+([`src/rules/supply_chain.rs`](https://github.com/reset-ufc/crosgha/blob/master/src/rules/supply_chain.rs)).
 
 **Why it matters.** An install without a version takes whatever the registry serves at run time, so a compromised
 release runs in the job without a change to the workflow. Khatami et al. (SCAM 2024) list it as KZ-20 "Specify
@@ -89,8 +88,7 @@ jobs:
 
 **How to fix.** Add the exact version the registry publishes, in the syntax of that ecosystem (`typescript@5.6.2`,
 `requests==2.32.3`, `ruff@0.6.0`, `cargo-deny --version 0.16.1`). A lockfile installed with `pip install -r`,
-`npm ci`, or `micromamba install --file` is already exact and is not reported. `--fix` does not rewrite it. Ignoring
-a finding works through comments or config; see [ignoring findings](../configuration.md#ignoring-findings).
+`npm ci`, or `micromamba install --file` is already exact and is not reported. `--fix` does not rewrite it. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#unpinned-package).
 
@@ -109,9 +107,8 @@ also reported when a file saved by `curl -o`, `curl -O`, or `wget -O` is later r
 comments are removed before the check, and a heredoc that a shell reads is treated as a script. A pipe into `jq`,
 `python -c`, `perl -ne`, or `bash -c` feeds data to an argument and is not reported.
 
-**Why it matters.** The bytes that run are chosen by the server at request time, not by the repository under review,
-so a compromised host or a swapped file executes with the job's token. Poutine's `unverified_script_exec` and
-Semgrep's `curl-eval` check the same pattern.
+**Why it matters.** The server chooses the bytes at request time, so a compromised host or a swapped file executes with the
+job's token. Poutine's `unverified_script_exec` and Semgrep's `curl-eval` check the same pattern.
 
 **Example.**
 
@@ -172,7 +169,7 @@ jobs:
 
 **How to fix.** Save the download to a file, check it against a published digest or signature, and only then run it,
 as above; the digest file must come from the same release, not from the same request as the script. `--fix` does not
-rewrite it. Ignoring a finding works through comments or config; see
+rewrite it. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#unverified-remote-script).
@@ -185,8 +182,8 @@ Action owners one edit away from a well-known publisher may be typosquats.
 |---|---|---|---|---|
 | error | regular | workflow | none | zizmor: `typosquat-uses` |
 
-**What it reports.** It takes the owner of every remote `uses`, in a step or at job level, and compares it, ignoring
-case, with twelve high-traffic publishers: `actions`, `github`, `docker`, `aws-actions`, `azure`,
+**What it reports.** It compares the owner of every remote `uses` (in a step or at job level) against twelve high-traffic
+publishers, ignoring case: `actions`, `github`, `docker`, `aws-actions`, `azure`,
 `google-github-actions`, `hashicorp`, `gradle`, `pypa`, `codecov`, `step-security`, and `anthropics`. An owner one
 insertion, deletion, substitution, or adjacent transposition away is reported. `actionsx` is a known legitimate
 neighbour and is skipped. Local actions, `docker://` images, and values containing `${{ }}` are not checked, and the
@@ -251,8 +248,8 @@ jobs:
 ```
 
 **How to fix.** Correct the owner to the publisher you meant, then confirm the SHA belongs to that repository, which
-[`impostor-commit`](#impostor-commit) checks. `--fix` does not rewrite it. Ignoring a finding works through comments
-or config; see [ignoring findings](../configuration.md#ignoring-findings).
+[`impostor-commit`](#impostor-commit) checks. `--fix` does not rewrite it. To ignore a finding,
+see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#typosquatted-action).
 
@@ -333,7 +330,7 @@ jobs:
 
 **How to fix.** Replace the tag or branch with the full SHA of the release you reviewed, and keep the release name in
 a comment next to it so the line stays readable; for an image, use `name@sha256:<digest>` from the registry. `--fix`
-does not rewrite it. Ignoring a finding works through comments or config; see
+does not rewrite it. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 **Options.** `rules.unpinned-action.config.policies` maps repository patterns to `hash-pin`, `ref-pin`, or `any`; an
@@ -365,9 +362,9 @@ reported, and when `allow` is set, every `uses` that matches none of its pattern
 zizmor's repository patterns: `*`, `owner/*`, `owner/repo/*`, `owner/repo`, `owner/repo/path`, and a whole
 `uses@ref`, compared without case. Local paths and `docker://` images are never reported.
 
-**Why it matters.** A denylist keeps the repositories you decided not to trust out of every workflow, including the
-ones nobody reviews again, and an allowlist makes a new third-party action a deliberate decision. The rule follows
-zizmor's [`forbidden-uses`](https://docs.zizmor.sh/audits/#forbidden-uses) audit and its pattern syntax.
+**Why it matters.** A denylist blocks untrusted repositories across every workflow, and an allowlist restricts
+third-party actions to approved patterns. The rule follows zizmor's [`forbidden-uses`](https://docs.zizmor.sh/audits/#forbidden-uses)
+audit and its pattern syntax.
 
 **Example.** With this `crosgha.yml`:
 
@@ -430,9 +427,8 @@ jobs:
         uses: example/changed-files@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
-**How to fix.** Replace the action with one your policy allows, or widen the policy when the action is a deliberate
-choice. `--fix` does not rewrite it. Ignoring a finding works through comments or config; see
-[ignoring findings](../configuration.md#ignoring-findings).
+**How to fix.** Replace the action with one your policy allows, or update the policy if the action is intended. `--fix`
+does not rewrite it. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 **Options.** `rules.forbidden-action.config.allow` and `.deny` take repository patterns; `--config` or a discovered
 `crosgha.yml` supplies them, and keys may use zizmor's rule name ([config file](../configuration.md#config-file)).
@@ -503,7 +499,7 @@ jobs:
 ```
 
 **How to fix.** Move to a release outside the advisory's affected range, then pin that release's SHA. `--fix` does
-not rewrite it. Ignoring a finding works through comments or config; see
+not rewrite it. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 **Options.** `rules.known-vulnerable-action.config.allow` lists advisory IDs to accept, with crosgha's or zizmor's
@@ -527,10 +523,10 @@ Referenced action versions should not lag behind the latest release.
 |---|---|---|---|---|
 | note | pedantic | online | none | none |
 
-**What it reports.** It compares the version of each remote `uses` with the action repository's latest release and
-reports the reference when it is older, comparing only as many numbers as the reference names: `@v4` is judged by its
-major, `@v4.0.0` by all three, so a major-only ref that tracks its line is not reported. A repository without a
-latest release, and a reference without a version, are skipped.
+**What it reports.** It compares each remote `uses` version with the action repository's latest release and reports older
+references. It compares only as many version numbers as the reference names: `@v4` is judged by its major, `@v4.0.0` by
+all three, so a major-only ref that tracks its line is not reported. A repository without a latest release, and a
+reference without a version, are skipped.
 
 **Why it matters.** A reference that lags the latest release misses the fixes published since. GHAST's TP-1 and
 CIAnalyser's `reportUpdateLag` check the same lag.
@@ -569,8 +565,8 @@ jobs:
 ```
 
 **How to fix.** Move to the latest release, at the precision you already use: a major tag if you follow the
-maintenance policy of that line, otherwise the full version and its SHA. `--fix` does not rewrite it. Ignoring a
-finding works through comments or config; see [ignoring findings](../configuration.md#ignoring-findings).
+maintenance policy of that line, otherwise the full version and its SHA. `--fix` does not rewrite it. To ignore a
+finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#outdated-action).
 
@@ -625,7 +621,7 @@ jobs:
 ```
 
 **How to fix.** Write the tag that points at the pinned SHA, or move the pin to the commit of the tag the comment
-names. `--fix` does not rewrite it. Ignoring a finding works through comments or config; see
+names. `--fix` does not rewrite it. To ignore a finding, see
 [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#version-comment-mismatch).
@@ -640,8 +636,8 @@ A pinned SHA must belong to the named repository, not to a fork.
 
 **What it reports.** It reads SHA-pinned references only. It asks whether the SHA is reachable from the repository's
 default branch, which the compare endpoint reports as `behind` or `identical`, and then whether any tag points at
-it. A SHA that is neither is reported. It checks the default branch and the tags, not every branch, and a tag listing
-that cannot be read produces no finding.
+it. A SHA that is neither is reported. It checks only the default branch and tags; if the tag listing cannot be read,
+it produces no finding.
 
 **Why it matters.** GitHub asks that, "When selecting a SHA, you should verify it is from the action's repository and
 not a repository fork"
@@ -683,8 +679,8 @@ jobs:
 ```
 
 **How to fix.** Replace the SHA with one reachable from the named repository's default branch or one that a tag of
-that repository points to. `--fix` does not rewrite it. Ignoring a finding works
-through comments or config; see [ignoring findings](../configuration.md#ignoring-findings).
+that repository points to. `--fix` does not rewrite it. To ignore a finding, see
+[ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#impostor-commit).
 
@@ -697,7 +693,7 @@ Actions from archived repositories receive no security fixes.
 | warning | regular | online | none | zizmor: `archived-uses` |
 
 **What it reports.** It asks the GitHub API whether the repository behind each remote `uses` is archived, and reports
-every reference to one that is, including a reusable workflow called at job level. Without a token, or with
+every reference to one that is, including job-level reusable workflows. Without a token, or with
 `--offline`, it reports the actions of a built-in list instead: `actions-rs/audit-check`, `actions-rs/cargo`,
 `actions-rs/clippy`, `actions-rs/clippy-check`, `actions-rs/components-nightly`, `actions-rs/grcov`,
 `actions-rs/install`, `actions-rs/tarpaulin`, `actions-rs/toolchain`, `actions/create-release`,
@@ -741,8 +737,8 @@ jobs:
 ```
 
 **How to fix.** Replace the archived action with a maintained one, or with a step that runs the tool itself, and
-keep the same permissions the old step had. `--fix` does not rewrite it. Ignoring a finding works through comments
-or config; see [ignoring findings](../configuration.md#ignoring-findings).
+keep the same permissions the old step had. `--fix` does not rewrite it. To ignore a finding,
+see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#archived-action).
 
@@ -764,8 +760,8 @@ Dependabot updates should wait for a minimum release age.
 not considered for a version update until 3 days after its release"
 ([dependabot-options-reference.md:185](https://github.com/github/docs/blob/44f009da482ef1470b37ffea456821014d892a1f/content/code-security/reference/supply-chain-security/dependabot-options-reference.md#L185),
 [dependabot-options-reference.md:194](https://github.com/github/docs/blob/44f009da482ef1470b37ffea456821014d892a1f/content/code-security/reference/supply-chain-security/dependabot-options-reference.md#L194)),
-so the window is the time a malicious release has to be found before the update reaches the repository. The code
-comment names zizmor's `dependabot-cooldown` audit for the same check.
+so the window is the time a malicious release has to be found before the update reaches the repository. zizmor's
+`dependabot-cooldown` audit checks the same setting.
 
 **Example.** The fixture repository `tests/fixtures/repos/missing-release-cooldown/` holds one workflow,
 `.github/workflows/ci.yml`, next to `.github/dependabot.yml` with a single `updates` entry and no `cooldown`:
@@ -808,8 +804,7 @@ updates:
 ```
 
 **How to fix.** Add `cooldown.default-days` with a value at or above the minimum to each `updates` entry, or lower
-the minimum in the config when the repository wants faster updates. `--fix` does not rewrite it. Ignoring a finding
-works through comments or config; see [ignoring findings](../configuration.md#ignoring-findings).
+the minimum in the config when the repository wants faster updates. `--fix` does not rewrite it. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 **Options.** `rules.missing-release-cooldown.config.days` sets the minimum in days; it is 7 when unset, and keys may
 use zizmor's rule name ([config file](../configuration.md#config-file)).

@@ -81,9 +81,8 @@ jobs:
 ```
 
 **How to fix.** Move the scopes to the jobs that use them and grant each job only what it needs. Keep
-`permissions: {}` at the workflow level so a job added later starts with nothing. `--fix` does not rewrite this finding:
-choosing a job's scopes needs project context, as stated in [fixes](../fixes.md). To accept a finding, ignore it as
-described in [configuration](../configuration.md#ignoring-findings).
+`permissions: {}` at the workflow level so a job added later starts with nothing. `--fix` does not rewrite this finding, because choosing a job's scopes needs project context.
+To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#excessive-permissions).
 
@@ -97,14 +96,14 @@ Each job should declare its own `permissions` instead of sharing a workflow-leve
 
 **What it reports.** Only when the workflow declares `permissions` at the top, as a mapping or as a shorthand. A job
 without its own block is reported when the workflow block is not narrow; narrow means empty (`{}`) or exactly
-`contents: read`. Separately, a non-empty workflow block is reported once when any job declares its own block, since
+`contents: read`. A non-empty workflow block is also reported once when any job declares its own block, since
 those jobs already say what they need. An empty workflow block next to job-level blocks is not reported: it grants
 nothing and only guards jobs added later.
 
 **Why it matters.** The check comes from ghlint's
 [`ExplicitJobPermissions`](https://github.com/TWiStErRob/net.twisterrob.ghlint/blob/74115a437cfa161c2fd2d72fc2ebcd83ac514b80/modules/ghlint-rules/src/main/kotlin/net/twisterrob/ghlint/rules/ExplicitJobPermissionsRule.kt),
-which asks for one block per job so each job gets the least access it needs. GitHub documents workflow-level
-permissions as valid, so this rule stays at the `auditor` persona: it is a hardening note, not a defect.
+which asks for one block per job so each job gets the least access it needs. GitHub supports workflow-level
+permissions, so this rule stays at the `auditor` persona as a hardening note.
 
 **Example.**
 
@@ -174,9 +173,7 @@ jobs:
       - run: make publish
 ```
 
-**How to fix.** Declare `permissions` on every job and leave the workflow-level block empty. `--fix` does not rewrite
-this finding: the scopes a job needs are a project decision, as stated in [fixes](../fixes.md). To accept a finding,
-ignore it as described in [configuration](../configuration.md#ignoring-findings).
+**How to fix.** Declare `permissions` on every job and leave the workflow-level block empty. `--fix` does not rewrite this finding, because the scopes a job needs are a project decision. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#workflow-level-permissions).
 
@@ -240,8 +237,8 @@ jobs:
 ```
 
 **How to fix.** Add `permissions` to each job, or one `permissions: {}` at the top when the jobs need no token scope at
-all. `--fix` does not rewrite this finding: it adds no keys that choose a scope, as stated in [fixes](../fixes.md). To
-accept a finding, ignore it as described in [configuration](../configuration.md#ignoring-findings).
+all. `--fix` does not rewrite this finding, because it adds no keys that choose a scope. To ignore a finding, see
+[ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#missing-permissions-block).
 
@@ -262,10 +259,10 @@ reported: a secret name inside a string literal (`${{ 'secrets.NOPE' }}`) or a l
 only the workflow level reaches every step.
 
 **Why it matters.** The check follows ghalint 005 (workflow-level secrets in `env`) and zizmor's
-`overprovisioned-secrets`, both cited in the rule's
-[code](https://github.com/reset-ufc/crosgha/blob/master/src/rules/permissions.rs). An `env` entry is a value the runner
-puts in the environment of every step, and an expression that reads all secrets turns them into one string that any of
-those steps can print.
+`overprovisioned-secrets`
+([`src/rules/permissions.rs`](https://github.com/reset-ufc/crosgha/blob/master/src/rules/permissions.rs)). An `env` entry
+is a value the runner puts in the environment of every step, and an expression that reads all secrets turns them into
+one string that any of those steps can print.
 
 **Example.**
 
@@ -322,9 +319,7 @@ jobs:
 ```
 
 **How to fix.** Move the secret to the `env` of the step that needs it, name the secret you read instead of indexing
-`secrets` at run time, and pass a value into a script through `env` instead of dumping `secrets` into a file. `--fix`
-does not rewrite this finding, as stated in [fixes](../fixes.md). To accept a finding, ignore it as described in
-[configuration](../configuration.md#ignoring-findings).
+`secrets` at run time, and pass a value into a script through `env` instead of dumping `secrets` into a file. `--fix` does not rewrite this finding. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#secrets-exposure).
 
@@ -383,8 +378,7 @@ jobs:
 ```
 
 **How to fix.** Replace `secrets: inherit` with the names the called workflow declares, one line each. `--fix` does not
-rewrite this finding, as stated in [fixes](../fixes.md). To accept a finding, ignore it as described in
-[configuration](../configuration.md#ignoring-findings).
+rewrite this finding. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#secrets-inherit).
 
@@ -397,7 +391,7 @@ Passwords and access tokens must not be written in workflows.
 | error | regular | workflow | none | zizmor: `hardcoded-container-credentials`; actionlint: `credentials` |
 
 **What it reports.** Two things. A `credentials.password` of a job's `container` or of one of its `services` is
-reported when it holds no `${{` expression. Separately, any string in the file that holds a literal token is reported:
+reported when it holds no `${{` expression. It also reports any string in the file that holds a literal token:
 `ghp_`, `gho_`, `ghu_`, `ghs_`, or `ghr_` followed by at least 36 alphanumerics, `github_pat_` followed by at least 22
 alphanumerics or underscores, `AKIA` followed by 16 uppercase letters or digits, or both `-----BEGIN` and
 `PRIVATE KEY-----`. A prefix counts only at the start of the value or after a character that is not an ASCII letter
@@ -476,9 +470,8 @@ jobs:
 ```
 
 **How to fix.** Read the password or token from a secret and reference the environment variable in the script. Revoke
-the token that was written in the workflow: removing the line leaves it in the repository history. `--fix` does not
-rewrite this finding, as stated in [fixes](../fixes.md). To accept a finding, ignore it as described in
-[configuration](../configuration.md#ignoring-findings).
+the token that was written in the workflow: removing the line leaves it in the repository history. `--fix` does not rewrite this finding. To ignore a finding, see
+[ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#hardcoded-credentials).
 
@@ -570,12 +563,12 @@ jobs:
         run: cargo test
 ```
 
-**How to fix.** Add `persist-credentials: false` under the step's `with`, creating that block when the step has none.
-`--fix` adds it, after [fixes](../fixes.md) verifies that the file still parses, that the finding is gone, and that only
+**How to fix.** Add `persist-credentials: false` under the step's `with` (creating `with` if needed).
+`--fix` adds it after [verifying](../fixes.md) that the file still parses, the finding is gone, and only
 the intended node changed. It leaves the finding unfixed, with the reason in the message, in four cases: `true` is
 explicit, a later step of the job pushes with the persisted token, the checkout predates v2, or the step is in an action
-file. Give that pushing step its own token (`${{ github.token }}` in its `env`) and drop the persisted one. To accept a
-finding, ignore it as described in [configuration](../configuration.md#ignoring-findings).
+file. Give that pushing step its own token (`${{ github.token }}` in its `env`) and drop the persisted one. To ignore a
+finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#persist-credentials).
 
@@ -657,7 +650,6 @@ jobs:
 
 **How to fix.** Move `id-token: write` into the `permissions` of the job that exchanges the token, usually the one that
 deploys, and keep it out of every workflow that runs on a trigger outsiders control. `--fix` does not rewrite this
-finding, as stated in [fixes](../fixes.md). To accept a finding, ignore it as described in
-[configuration](../configuration.md#ignoring-findings).
+finding. To ignore a finding, see [ignoring findings](../configuration.md#ignoring-findings).
 
 All fixtures for this rule: [examples](../rule-examples.md#oidc-misconfig).
