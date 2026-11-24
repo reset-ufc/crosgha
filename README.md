@@ -61,8 +61,12 @@ goes: [docs/action.md](docs/action.md).
 
 ## Documentation
 
+The documentation is published at https://reset-ufc.github.io/crosgha/.
+
 | Document | Covers |
 |---|---|
+| [docs/getting-started.md](docs/getting-started.md) | A walkthrough: first scan, personas, `--fix`, CI, and the pre-push hook |
+| [docs/how-it-works.md](docs/how-it-works.md) | What is scanned, rule scopes, personas, how a fix is accepted, and the output formats |
 | [docs/install.md](docs/install.md) | Install script options, release archives, building from source |
 | [docs/usage.md](docs/usage.md) | Which paths and actions are scanned, the pre-push hook, migrating from zizmor, actionlint, poutine, ghalint, or octoscan |
 | [docs/action.md](docs/action.md) | Action inputs, outputs, and run steps |
@@ -70,6 +74,8 @@ goes: [docs/action.md](docs/action.md).
 | [docs/output.md](docs/output.md) | Output formats and exit status |
 | [docs/fixes.md](docs/fixes.md) | When `--fix` applies a fix, and which rules have one |
 | [docs/rules.md](docs/rules.md) | The rule catalog: tag, severity, persona, scope, equivalents, examples |
+| [docs/rules/](docs/rules/supply-chain.md) | Each rule explained by dimension, with an example, its output, and how to fix it |
+| [docs/github-guidance.md](docs/github-guidance.md) | GitHub's own Actions guidance mapped to the rule that checks each statement |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module interfaces, the rule contract, and fix safety |
 | [docs/rust-style.md](docs/rust-style.md) | The Rust style guide for contributors |
 

@@ -56,6 +56,8 @@ request with the fixes ([GitHub Action](action.md)).
 
 | Page | Covers |
 |---|---|
+| [Getting started](getting-started.md) | A walkthrough: first scan, personas, `--fix`, the remaining fixes by hand, CI, and the hook |
+| [How crosgha works](how-it-works.md) | What is scanned, rule scopes, personas, how a fix is accepted, and the output formats |
 | [Install](install.md) | Install script options, release archives, building from source |
 | [Usage](usage.md) | Which paths and actions are scanned, remote repositories, the pre-push hook, migrating from other tools |
 | [GitHub Action](action.md) | Action inputs, outputs, the fix pull request, and auto-merge |
@@ -63,6 +65,7 @@ request with the fixes ([GitHub Action](action.md)).
 | [Output and exit status](output.md) | Output formats and exit status |
 | [Fixes](fixes.md) | When `--fix` applies a fix, and which rules have one |
 | [Rules](rules.md) | The rule catalog: tag, severity, persona, scope, equivalents |
+| [Rules by dimension](rules/supply-chain.md) | Each rule explained with an example, its output, and how to fix it: [supply chain](rules/supply-chain.md), [injection](rules/injection.md), [permissions and secrets](rules/permissions-secrets.md), [runners](rules/runner.md), [maintainability](rules/maintainability.md), [correctness](rules/correctness.md), [repository](rules/repository.md) |
 | [Rule examples](rule-examples.md) | Non-compliant and compliant YAML for every rule, generated from the tests |
 | [What GitHub's documentation asks](github-guidance.md) | GitHub's normative statements mapped to the rule that checks each |
 | [Architecture](ARCHITECTURE.md) | Module interfaces, the rule contract, and fix safety |

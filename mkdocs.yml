@@ -59,6 +59,7 @@ nav:
       - Injection and untrusted input: rules/injection.md
       - Permissions and secrets: rules/permissions-secrets.md
       - Runners: rules/runner.md
+      - Maintainability and deprecations: rules/maintainability.md
       - Correctness: rules/correctness.md
       - Repository: rules/repository.md
       - All fixtures: rule-examples.md
