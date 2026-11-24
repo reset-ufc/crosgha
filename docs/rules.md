@@ -1,6 +1,6 @@
 # Rules
 
-Rule concepts cite their primary sources in [`src/rules/`](../src/rules/). `cargo run -- --list-rules` prints this
+Rule concepts cite their primary sources in [`src/rules/`](https://github.com/reset-ufc/crosgha/tree/master/src/rules). `cargo run -- --list-rules` prints this
 catalog from the code. **Scope** is what a rule reads: one file (`workflow`), the repository, or the GitHub API.
 `repo-org-settings` reads the repository's Actions settings through the API. **Actions** is what a rule checks in
 action metadata files ([which ones are scanned](usage.md#actions)): `steps` for a composite action's `runs.steps`, its
