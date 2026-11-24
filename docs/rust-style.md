@@ -16,7 +16,7 @@ The rest of crosgha is under Apache-2.0.
 
 ## How crosgha applies this guide
 
-- **Precedence:** the rules and the test rules in [AGENTS.md](../AGENTS.md) win over this guide when they conflict.
+- **Precedence:** the rules and the test rules in [AGENTS.md](https://github.com/reset-ufc/crosgha/blob/master/AGENTS.md) win over this guide when they conflict.
 - **Existing code:** new code follows this guide. For rules no tool checks, existing code is brought in line when a
   change touches it.
 - **Code type:** crosgha is *application code* (see [Apply API design rules in context](#apply-api-design-rules-in-context)).
@@ -1459,4 +1459,4 @@ Rationale
 
 ## Tests
 
-Use `#[test]` under `tests/`, following the test rules in [AGENTS.md](../AGENTS.md).
+Use `#[test]` under `tests/`, following the test rules in [AGENTS.md](https://github.com/reset-ufc/crosgha/blob/master/AGENTS.md).
