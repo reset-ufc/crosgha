@@ -12,12 +12,17 @@ Tools installed in run steps must name an exact version.
 |---|---|---|---|---|
 | warning | pedantic | workflow | none | zizmor: `adhoc-packages`, `unpinned-tools` |
 
-**What it reports.** It reads every `run` step and reports the first command that installs a package without an
+**What it reports.** It reads every `run` step and reports the first command that installs or runs a package without an
 exact version. `pip`, `pip3`, `pipx`, and `uv pip install` need `==`; `uv tool install` needs `==` or a `name@version`
 other than `@latest`; `npm`, `pnpm`, and `yarn global add` need `major.minor.patch` after `@`, so `@1`, `@1.x`,
 `@^1.2.0`, `@*`, `@next`, and `@latest` all fail; `go install` needs `vX.Y.Z` or at least seven hexadecimal digits;
 conda, mamba, and micromamba need `=` and a `<` or `>` range fails; `cargo install` and `gem install` need their
-version option or `name@version` / `name:version`. Local paths, URLs, archives, shell variables, and `${{ }}`
+version option or `name@version` / `name:version`. Commands that download and run a tool in one step are checked
+with the rule of their package manager: `go run module@version` like `go install` (without `@version` it builds
+from the module that `go.sum` pins and is not reported), `npx` and `pnpm dlx`/`pnpx` like npm, `uvx` and
+`uv tool run` like `uv tool install`, and `pipx run` through `--spec`. A bare `npx eslint` may run the project's own
+locked binary, so `npx` is reported only with an explicit moving version such as `@latest` or `@9`; only the package
+operand counts, never the arguments passed to the tool. Local paths, URLs, archives, shell variables, and `${{ }}`
 operands are skipped, and `npm install` or `npm ci` with no package name lists nothing to check. At most one finding
 is reported per step, from
 [`src/rules/supply_chain.rs`](https://github.com/reset-ufc/crosgha/blob/master/src/rules/supply_chain.rs).
@@ -49,7 +54,7 @@ jobs:
 ```
 
 ```text
-warning[unpinned-package]: `npm install -g typescript` installs a package without an exact version
+warning[unpinned-package]: `npm install -g typescript` fetches a package without an exact version
   --> .github/workflows/example.yml:16:9
    |
 16 |         run: npm install -g typescript
