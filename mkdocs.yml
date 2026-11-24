@@ -56,8 +56,10 @@ nav:
   - Rules:
       - Catalog: rules.md
       - Supply chain: rules/supply-chain.md
+      - Injection and untrusted input: rules/injection.md
       - Permissions and secrets: rules/permissions-secrets.md
       - Runners: rules/runner.md
+      - Correctness: rules/correctness.md
       - Repository: rules/repository.md
       - All fixtures: rule-examples.md
   - What GitHub's documentation asks: github-guidance.md
