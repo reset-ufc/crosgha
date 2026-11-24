@@ -1,0 +1,69 @@
+site_name: crosgha
+site_description: Detect and fix smells in GitHub Actions workflows.
+site_url: https://reset-ufc.github.io/crosgha/
+repo_url: https://github.com/reset-ufc/crosgha
+repo_name: reset-ufc/crosgha
+edit_uri: edit/master/docs/
+
+# `--strict` turns these warnings into a failed build.
+validation:
+  anchors: warn
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+      # GitHub's heading anchors, so links between pages work on both GitHub and the site.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - How crosgha works: how-it-works.md
+  - Install: install.md
+  - Usage: usage.md
+  - GitHub Action: action.md
+  - Configuration: configuration.md
+  - Output and exit status: output.md
+  - Fixes: fixes.md
+  - Rules:
+      - Catalog: rules.md
+      - Supply chain: rules/supply-chain.md
+      - Injection and untrusted input: rules/injection.md
+      - Permissions and secrets: rules/permissions-secrets.md
+      - Runners: rules/runner.md
+      - Maintainability and deprecations: rules/maintainability.md
+      - Correctness: rules/correctness.md
+      - Repository: rules/repository.md
+      - All fixtures: rule-examples.md
+  - What GitHub's documentation asks: github-guidance.md
+  - Contributing:
+      - Architecture: ARCHITECTURE.md
+      - Rust style: rust-style.md

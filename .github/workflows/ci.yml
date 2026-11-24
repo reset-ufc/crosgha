@@ -9,6 +9,8 @@ on:
       - "tests/**"
       - "action/**"
       - ".github/workflows/**"
+      # docs.yml builds the site and scans the workflows itself; a change to it alone needs no cargo run.
+      - "!.github/workflows/docs.yml"
       - ".cargo/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -26,6 +28,8 @@ on:
       - "tests/**"
       - "action/**"
       - ".github/workflows/**"
+      # docs.yml builds the site and scans the workflows itself; a change to it alone needs no cargo run.
+      - "!.github/workflows/docs.yml"
       - ".cargo/**"
       - "Cargo.toml"
       - "Cargo.lock"

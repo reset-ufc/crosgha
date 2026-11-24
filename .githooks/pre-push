@@ -32,7 +32,7 @@ if [[ $# -gt 0 ]]; then
     fi
     # A base git cannot diff against (unknown remote commit, no origin/master) checks everything.
     if [[ -z "$base" ]] || ! changed="$(git diff --name-only "$base" "$local_sha" 2>/dev/null)" \
-      || grep -Eq "$rust_paths" <<<"$changed"; then
+      || grep -v '^\.github/workflows/docs\.yml$' <<<"$changed" | grep -Eq "$rust_paths"; then
       rust_changed=true
       break
     fi

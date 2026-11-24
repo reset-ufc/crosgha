@@ -1,16 +1,16 @@
 # crosgha
 
 aCtions Repair Of miSconfigured GitHub Actions: a Rust CLI and GitHub Action that detects smells in GitHub Actions
-workflows and fixes them deterministically, preserving comments and formatting.
+workflows and fixes them deterministically without changing comments or formatting.
 
-- 51 rules cover every tag of a curated smell taxonomy: 43 check workflow or action files, 3 check the repository,
-  and 5 query the GitHub API.
+- 51 rules cover the smell taxonomy: 43 check workflow or action files, 3 check the repository, and 5 query the GitHub
+  API.
 - Composite actions (`action.yml`) get the step rules, and JavaScript and Docker actions their metadata checks: the
   repository's root action and the local actions its workflows call are found with the workflows. With
   `--follow-actions`, so are the actions they call from other repositories, read at the pinned commit and followed
   through composite actions; each finding names the chain of `uses:` lines that pulled it in.
-- It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor or
-  actionlint rule in every finding, so switching tools does not mean rewriting configuration.
+- It reads `zizmor.yml`, accepts zizmor's rule names and ignore comments, and names the equivalent zizmor, actionlint, or ghlint
+  rule when there is one, so switching tools does not mean rewriting configuration.
 - Output is text, JSON, SARIF 2.1.0, GitHub annotations (default under `GITHUB_ACTIONS=true`), or brief lines for AI
   agents.
 
@@ -61,8 +61,12 @@ goes: [docs/action.md](docs/action.md).
 
 ## Documentation
 
+The documentation is published at https://reset-ufc.github.io/crosgha/.
+
 | Document | Covers |
 |---|---|
+| [docs/getting-started.md](docs/getting-started.md) | A walkthrough: first scan, personas, `--fix`, CI, and the pre-push hook |
+| [docs/how-it-works.md](docs/how-it-works.md) | What is scanned, rule scopes, personas, how a fix is accepted, and the output formats |
 | [docs/install.md](docs/install.md) | Install script options, release archives, building from source |
 | [docs/usage.md](docs/usage.md) | Which paths and actions are scanned, the pre-push hook, migrating from zizmor, actionlint, poutine, ghalint, or octoscan |
 | [docs/action.md](docs/action.md) | Action inputs, outputs, and run steps |
@@ -70,6 +74,8 @@ goes: [docs/action.md](docs/action.md).
 | [docs/output.md](docs/output.md) | Output formats and exit status |
 | [docs/fixes.md](docs/fixes.md) | When `--fix` applies a fix, and which rules have one |
 | [docs/rules.md](docs/rules.md) | The rule catalog: tag, severity, persona, scope, equivalents, examples |
+| [docs/rules/](docs/rules/supply-chain.md) | Each rule explained by dimension, with an example, its output, and how to fix it |
+| [docs/github-guidance.md](docs/github-guidance.md) | GitHub's own Actions guidance mapped to the rule that checks each statement |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module interfaces, the rule contract, and fix safety |
 | [docs/rust-style.md](docs/rust-style.md) | The Rust style guide for contributors |
 
@@ -82,7 +88,7 @@ cargo fmt-style   # format Rust per docs/rust-style.md; plain cargo fmt skips it
 make check   # the pre-push checks: fmt, clippy -D warnings, tests, dogfood scan
 ```
 
-- **Toolchain:** the pre-push hook runs under `mise exec` when mise is not active in the calling shell, so pushes from
-  `gh` or an IDE use the pinned toolchain too.
-- **Releases:** commits follow Conventional Commits (enforced by the `commit-msg` hook). release-please turns them
-  into versions and the changelog, and cargo-dist builds the release binaries.
+- The pre-push hook runs under `mise exec` when mise is not active in the calling shell, so pushes from `gh` or an IDE
+  use the pinned toolchain too.
+- Commits follow Conventional Commits (enforced by the `commit-msg` hook). release-please turns them into versions and
+  the changelog, and cargo-dist builds the release binaries.
