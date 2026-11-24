@@ -108,7 +108,7 @@ pub fn unpinned_package(workflow: &Workflow) -> Result<Vec<Finding>, String> {
                     step.key("run"),
                     step.location.clone(),
                     format!(
-                        "`{} {}` installs a package without an exact version",
+                        "`{} {}` fetches a package without an exact version",
                         program.path,
                         program.args.join(" ")
                     ),
@@ -119,9 +119,10 @@ pub fn unpinned_package(workflow: &Workflow) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
-/// Options that take a value. npm: its config definitions (workspaces/config/lib/definitions/
-/// definitions.js in npm/cli); pnpm: https://pnpm.io/pnpm-cli and https://pnpm.io/cli/add,
-/// where `-w` and `--workspace` take none.
+/// Options that take a value. npm: `workspaces/config/lib/definitions/definitions.js` and
+/// `bin/npx-cli.js` in npm/cli at cfd03796843cc9ae26c7034ab99bae6c002a4ba4; pnpm:
+/// `versioned_docs/version-10.x/cli/{dlx,add}.md` in pnpm/pnpm.io at
+/// 2e1e747c7acf3656cfb90a10e51398376990af84 (`-c`/`--shell-mode` and `-s`/`--silent` take none).
 const PIP: Spec = Spec {
     short: &['r', 'c', 'e', 'i', 'f', 't'],
     long: &[
@@ -132,6 +133,22 @@ const PIP: Spec = Spec {
         "extra-index-url",
         "find-links",
         "target",
+    ],
+};
+// `subparsers.add_parser("run", ...)` in pypa/pipx `src/pipx/main.py` at
+// de64bcc609ffdf7be84392751e46af0cd0fc5faa.
+const PIPX_RUN: Spec = Spec {
+    short: &['i'],
+    long: &[
+        "spec",
+        "index-url",
+        "python",
+        "pip-args",
+        "python-args",
+        "fetch-python",
+        "cooldown",
+        "backend",
+        "with",
     ],
 };
 const NPM: Spec = Spec {
@@ -146,35 +163,74 @@ const NPM: Spec = Spec {
         "tag",
     ],
 };
+const NPX: Spec = Spec {
+    short: &['p', 'c', 'w', 'C', 'L'],
+    long: &[
+        "package",
+        "call",
+        "shell",
+        "script-shell",
+        "userconfig",
+        "cache",
+        "prefix",
+        "registry",
+        "workspace",
+        "loglevel",
+        "omit",
+        "include",
+        "tag",
+        "location",
+        "allow-scripts",
+    ],
+};
 const PNPM: Spec = Spec {
     short: &['F', 'C'],
-    long: &["registry", "loglevel", "filter", "dir"],
+    long: &[
+        "registry",
+        "loglevel",
+        "filter",
+        "dir",
+        "package",
+        "allow-build",
+    ],
 };
 // `--cwd`: https://classic.yarnpkg.com/en/docs/cli/#toc-cwd
 const YARN: Spec = Spec {
     short: &[],
     long: &["prefix", "registry", "cwd"],
 };
-// `ToolInstallArgs` in astral-sh/uv crates/uv-cli/src/lib.rs at
-// e4c55567ada966de4911513b5c526070e6cddd3f.
+// `ToolInstallArgs` and `ToolRunArgs` in astral-sh/uv `crates/uv-cli/src/lib.rs` at
+// 7f396534d58321e60b5ba204151326712d912ece.
 const UV_TOOL: Spec = Spec {
-    short: &['p', 'i', 'f', 'c', 'b', 'w'],
+    short: &['p', 'i', 'f', 'c', 'b', 'w', 'P', 'C'],
     long: &[
         "from",
         "with",
+        "with-editable",
+        "with-requirements",
         "python",
         "python-platform",
         "torch-backend",
-        "with-requirements",
         "index",
         "default-index",
         "index-url",
         "extra-index-url",
         "find-links",
         "constraints",
+        "constraint",
         "overrides",
+        "override",
         "excludes",
         "build-constraints",
+        "build-constraint",
+        "env-file",
+        "upgrade-package",
+        "upgrade-group",
+        "config-setting",
+        "config-settings",
+        "config-settings-package",
+        "link-mode",
+        "generate-shell-completion",
     ],
 };
 const GO: Spec = Spec {
@@ -203,13 +259,21 @@ fn unpinned_install(program: &Program) -> bool {
         .collect();
     let words: Vec<&str> = match words.as_slice() {
         ["python" | "python3", "-m", rest @ ..] => rest.to_vec(),
-        ["uv", "pip", rest @ ..] => [&["pip"][..], rest].concat(),
-        ["uv", "tool", rest @ ..] => [&["uv tool"][..], rest].concat(),
         _ => words,
     };
+    let words: Vec<&str> = match words.as_slice() {
+        ["uv", "pip", rest @ ..] => [&["pip"][..], rest].concat(),
+        ["uv", "tool", rest @ ..] => [&["uv tool"][..], rest].concat(),
+        ["uvx", rest @ ..] => [&["uv tool", "run"][..], rest].concat(),
+        ["pnpx", rest @ ..] => [&["pnpm", "dlx"][..], rest].concat(),
+        _ => words,
+    };
+    if let ["npx", args @ ..] = words.as_slice() {
+        return npx_unpinned(args);
+    }
     // Global flags may precede the subcommand, as in `npm --prefix ./tools install`.
     let spec = match words.first().copied() {
-        Some("pip" | "pip3" | "pipx") => &PIP,
+        Some("pip" | "pip3") => &PIP,
         Some("uv tool") => &UV_TOOL,
         Some("npm") => &NPM,
         Some("pnpm") => &PNPM,
@@ -220,35 +284,71 @@ fn unpinned_install(program: &Program) -> bool {
         Some("gem") => &GEM,
         _ => &Spec::NONE,
     };
-    let subcommand = shell::leading_options(&words[1..], spec).1;
+    let (leading, subcommand) = shell::leading_options(&words[1..], spec);
     let words: Vec<&str> = words.iter().take(1).chain(subcommand).copied().collect();
+    let pip_unpinned = |package: &str| !package.contains("==") && !is_local_or_url(package);
     let npm_unpinned = |package: &str| !has_npm_version(package) && !is_local_or_url(package);
     match words.as_slice() {
-        ["pip" | "pip3" | "pipx", "install", args @ ..] => {
-            packages(args, &PIP).any(|package| !package.contains("==") && !is_local_or_url(package))
+        ["pip" | "pip3" | "pipx", "install", args @ ..] => packages(args, &PIP).any(pip_unpinned),
+        ["pipx", "run", args @ ..] => {
+            let (options, rest) = shell::leading_options(args, &PIPX_RUN);
+            let specs: Vec<&str> = options
+                .iter()
+                .filter_map(|arg| match arg {
+                    Arg::Long("spec", value) => *value,
+                    _ => None,
+                })
+                .collect();
+            // With `--path`, the operand is a local script rather than a package.
+            let local = options
+                .iter()
+                .any(|arg| matches!(arg, Arg::Long("path", _)));
+            unpinned_spec_or_first(specs, if local { &[] } else { rest }, pip_unpinned)
         }
         // uv also pins with `name@version`; `name@latest` moves (astral-sh/uv docs/concepts/tools.md
         // at e4c55567ada966de4911513b5c526070e6cddd3f).
-        ["uv tool", "install", args @ ..] => uv_tool_packages(args).into_iter().any(|package| {
-            !package.contains("==")
-                && !is_local_or_url(package)
-                && package
-                    .rsplit_once('@')
-                    .is_none_or(|(_, version)| version.eq_ignore_ascii_case("latest"))
-        }),
+        ["uv tool", "install", args @ ..] => uv_tool_packages(args)
+            .into_iter()
+            .any(is_unpinned_uv_package),
+        ["uv tool", "run", args @ ..] => uv_tool_run_packages(args)
+            .into_iter()
+            .any(is_unpinned_uv_package),
         ["npm", "install" | "i" | "add", args @ ..] => packages(args, &NPM).any(npm_unpinned),
         ["pnpm", "install" | "i" | "add", args @ ..] => packages(args, &PNPM).any(npm_unpinned),
+        ["pnpm", "dlx", args @ ..] => {
+            let (dlx_options, rest) = shell::leading_options(args, &PNPM);
+            let specs: Vec<&str> = leading
+                .iter()
+                .chain(&dlx_options)
+                .filter_map(|arg| match arg {
+                    Arg::Long("package", value) => *value,
+                    _ => None,
+                })
+                .collect();
+            unpinned_spec_or_first(specs, rest, npm_unpinned)
+        }
         ["yarn", "global", "add", args @ ..] => packages(args, &YARN).any(npm_unpinned),
         // An exact module version is `v<major.minor.patch>` or a commit hash; `latest`, branch names,
         // and the prefixes `v1` and `v1.2` move (https://go.dev/ref/mod, Version queries).
         ["go", "install", args @ ..] => packages(args, &GO).any(|module| {
             !is_local_or_url(module)
-                && module.rsplit_once('@').is_none_or(|(_, version)| {
-                    !(version.strip_prefix('v').is_some_and(is_exact_semver)
-                        || version.len() >= 7
-                            && version.bytes().all(|byte| byte.is_ascii_hexdigit()))
-                })
+                && module
+                    .rsplit_once('@')
+                    .is_none_or(|(_, version)| !is_exact_go_version(version))
         }),
+        // `go run` without `@version` builds from the main module pinned by `go.sum`
+        // (golang/go `src/cmd/go/internal/run/run.go` at 62495edba78805d112da70c78ecc40fb28405ab4).
+        ["go", "run", args @ ..] => shell::leading_options(args, &GO)
+            .1
+            .first()
+            .copied()
+            .filter(|arg| is_named_package(arg))
+            .is_some_and(|module| {
+                !is_local_or_url(module)
+                    && module
+                        .rsplit_once('@')
+                        .is_some_and(|(_, version)| !is_exact_go_version(version))
+            }),
         // conda's match spec pins with `name=version` or `name==version`.
         ["conda" | "mamba" | "micromamba", "install", args @ ..] => packages(args, &CONDA)
             .any(|package| !package.contains('=') || package.contains(['<', '>'])),
@@ -280,6 +380,56 @@ fn is_named_package(arg: &str) -> bool {
     !arg.contains("${{") && !arg.starts_with('$') && !arg.starts_with('>')
 }
 
+/// `npx` runs the local project binary unless an explicit `@version` is given, so only moving
+/// `@version` specifiers are unpinned (npm/cli `docs/lib/content/commands/npx.md` at
+/// cfd03796843cc9ae26c7034ab99bae6c002a4ba4).
+fn npx_unpinned(args: &[&str]) -> bool {
+    let (options, rest) = shell::leading_options(args, &NPX);
+    let specs: Vec<&str> = options
+        .into_iter()
+        .filter_map(|arg| match arg {
+            Arg::Short('p', value) | Arg::Long("package", value) => value,
+            _ => None,
+        })
+        .collect();
+    unpinned_spec_or_first(specs, rest, |package| {
+        !is_local_or_url(package)
+            && package.rfind('@').is_some_and(|index| index > 0)
+            && !has_npm_version(package)
+    })
+}
+
+fn unpinned_spec_or_first(
+    specs: Vec<&str>,
+    rest: &[&str],
+    unpinned: impl Fn(&str) -> bool,
+) -> bool {
+    if !specs.is_empty() {
+        specs
+            .into_iter()
+            .filter(|arg| is_named_package(arg))
+            .any(unpinned)
+    } else {
+        rest.first()
+            .copied()
+            .filter(|arg| is_named_package(arg))
+            .is_some_and(unpinned)
+    }
+}
+
+fn is_unpinned_uv_package(package: &str) -> bool {
+    !package.contains("==")
+        && !is_local_or_url(package)
+        && package
+            .rsplit_once('@')
+            .is_none_or(|(_, version)| version.eq_ignore_ascii_case("latest"))
+}
+
+fn is_exact_go_version(version: &str) -> bool {
+    version.strip_prefix('v').is_some_and(is_exact_semver)
+        || version.len() >= 7 && version.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 /// What `uv tool install` installs: `--with` values, and `--from`'s value or else the operand,
 /// which with `--from` only names the executable.
 fn uv_tool_packages<'a>(args: &[&'a str]) -> Vec<&'a str> {
@@ -290,6 +440,23 @@ fn uv_tool_packages<'a>(args: &[&'a str]) -> Vec<&'a str> {
             Arg::Operand(operand) if !from => Some(operand),
             _ => None,
         })
+        .filter(|arg| is_named_package(arg))
+        .collect()
+}
+
+/// What `uv tool run` / `uvx` fetches before tool arguments start at the first operand.
+fn uv_tool_run_packages<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let (options, rest) = shell::leading_options(args, &UV_TOOL);
+    let from = options
+        .iter()
+        .any(|arg| matches!(arg, Arg::Long("from", _)));
+    options
+        .into_iter()
+        .filter_map(|arg| match arg {
+            Arg::Long("from" | "with", value) | Arg::Short('w', value) => value,
+            _ => None,
+        })
+        .chain((!from).then(|| rest.first().copied()).flatten())
         .filter(|arg| is_named_package(arg))
         .collect()
 }
