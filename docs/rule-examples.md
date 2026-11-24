@@ -3219,6 +3219,7 @@ runs: # expect: schema-validity
 
 ```yaml
 name: Schema
+description: Checks the keys GitHub's workflow schema defines.
 on: [push]
 permissions: {}
 jobs:
