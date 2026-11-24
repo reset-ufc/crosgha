@@ -54,3 +54,23 @@ jobs:
       - parallel:
           - run: npm install eslint@9.9.0
           - run: npm install eslint@9.9.0
+      - run: go install honnef.co/go/tools/cmd/staticcheck@v0.5.1 ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.5.1 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - run: go run ./cmd/tool
+      - run: go run -C tools example.com/x@v1.2.3
+      - run: npx eslint@9.17.0 .
+      - run: npx eslint .
+      - run: npx --yes eslint@9.17.0 .
+      - run: npx -p eslint@9.17.0 eslint .
+      - run: npx @scope/eslint@9.17.0 .
+      - run: uvx ruff@0.6.0 check
+      - run: uvx --from ruff==0.6.0 ruff check
+      - run: uv tool run ruff@0.6.0
+      - run: uvx --with black==24.1.0 ruff@0.6.0 check
+      - run: pipx run --spec ruff==0.6.0 ruff check
+      - run: pipx run --python 3.12 --spec ruff==0.6.0 ruff check
+      - run: pnpm dlx eslint@9.17.0 .
+      - run: pnpx eslint@9.17.0
+      - run: pnpm dlx --package eslint@9.17.0 eslint .
+      - run: pnpm --package cowsay@1.6.0 -c dlx 'echo hi | cowsay'
