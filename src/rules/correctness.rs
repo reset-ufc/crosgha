@@ -58,8 +58,11 @@ pub const INSECURE_PROTOCOL: Rule = Rule {
     relational: false,
 };
 
+// `description` comes from GitHub's workflow schema (actions/languageservices
+// `workflow-parser/src/workflow-v1.0.json`, added in 50b08a3a227ae5a33b50cb4f78a134bdfea3d926).
 const WORKFLOW_KEYS: &[&str] = &[
     "name",
+    "description",
     "run-name",
     "on",
     "permissions",

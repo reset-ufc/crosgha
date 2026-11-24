@@ -125,6 +125,48 @@ jobs:
           cat <<'EOF' > INSTALL.md
           pip install requests
           EOF
+      - run: go install honnef.co/go/tools/cmd/staticcheck@latest ./... # expect: unpinned-package
+      - run: go run honnef.co/go/tools/cmd/staticcheck@latest ./... # expect: unpinned-package
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1 ./... # expect: unpinned-package
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - run: go run ./cmd/tool
+      - run: go run -C tools example.com/x@latest # expect: unpinned-package
+      - run: go run example.com/x@v1.2.3-rc.1
+      - run: go run golang.org/x/foo
+      - run: go run main.go foo@latest
+      - run: npx eslint@latest . # expect: unpinned-package
+      - run: npx eslint@9 . # expect: unpinned-package
+      - run: npx eslint@9.17.0 .
+      - run: npx eslint .
+      - run: npx --yes eslint@latest . # expect: unpinned-package
+      - run: npx -p eslint@latest eslint . # expect: unpinned-package
+      - run: npx -p eslint@9.17.0 eslint .
+      - run: npx @scope/eslint .
+      - run: npx @scope/eslint@latest . # expect: unpinned-package
+      - run: npx eslint --package=foo@latest
+      - run: uvx ruff@latest check # expect: unpinned-package
+      - run: uvx ruff check # expect: unpinned-package
+      - run: uvx ruff@0.6.0 check
+      - run: uvx --from ruff==0.6.0 ruff check
+      - run: uv tool run ruff # expect: unpinned-package
+      - run: uv tool run ruff@0.6.0
+      - run: uvx --with black ruff@0.6.0 check # expect: unpinned-package
+      - run: uvx --from ruff==0.6.0 --with black==24.1.0 ruff check
+      - run: uvx ruff@0.6.0 check --with black
+      - run: pipx run ruff check # expect: unpinned-package
+      - run: pipx run --spec ruff==0.6.0 ruff check
+      - run: pipx run --python 3.12 ruff check # expect: unpinned-package
+      - run: pipx run --index-url https://pypi.example/simple --pip-args "--no-cache-dir" --spec ruff==0.6.0 ruff check
+      - run: pipx run ruff==0.6.0 --spec foo
+      - run: pipx run --path tools/lint.py check
+      - run: pnpm dlx eslint . # expect: unpinned-package
+      - run: pnpm dlx eslint@9.17.0 .
+      - run: pnpx eslint # expect: unpinned-package
+      - run: pnpx eslint@9.17.0
+      - run: pnpm dlx --package eslint eslint . # expect: unpinned-package
+      - run: pnpm dlx --package eslint@9.17.0 eslint .
+      - run: pnpm --package cowsay -c dlx 'echo hi | cowsay' # expect: unpinned-package
+      - run: pnpm --package cowsay@1.6.0 -c dlx 'echo hi | cowsay'
 ```
 
 **Compliant**
@@ -188,6 +230,26 @@ jobs:
       - parallel:
           - run: npm install eslint@9.9.0
           - run: npm install eslint@9.9.0
+      - run: go install honnef.co/go/tools/cmd/staticcheck@v0.5.1 ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.5.1 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - run: go run ./cmd/tool
+      - run: go run -C tools example.com/x@v1.2.3
+      - run: npx eslint@9.17.0 .
+      - run: npx eslint .
+      - run: npx --yes eslint@9.17.0 .
+      - run: npx -p eslint@9.17.0 eslint .
+      - run: npx @scope/eslint@9.17.0 .
+      - run: uvx ruff@0.6.0 check
+      - run: uvx --from ruff==0.6.0 ruff check
+      - run: uv tool run ruff@0.6.0
+      - run: uvx --with black==24.1.0 ruff@0.6.0 check
+      - run: pipx run --spec ruff==0.6.0 ruff check
+      - run: pipx run --python 3.12 --spec ruff==0.6.0 ruff check
+      - run: pnpm dlx eslint@9.17.0 .
+      - run: pnpx eslint@9.17.0
+      - run: pnpm dlx --package eslint@9.17.0 eslint .
+      - run: pnpm --package cowsay@1.6.0 -c dlx 'echo hi | cowsay'
 ```
 
 ## `unverified-remote-script`
@@ -3219,6 +3281,7 @@ runs: # expect: schema-validity
 
 ```yaml
 name: Schema
+description: Checks the keys GitHub's workflow schema defines.
 on: [push]
 permissions: {}
 jobs:

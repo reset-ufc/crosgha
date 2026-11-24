@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.1](https://github.com/reset-ufc/crosgha/compare/v0.26.0...v0.26.1) (2026-11-24)
+
+
+### Fixed
+
+* **rules:** accept a top-level description in workflows ([736e39e](https://github.com/reset-ufc/crosgha/commit/736e39eab829a5d2e86589951bba418571d3fcbe))
+* **rules:** flag unpinned tools run by go run, npx, uvx, pipx run, and pnpm dlx ([420f403](https://github.com/reset-ufc/crosgha/commit/420f403592c67ea15552a03c2c6d5c34873f99ca))
+* **rules:** report unpinned go run, npx, uvx, pipx run, and pnpm dlx ([530197b](https://github.com/reset-ufc/crosgha/commit/530197b2bd2861e0805e2700c1e821bd3089d428)), closes [#182](https://github.com/reset-ufc/crosgha/issues/182)
+* **rules:** stop rejecting a top-level description in workflows ([eaf3d94](https://github.com/reset-ufc/crosgha/commit/eaf3d94d6d88b7548556df6c9463f20f7de44fed))
+
 ## [0.26.0](https://github.com/reset-ufc/crosgha/compare/v0.25.0...v0.26.0) (2026-11-14)
 
 
